@@ -11,13 +11,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 ui.strong("表 (subDB)");
                 ui.separator();
                 let mut sort = app.table_sort;
-                egui::ComboBox::from_id_salt("table_sort")
+                let ir = egui::ComboBox::from_id_salt("table_sort")
                     .selected_text(sort.label())
                     .show_ui(ui, |ui| {
                         for s in TableSort::ALL {
                             ui.selectable_value(&mut sort, s, s.label());
                         }
                     });
+                super::wheel_cycle(ui.ctx(), &ir.response, &TableSort::ALL, &mut sort);
                 app.table_sort = sort;
             });
             ui.add(

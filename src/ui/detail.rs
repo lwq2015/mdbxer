@@ -31,13 +31,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     ui.separator();
                     ui.label("宽度");
                     let mut w = app.hex_width;
-                    egui::ComboBox::from_id_salt("hex_width")
+                    let ir = egui::ComboBox::from_id_salt("hex_width")
                         .selected_text(w.to_string())
                         .show_ui(ui, |ui| {
                             for v in fmt::HEX_WIDTHS {
                                 ui.selectable_value(&mut w, v, v.to_string());
                             }
                         });
+                    super::wheel_cycle(ui.ctx(), &ir.response, &fmt::HEX_WIDTHS, &mut w);
                     app.hex_width = w;
                 });
                 ui.separator();
@@ -90,7 +91,7 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
                 }
                 // 格式下拉
                 let mut mode = mode_of(app, is_key);
-                egui::ComboBox::from_id_salt(("detail_mode", is_key))
+                let ir = egui::ComboBox::from_id_salt(("detail_mode", is_key))
                     .selected_text(mode.label())
                     .height(430.0)
                     .show_ui(ui, |ui| {
@@ -98,6 +99,7 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
                             ui.selectable_value(&mut mode, m, m.label());
                         }
                     });
+                super::wheel_cycle(ui.ctx(), &ir.response, &DecodeMode::ALL, &mut mode);
                 set_mode(app, is_key, mode);
             });
         });

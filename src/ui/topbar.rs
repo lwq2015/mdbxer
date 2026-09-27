@@ -41,13 +41,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             }
 
             let mut mode = app.open_mode;
-            egui::ComboBox::from_id_salt("open_mode")
+            let ir = egui::ComboBox::from_id_salt("open_mode")
                 .selected_text(mode.label())
                 .show_ui(ui, |ui| {
                     for m in OpenMode::ALL {
                         ui.selectable_value(&mut mode, m, m.label());
                     }
                 });
+            super::wheel_cycle(ui.ctx(), &ir.response, &OpenMode::ALL, &mut mode);
             app.open_mode = mode;
 
             // 历史记录
@@ -85,7 +86,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             // 排版（数据页 Key/Value 列的显示格式）
             ui.label("排版");
             let mut gm = app.grid_mode;
-            egui::ComboBox::from_id_salt("grid_mode")
+            let ir = egui::ComboBox::from_id_salt("grid_mode")
                 .selected_text(gm.label())
                 .height(430.0)
                 .show_ui(ui, |ui| {
@@ -93,17 +94,24 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         ui.selectable_value(&mut gm, m, m.label());
                     }
                 });
+            super::wheel_cycle(ui.ctx(), &ir.response, &DecodeMode::ALL, &mut gm);
             app.grid_mode = gm;
 
             ui.label("单元格");
             let mut cm = app.cell_max;
-            egui::ComboBox::from_id_salt("cell_max")
+            let ir = egui::ComboBox::from_id_salt("cell_max")
                 .selected_text(format!("{cm}"))
                 .show_ui(ui, |ui| {
                     for v in [64usize, 128, 256, 512, 1024, 4096] {
                         ui.selectable_value(&mut cm, v, v.to_string());
                     }
                 });
+            super::wheel_cycle(
+                ui.ctx(),
+                &ir.response,
+                &[64usize, 128, 256, 512, 1024, 4096],
+                &mut cm,
+            );
             app.cell_max = cm;
 
             ui.separator();

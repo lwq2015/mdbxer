@@ -15,6 +15,36 @@ pub const DEFAULT_PAGE_SIZE: usize = 200;
 pub const DEFAULT_CELL_MAX: usize = 256;
 pub const DUP_PAGE_SIZE: usize = 100;
 
+/// 让 ComboBox 支持滚轮：悬停在按钮上（未展开）时滚动切换选项。
+/// 返回 true 表示选项被滚轮改变。
+pub fn wheel_cycle<T: Copy + PartialEq>(
+    ctx: &egui::Context,
+    resp: &egui::Response,
+    options: &[T],
+    current: &mut T,
+) -> bool {
+    // 展开状态下把滚轮留给弹出列表自身，不切换
+    if !resp.hovered() {
+        return false;
+    }
+    let delta = ctx.input(|i| i.smooth_scroll_delta.y);
+    if delta.abs() < 1.0 {
+        return false;
+    }
+    let Some(idx) = options.iter().position(|o| o == current) else {
+        return false;
+    };
+    let len = options.len();
+    // 向上滚 = 上一项，向下滚 = 下一项
+    let next = if delta > 0.0 {
+        (idx + len - 1) % len
+    } else {
+        (idx + 1) % len
+    };
+    *current = options[next];
+    true
+}
+
 /// 中间页签。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CenterTab {

@@ -76,13 +76,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
         ui.separator();
         let mut ps = app.page_size;
-        egui::ComboBox::from_id_salt("page_size")
+        let ir = egui::ComboBox::from_id_salt("page_size")
             .selected_text(format!("{ps}"))
             .show_ui(ui, |ui| {
                 for &v in &PAGE_SIZES {
                     ui.selectable_value(&mut ps, v, v.to_string());
                 }
             });
+        super::wheel_cycle(ui.ctx(), &ir.response, &PAGE_SIZES, &mut ps);
         if ps != app.page_size {
             app.page_size = ps;
             app.load_first_page();
