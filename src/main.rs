@@ -2,6 +2,9 @@
 //!
 //! 分层：main → ui → db / fmt / history，单向依赖。
 
+// release 版不弹出控制台窗口
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod db;
 mod fmt;
 mod history;

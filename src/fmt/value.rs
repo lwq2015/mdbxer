@@ -53,7 +53,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, max_chars: usize) -> String {
 }
 
 fn need(bytes: &[u8], n: usize) -> Option<&[u8]> {
-    (bytes.len() >= n).then_some(bytes)
+    (bytes.len() >= n).then_some(&bytes[..n])
 }
 
 /// 空格分隔的大写十六进制。

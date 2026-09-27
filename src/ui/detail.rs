@@ -109,14 +109,21 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
             ui.weak(format!("{} 字节", bytes.len()));
         }
 
-        // 文本视图
-        let mut text = text_of(bytes, mode_of(app, is_key));
-        ui.add(
-            egui::TextEdit::multiline(&mut text)
-                .font(egui::TextStyle::Monospace)
-                .desired_width(f32::INFINITY)
-                .desired_rows(2),
-        );
+        // 文本视图（可折叠；长文本默认折叠，方便直接看 hex）
+        let text = text_of(bytes, mode_of(app, is_key));
+        let default_open = text.chars().count() <= 512;
+        egui::CollapsingHeader::new("文本")
+            .id_salt(("detail_text", is_key, default_open))
+            .default_open(default_open)
+            .show(ui, |ui| {
+                let mut text = text;
+                ui.add(
+                    egui::TextEdit::multiline(&mut text)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(2),
+                );
+            });
 
         // 十六进制视图
         egui::CollapsingHeader::new("十六进制")

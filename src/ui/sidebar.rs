@@ -60,7 +60,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         text.push_str(&format!("，{}", t.flags_desc));
                     }
                     text.push(')');
-                    if ui.selectable_label(selected, text).clicked() {
+                    if ui
+                        .selectable_label(
+                            selected,
+                            egui::RichText::new(text).monospace(),
+                        )
+                        .clicked()
+                    {
                         clicked = Some(i);
                     }
                 }
