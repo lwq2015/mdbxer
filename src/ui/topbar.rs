@@ -2,7 +2,7 @@
 
 use super::MdbxerApp;
 use crate::db::OpenMode;
-use crate::fmt::DecodeMode;
+use crate::fmt::{DecodeMode, Endian};
 
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     egui::Panel::top("top_bar").show(ui, |ui| {
@@ -82,6 +82,19 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             }
 
             ui.separator();
+
+            // 字节序（默认小端，可切大端；影响整数/float/double 与自动猜测）
+            ui.label("字节序");
+            let mut en = app.endian;
+            let ir = egui::ComboBox::from_id_salt("endian")
+                .selected_text(en.label())
+                .show_ui(ui, |ui| {
+                    for e in Endian::ALL {
+                        ui.selectable_value(&mut en, e, e.label());
+                    }
+                });
+            super::wheel_cycle(ui.ctx(), &ir.response, &Endian::ALL, &mut en);
+            app.endian = en;
 
             // 排版（数据页 Key/Value 列的显示格式）
             ui.label("排版");

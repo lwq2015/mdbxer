@@ -109,6 +109,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let selected = app.selected_row;
     let cell_max = app.cell_max;
     let grid_mode = app.grid_mode;
+    let endian = app.endian;
     let order = app.display_order();
     let sort_desc = app.sort_desc;
     let col_sort = app.col_sort;
@@ -190,7 +191,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     }
                 });
                 row_ui.col(|ui| {
-                    let key_text = fmt::decode(&row.key, grid_mode, cell_max);
+                    let key_text = fmt::decode(&row.key, grid_mode, endian, cell_max);
                     let mut rt = egui::RichText::new(key_text).monospace();
                     if let Some(c) = sel_color {
                         rt = rt.color(c);
@@ -203,7 +204,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     }
                 });
                 row_ui.col(|ui| {
-                    let (label, _) = fmt::guess(&row.value);
+                    let (label, _) = fmt::guess(&row.value, endian);
                     let mut rt = egui::RichText::new(label);
                     if let Some(c) = sel_color {
                         rt = rt.color(c);
@@ -216,7 +217,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     }
                 });
                 row_ui.col(|ui| {
-                    let val_text = fmt::decode(&row.value, grid_mode, cell_max);
+                    let val_text = fmt::decode(&row.value, grid_mode, endian, cell_max);
                     let mut rt = egui::RichText::new(val_text).monospace();
                     if let Some(c) = sel_color {
                         rt = rt.color(c);

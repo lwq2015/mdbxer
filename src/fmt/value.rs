@@ -1,59 +1,109 @@
 //! 按指定格式把字节解码为显示文本。
 
-use super::{guess, DecodeMode};
+use super::{guess, DecodeMode, Endian};
 
-const LEN_MISMATCH: &str = "（长度不符）";
+const EMPTY: &str = "（空）";
+const PAD_NOTE: &str = "（补零）";
 
-/// 按 mode 解码 bytes，结果最多 max_chars 个字符（超出截断并加省略号）。
-pub fn decode(bytes: &[u8], mode: DecodeMode, max_chars: usize) -> String {
+/// 按 mode 解码 bytes，多字节整数按 endian 解释，
+/// 结果最多 max_chars 个字符（超出截断并加省略号）。
+///
+/// 字节数少于类型宽度时按零扩展补齐（小端补尾部、大端补头部，数值等价），
+/// 并在结果后标注"（补零）"；空数据显示"（空）"；超长取前 N 字节。
+pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) -> String {
+    // 整数分支：零扩展补齐。返回 (文本, 是否补齐)
+    macro_rules! int {
+        ($ty:ty) => {{
+            let n = std::mem::size_of::<$ty>();
+            if bytes.is_empty() {
+                EMPTY.to_string()
+            } else {
+                let take = bytes.len().min(n);
+                let mut arr = [0u8; { std::mem::size_of::<$ty>() }];
+                match endian {
+                    Endian::Little => arr[..take].copy_from_slice(&bytes[..take]),
+                    Endian::Big => arr[n - take..].copy_from_slice(&bytes[..take]),
+                }
+                let v = match endian {
+                    Endian::Little => <$ty>::from_le_bytes(arr),
+                    Endian::Big => <$ty>::from_be_bytes(arr),
+                };
+                if bytes.len() < n {
+                    format!("{v}{PAD_NOTE}")
+                } else {
+                    v.to_string()
+                }
+            }
+        }};
+    }
+
+    // 浮点分支：同样零扩展补齐
+    macro_rules! float {
+        ($ty:ty) => {{
+            let n = std::mem::size_of::<$ty>();
+            if bytes.is_empty() {
+                EMPTY.to_string()
+            } else {
+                let take = bytes.len().min(n);
+                let mut arr = [0u8; { std::mem::size_of::<$ty>() }];
+                match endian {
+                    Endian::Little => arr[..take].copy_from_slice(&bytes[..take]),
+                    Endian::Big => arr[n - take..].copy_from_slice(&bytes[..take]),
+                }
+                let v = match endian {
+                    Endian::Little => <$ty>::from_le_bytes(arr).to_string(),
+                    Endian::Big => <$ty>::from_be_bytes(arr).to_string(),
+                };
+                if bytes.len() < n {
+                    format!("{v}{PAD_NOTE}")
+                } else {
+                    v
+                }
+            }
+        }};
+    }
+
     let s = match mode {
-        DecodeMode::Auto => guess(bytes).1,
+        DecodeMode::Auto => guess(bytes, endian).1,
         DecodeMode::Utf8 => String::from_utf8_lossy(bytes).into_owned(),
         DecodeMode::Utf16Le => utf16_text(bytes, false),
         DecodeMode::Utf16Be => utf16_text(bytes, true),
-        DecodeMode::I8 => need(bytes, 1).map_or(LEN_MISMATCH.into(), |b| (b[0] as i8).to_string()),
-        DecodeMode::I16 => need(bytes, 2)
-            .map_or(LEN_MISMATCH.into(), |b| {
-                i16::from_le_bytes(b.try_into().unwrap()).to_string()
-            }),
-        DecodeMode::I32 => need(bytes, 4)
-            .map_or(LEN_MISMATCH.into(), |b| {
-                i32::from_le_bytes(b.try_into().unwrap()).to_string()
-            }),
-        DecodeMode::I64 => need(bytes, 8)
-            .map_or(LEN_MISMATCH.into(), |b| {
-                i64::from_le_bytes(b.try_into().unwrap()).to_string()
-            }),
-        DecodeMode::U8 => need(bytes, 1).map_or(LEN_MISMATCH.into(), |b| b[0].to_string()),
-        DecodeMode::U16 => need(bytes, 2)
-            .map_or(LEN_MISMATCH.into(), |b| {
-                u16::from_le_bytes(b.try_into().unwrap()).to_string()
-            }),
-        DecodeMode::U32 => need(bytes, 4)
-            .map_or(LEN_MISMATCH.into(), |b| {
-                u32::from_le_bytes(b.try_into().unwrap()).to_string()
-            }),
-        DecodeMode::U64 => need(bytes, 8)
-            .map_or(LEN_MISMATCH.into(), |b| {
-                u64_text(u64::from_le_bytes(b.try_into().unwrap()))
-            }),
-        DecodeMode::F32 => need(bytes, 4)
-            .map_or(LEN_MISMATCH.into(), |b| {
-                f32::from_le_bytes(b.try_into().unwrap()).to_string()
-            }),
-        DecodeMode::F64 => need(bytes, 8)
-            .map_or(LEN_MISMATCH.into(), |b| {
-                f64::from_le_bytes(b.try_into().unwrap()).to_string()
-            }),
+        DecodeMode::I8 => int!(i8),
+        DecodeMode::U8 => int!(u8),
+        DecodeMode::I16 => int!(i16),
+        DecodeMode::I32 => int!(i32),
+        DecodeMode::I64 => int!(i64),
+        DecodeMode::U16 => int!(u16),
+        DecodeMode::U32 => int!(u32),
+        DecodeMode::U64 => {
+            if bytes.is_empty() {
+                EMPTY.to_string()
+            } else {
+                let n = 8;
+                let take = bytes.len().min(n);
+                let mut arr = [0u8; 8];
+                match endian {
+                    Endian::Little => arr[..take].copy_from_slice(&bytes[..take]),
+                    Endian::Big => arr[n - take..].copy_from_slice(&bytes[..take]),
+                }
+                let v = match endian {
+                    Endian::Little => u64::from_le_bytes(arr),
+                    Endian::Big => u64::from_be_bytes(arr),
+                };
+                if bytes.len() < n {
+                    format!("{}{PAD_NOTE}", u64_text(v))
+                } else {
+                    u64_text(v)
+                }
+            }
+        }
+        DecodeMode::F32 => float!(f32),
+        DecodeMode::F64 => float!(f64),
         DecodeMode::Hex => hex_spaced(bytes),
         DecodeMode::Dec => dec_spaced(bytes),
-        DecodeMode::Binary => binary_escaped(bytes),
+        DecodeMode::Binary => binary_bits(bytes),
     };
     truncate_chars(s, max_chars)
-}
-
-fn need(bytes: &[u8], n: usize) -> Option<&[u8]> {
-    (bytes.len() >= n).then_some(&bytes[..n])
 }
 
 /// 空格分隔的大写十六进制。
@@ -73,17 +123,13 @@ fn dec_spaced(bytes: &[u8]) -> String {
         .join(" ")
 }
 
-/// 可打印 ASCII 原样显示，其余转义为 \xNN。
-fn binary_escaped(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        if b.is_ascii_graphic() || b == b' ' {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("\\x{b:02X}"));
-        }
-    }
-    out
+/// 每字节显示为 8 位二进制，空格分隔。
+fn binary_bits(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{b:08b}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn utf16_text(bytes: &[u8], big_endian: bool) -> String {

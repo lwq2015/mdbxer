@@ -15,7 +15,10 @@ pub const DEFAULT_PAGE_SIZE: usize = 200;
 pub const DEFAULT_CELL_MAX: usize = 256;
 pub const DUP_PAGE_SIZE: usize = 100;
 
-/// 让 ComboBox 支持滚轮：悬停在按钮上（未展开）时滚动切换选项。
+/// 让 ComboBox 支持滚轮：悬停在按钮上（未展开）时逐格切换选项。
+/// - 鼠标滚轮：一个刻度事件切换一项（不跳格）
+/// - 触控板像素滚动：累计满 40 点切换一项
+/// - 到达首尾时停止，不循环
 /// 返回 true 表示选项被滚轮改变。
 pub fn wheel_cycle<T: Copy + PartialEq>(
     ctx: &egui::Context,
@@ -23,25 +26,61 @@ pub fn wheel_cycle<T: Copy + PartialEq>(
     options: &[T],
     current: &mut T,
 ) -> bool {
-    // 展开状态下把滚轮留给弹出列表自身，不切换
+    // 触控板像素滚动的跨帧累计量
+    let acc_id = resp.id.with("wheel_acc");
     if !resp.hovered() {
+        ctx.data_mut(|d| d.remove_temp::<f32>(acc_id));
         return false;
     }
-    let delta = ctx.input(|i| i.smooth_scroll_delta.y);
-    if delta.abs() < 1.0 {
+
+    let mut steps = 0i32;
+    let mut acc = ctx
+        .data(|d| d.get_temp::<f32>(acc_id))
+        .unwrap_or(0.0);
+    const POINT_THRESHOLD: f32 = 40.0;
+
+    ctx.input(|i| {
+        for ev in &i.raw.events {
+            if let egui::Event::MouseWheel { unit, delta, .. } = ev {
+                let y = delta.y;
+                if y == 0.0 {
+                    continue;
+                }
+                match unit {
+                    // 鼠标滚轮（行/页）：一个事件只走一格，即使系统一次给多行
+                    egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => {
+                        steps += if y > 0.0 { -1 } else { 1 };
+                    }
+                    // 触控板：累计像素，满阈值走一格，余量保留
+                    egui::MouseWheelUnit::Point => {
+                        acc += y;
+                        while acc >= POINT_THRESHOLD {
+                            acc -= POINT_THRESHOLD;
+                            steps -= 1;
+                        }
+                        while acc <= -POINT_THRESHOLD {
+                            acc += POINT_THRESHOLD;
+                            steps += 1;
+                        }
+                    }
+                }
+            }
+        }
+    });
+    ctx.data_mut(|d| d.insert_temp(acc_id, acc));
+
+    if steps == 0 || options.is_empty() {
         return false;
     }
     let Some(idx) = options.iter().position(|o| o == current) else {
         return false;
     };
-    let len = options.len();
-    // 向上滚 = 上一项，向下滚 = 下一项
-    let next = if delta > 0.0 {
-        (idx + len - 1) % len
-    } else {
-        (idx + 1) % len
-    };
-    *current = options[next];
+    // 边界停止，不循环
+    let new_idx = (idx as i64 + steps as i64).clamp(0, options.len() as i64 - 1) as usize;
+    if new_idx == idx {
+        return false;
+    }
+    *current = options[new_idx];
     true
 }
 
@@ -124,6 +163,8 @@ pub struct MdbxerApp {
     pub selected_row: Option<usize>,
     pub jump_input: String,
     pub grid_mode: DecodeMode,
+    /// 多字节整数的字节序（默认小端，可切大端）
+    pub endian: crate::fmt::Endian,
     pub cell_max: usize,
     // 右栏
     pub detail_visible: bool,
@@ -166,6 +207,7 @@ impl MdbxerApp {
             selected_row: None,
             jump_input: String::new(),
             grid_mode: DecodeMode::Auto,
+            endian: crate::fmt::Endian::Little,
             cell_max: DEFAULT_CELL_MAX,
             key_mode: DecodeMode::Auto,
             val_mode: DecodeMode::Auto,
@@ -197,14 +239,23 @@ impl MdbxerApp {
         match col {
             SortCol::Index => {}
             SortCol::Type => order.sort_by(|&a, &b| {
-                crate::fmt::guess(&self.rows[a].value)
+                crate::fmt::guess(&self.rows[a].value, self.endian)
                     .0
-                    .cmp(crate::fmt::guess(&self.rows[b].value).0)
+                    .cmp(&crate::fmt::guess(&self.rows[b].value, self.endian).0)
             }),
             SortCol::Value => order.sort_by(|&a, &b| {
-                crate::fmt::decode(&self.rows[a].value, self.grid_mode, self.cell_max).cmp(
-                    &crate::fmt::decode(&self.rows[b].value, self.grid_mode, self.cell_max),
+                crate::fmt::decode(
+                    &self.rows[a].value,
+                    self.grid_mode,
+                    self.endian,
+                    self.cell_max,
                 )
+                .cmp(&crate::fmt::decode(
+                    &self.rows[b].value,
+                    self.grid_mode,
+                    self.endian,
+                    self.cell_max,
+                ))
             }),
         }
         if !asc {

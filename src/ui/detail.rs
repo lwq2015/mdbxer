@@ -87,7 +87,8 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("复制").clicked() {
-                    ui.ctx().copy_text(text_of(bytes, mode_of(app, is_key)));
+                    ui.ctx()
+                        .copy_text(text_of(bytes, mode_of(app, is_key), app.endian));
                 }
                 // 格式下拉
                 let mut mode = mode_of(app, is_key);
@@ -106,13 +107,17 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
 
         // 自动模式时显示猜测的类型
         if mode_of(app, is_key) == DecodeMode::Auto {
-            ui.weak(format!("猜测：{}，{} 字节", fmt::guess(bytes).0, bytes.len()));
+            ui.weak(format!(
+                "猜测：{}，{} 字节",
+                fmt::guess(bytes, app.endian).0,
+                bytes.len()
+            ));
         } else {
             ui.weak(format!("{} 字节", bytes.len()));
         }
 
         // 文本视图（可折叠；长文本默认折叠，方便直接看 hex）
-        let text = text_of(bytes, mode_of(app, is_key));
+        let text = text_of(bytes, mode_of(app, is_key), app.endian);
         let default_open = text.chars().count() <= 512;
         egui::CollapsingHeader::new("文本")
             .id_salt(("detail_text", is_key, default_open))
@@ -161,6 +166,6 @@ fn set_mode(app: &mut MdbxerApp, is_key: bool, mode: DecodeMode) {
     }
 }
 
-fn text_of(bytes: &[u8], mode: DecodeMode) -> String {
-    fmt::decode(bytes, mode, usize::MAX)
+fn text_of(bytes: &[u8], mode: DecodeMode, endian: fmt::Endian) -> String {
+    fmt::decode(bytes, mode, endian, usize::MAX)
 }

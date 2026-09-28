@@ -8,6 +8,34 @@ pub use guess::guess;
 pub use hexdump::{DEFAULT_HEX_WIDTH, HEX_WIDTHS, hex_dump};
 pub use value::decode;
 
+/// 多字节整数的字节序（默认小端，可切换为大端）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Endian {
+    /// 小端（MDBX INTEGER_KEY 的本机字节序，默认）
+    #[default]
+    Little,
+    /// 大端
+    Big,
+}
+
+impl Endian {
+    pub const ALL: [Endian; 2] = [Endian::Little, Endian::Big];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Endian::Little => "小端 LE",
+            Endian::Big => "大端 BE",
+        }
+    }
+
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Endian::Little => "LE",
+            Endian::Big => "BE",
+        }
+    }
+}
+
 /// 字节显示格式。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum DecodeMode {
