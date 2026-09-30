@@ -12,6 +12,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 ui.separator();
                 let mut sort = app.table_sort;
                 let ir = egui::ComboBox::from_id_salt("table_sort")
+                    .width(86.0)
                     .selected_text(sort.label())
                     .show_ui(ui, |ui| {
                         for s in TableSort::ALL {

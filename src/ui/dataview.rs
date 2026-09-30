@@ -15,30 +15,31 @@ fn header_cell(ui: &mut egui::Ui, text: &str) -> bool {
 }
 
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
-    let Some(table) = app.cur_table().cloned() else {
+    if app.cur_table().is_none() {
         ui.label("请选择左侧表");
         return;
-    };
+    }
 
-    // ── 工具条 ──────────────────────────────────────────────────
+    // ── 工具条（单行紧凑：符号按钮 + 悬停说明；范围信息见底部状态栏）──
     ui.horizontal(|ui| {
         // 默认顺序 = 表中读取出来的顺序（正向遍历）
         let sort_text = match app.col_sort {
             Some((col, asc)) => {
-                format!("页内排序：{} {}", col.label(), if asc { "↑" } else { "↓" })
+                format!("{} {}", col.label(), if asc { "↑" } else { "↓" })
             }
             None => {
                 if app.sort_desc {
-                    "Key 反向 ↓".to_string()
+                    "Key ↓".to_string()
                 } else {
-                    "读取顺序（默认）".to_string()
+                    "默认顺序".to_string()
                 }
             }
         };
-        ui.label(sort_text);
+        ui.add(egui::Label::new(sort_text).sense(egui::Sense::hover()))
+            .on_hover_text("点击列头排序：Key 列为全局遍历方向，其余列为当前页内排序");
         let is_default = !app.sort_desc && app.col_sort.is_none();
         if ui
-            .add_enabled(!is_default, egui::Button::new("↺ 默认顺序"))
+            .add_enabled(!is_default, egui::Button::new("↺"))
             .on_hover_text("恢复为表中读取出来的顺序")
             .clicked()
         {
@@ -48,57 +49,60 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         }
 
         ui.separator();
-        if ui.button("⏮ 首条").clicked() {
+        if ui
+            .button("⏮")
+            .on_hover_text("首页（第一条）")
+            .clicked()
+        {
             app.load_first_page();
         }
-        if ui.add_enabled(!app.at_start, egui::Button::new("◀ 上一页")).clicked() {
+        if ui
+            .add_enabled(!app.at_start, egui::Button::new("◀"))
+            .on_hover_text("上一页")
+            .clicked()
+        {
             app.load_prev_page();
         }
-        if ui.add_enabled(!app.at_end, egui::Button::new("下一页 ▶")).clicked() {
+        if ui
+            .add_enabled(!app.at_end, egui::Button::new("▶"))
+            .on_hover_text("下一页")
+            .clicked()
+        {
             app.load_next_page();
         }
-        if ui.button("末条 ⏭").clicked() {
+        if ui.button("⏭").on_hover_text("末页（最后一条）").clicked() {
             app.load_last_page();
         }
 
         ui.separator();
         let resp = ui.add(
             egui::TextEdit::singleline(&mut app.jump_input)
-                .desired_width(160.0)
-                .hint_text("hex(...) 或纯文本跳转到 Key"),
+                .desired_width(88.0)
+                .hint_text("hex(...) / 文本"),
         );
         if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             app.jump();
         }
-        if ui.button("跳转").clicked() {
+        if ui.button("跳转").on_hover_text("跳转到指定 Key").clicked() {
             app.jump();
         }
 
         ui.separator();
         let mut ps = app.page_size;
         let ir = egui::ComboBox::from_id_salt("page_size")
+            .width(60.0)
             .selected_text(format!("{ps}"))
             .show_ui(ui, |ui| {
                 for &v in &PAGE_SIZES {
                     ui.selectable_value(&mut ps, v, v.to_string());
                 }
             });
-        super::wheel_cycle(ui.ctx(), &ir.response, &PAGE_SIZES, &mut ps);
+        let page_resp = ir.response.on_hover_text("每页显示条数");
+        super::wheel_cycle(ui.ctx(), &page_resp, &PAGE_SIZES, &mut ps);
         if ps != app.page_size {
             app.page_size = ps;
             app.load_first_page();
         }
-
-        ui.separator();
-        let (start, end) = if app.rows.is_empty() {
-            (0, 0)
-        } else {
-            match app.base_index {
-                Some(b) => (b + 1, b + app.rows.len()),
-                None => (1, app.rows.len()),
-            }
-        };
-        ui.label(format!("第 {start}~{end} 条 / 共 {} 条", table.entries));
     });
 
     ui.separator();

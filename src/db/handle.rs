@@ -87,8 +87,11 @@ impl DbHandle {
         })
     }
 
-    /// 枚举命名表：遍历主表 key 并逐个试探 open_table；
-    /// 一个命名表都没有但主表有数据时，给出"（主表）"伪条目。
+    /// 枚举表：未命名主表始终存在（固定排在第一位），
+    /// 命名表通过遍历主表 key 逐个试探 open_table 得到。
+    ///
+    /// 注意：主表中每个命名表的名字也作为一条记录存在，
+    /// 因此主表 entries 包含这些名字记录，浏览主表时同样可见（引擎真实内容）。
     fn list_tables(db: &Database<NoWriteMap>) -> Result<Vec<TableInfo>, String> {
         let txn = db.begin_ro_txn().map_err(|e| e.to_string())?;
         let main = txn.open_table(None).map_err(|e| e.to_string())?;
@@ -96,8 +99,11 @@ impl DbHandle {
             .table_stat(&main)
             .map_err(|e| e.to_string())?
             .entries();
+        let main_flags = txn.table_flags(&main).map_err(|e| e.to_string())?;
 
-        let mut tables = Vec::new();
+        // 主表始终存在，固定排第一
+        let mut tables = vec![TableInfo::new(None, main_entries, main_flags)];
+
         let mut cursor = txn.cursor(&main).map_err(|e| e.to_string())?;
         let iter = cursor.iter_start::<Vec<u8>, Vec<u8>>();
         for item in iter {
@@ -119,10 +125,6 @@ impl DbHandle {
             ));
         }
 
-        if tables.is_empty() && main_entries > 0 {
-            let flags = txn.table_flags(&main).map_err(|e| e.to_string())?;
-            tables.push(TableInfo::new(None, main_entries, flags));
-        }
         Ok(tables)
     }
 }
