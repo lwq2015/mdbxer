@@ -178,6 +178,10 @@ pub struct MdbxerApp {
     pub dup_index: usize,
     pub dup_page_start: usize,
     pub dup_values: Vec<Vec<u8>>,
+    /// 右侧多值：序号跳转输入（1 起）
+    pub dup_jump_input: String,
+    /// 右侧多值：值内容搜索输入（文本或 hex(...)）
+    pub dup_search_input: String,
     // 页签缓存
     pub stat_cache: Option<(usize, Vec<(String, String)>)>,
     pub env_cache: Option<Vec<(String, String, String)>>,
@@ -220,6 +224,8 @@ impl MdbxerApp {
             dup_index: 0,
             dup_page_start: 0,
             dup_values: Vec::new(),
+            dup_jump_input: String::new(),
+            dup_search_input: String::new(),
             stat_cache: None,
             env_cache: None,
             status: "就绪".to_string(),
@@ -425,13 +431,9 @@ impl MdbxerApp {
         }
     }
 
-    /// 行的锚点：多值表带上 value 以精确定位到 (key, value) 对。
+    /// 行的锚点：多值表已按 Key 分组，锚点只需 Key。
     fn anchor_of(&self, row: &Row) -> Anchor {
-        let dup = self.cur_table().map(|t| t.dup_sort).unwrap_or(false);
-        (
-            row.key.clone(),
-            if dup { Some(row.value.clone()) } else { None },
-        )
+        (row.key.clone(), None)
     }
 
     // ── 跳转 ────────────────────────────────────────────────────
@@ -454,7 +456,7 @@ impl MdbxerApp {
         let name = table.name.clone();
         let dir = self.sort_dir();
         let page_size = self.page_size;
-        match db::jump_to(&dbh.db, name.as_deref(), dir, key, page_size) {
+        match db::jump_to(&dbh.db, name.as_deref(), table.dup_sort, dir, key, page_size) {
             Ok(page) => {
                 let found = !page.rows.is_empty();
                 let has_more = page.has_more;
@@ -482,30 +484,29 @@ impl MdbxerApp {
         self.dup_index = 0;
         self.dup_page_start = 0;
         self.dup_values.clear();
+        self.dup_jump_input.clear();
+        self.dup_search_input.clear();
     }
 
+    /// 选中行后加载右侧多值内容。多值表按 Key 分组显示，选中分组行
+    /// 即从该 Key 的第一个值开始；值列表每页 DUP_PAGE_SIZE 个懒加载。
     fn load_dups(&mut self) {
         self.clear_dups();
         let Some(row) = self.selected_row.and_then(|i| self.rows.get(i)) else {
             return;
         };
-        let key = row.key.clone();
-        let value = row.value.clone();
         let Some(dbh) = self.db.as_ref() else { return };
         let Some(table) = self.cur_table() else { return };
         if !table.dup_sort {
             return;
         }
         let name = table.name.clone();
-        if let Ok(Some(idx)) = db::dup_index_of(&dbh.db, name.as_deref(), &key, &value) {
-            self.dup_index = idx;
-        }
-        let page_index = self.dup_index / DUP_PAGE_SIZE;
         if let Ok((total, values)) =
-            db::dups_of(&dbh.db, name.as_deref(), &key, page_index, DUP_PAGE_SIZE)
+            db::dups_of(&dbh.db, name.as_deref(), &row.key, 0, DUP_PAGE_SIZE)
         {
             self.dup_total = total.max(1);
-            self.dup_page_start = page_index * DUP_PAGE_SIZE;
+            self.dup_index = 0;
+            self.dup_page_start = 0;
             self.dup_values = values;
         }
     }
@@ -518,22 +519,22 @@ impl MdbxerApp {
         self.load_dups();
     }
 
-    pub fn dup_step(&mut self, delta: isize) {
-        let new = self.dup_index as isize + delta;
-        if new < 0 || new >= self.dup_total as isize {
+    /// 跳转到当前 Key 的第 `idx` 个值（0 起）；自动夹到有效范围，跨值页时懒加载。
+    pub fn dup_goto(&mut self, idx: usize) {
+        if self.dup_total == 0 {
             return;
         }
-        self.dup_index = new as usize;
-        if self.dup_index < self.dup_page_start
-            || self.dup_index >= self.dup_page_start + DUP_PAGE_SIZE
-        {
+        let idx = idx.min(self.dup_total - 1);
+        let in_page = idx >= self.dup_page_start
+            && idx < self.dup_page_start + self.dup_values.len();
+        if !in_page {
             let Some(row) = self.selected_row.and_then(|i| self.rows.get(i)) else {
                 return;
             };
             let key = row.key.clone();
             let Some(dbh) = self.db.as_ref() else { return };
             let Some(table) = self.cur_table() else { return };
-            let page_index = self.dup_index / DUP_PAGE_SIZE;
+            let page_index = idx / DUP_PAGE_SIZE;
             if let Ok((total, values)) = db::dups_of(
                 &dbh.db,
                 table.name.as_deref(),
@@ -544,6 +545,92 @@ impl MdbxerApp {
                 self.dup_total = total.max(1);
                 self.dup_page_start = page_index * DUP_PAGE_SIZE;
                 self.dup_values = values;
+            }
+        }
+        self.dup_index = idx.min(self.dup_total.saturating_sub(1));
+    }
+
+    /// 上/下一个值（边界停止）。
+    pub fn dup_step(&mut self, delta: isize) {
+        let new = self.dup_index as isize + delta;
+        if new < 0 || new >= self.dup_total as isize {
+            return;
+        }
+        self.dup_goto(new as usize);
+    }
+
+    /// 上/下翻一个值页（DUP_PAGE_SIZE 个值），到头自动夹住。
+    pub fn dup_page_step(&mut self, pages: isize) {
+        let target = self.dup_index as isize + pages * DUP_PAGE_SIZE as isize;
+        if target < 0 {
+            self.dup_goto(0);
+        } else {
+            self.dup_goto(target as usize);
+        }
+    }
+
+    /// 序号跳转：输入为 1 起的十进制序号。
+    pub fn dup_jump(&mut self) {
+        let s = self.dup_jump_input.trim();
+        match s.parse::<usize>() {
+            Ok(n) if n >= 1 && n <= self.dup_total => {
+                self.dup_goto(n - 1);
+                self.status = format!("已定位到第 {n}/{} 个值", self.dup_total);
+            }
+            Ok(n) => {
+                self.status = format!("序号超出范围：{n}（共 {} 个值）", self.dup_total);
+            }
+            Err(_) => {
+                self.status = "请输入有效的值序号（1 起的十进制数字）".to_string();
+            }
+        }
+    }
+
+    /// 在当前 Key 的值中按内容搜索：文本按 UTF-8，hex(...)/0x... 按字节；字节子串匹配。
+    /// `forward=false` 向小序号方向查找；主方向无命中时回绕。
+    pub fn dup_search(&mut self, forward: bool) {
+        let s = self.dup_search_input.trim();
+        if s.is_empty() {
+            self.status = "请输入要搜索的值内容（文本或 hex(...)）".to_string();
+            return;
+        }
+        let needle = match parse_bytes_input(s) {
+            Ok(b) => b,
+            Err(e) => {
+                self.status = format!("搜索内容错误：{e}");
+                return;
+            }
+        };
+        let Some(row) = self.selected_row.and_then(|i| self.rows.get(i)) else {
+            return;
+        };
+        let key = row.key.clone();
+        let Some(dbh) = self.db.as_ref() else { return };
+        let Some(table) = self.cur_table() else { return };
+        // 向后从下一个值开始；向前从当前值之前开始
+        let from = if forward { self.dup_index + 1 } else { self.dup_index };
+        match db::dup_find(
+            &dbh.db,
+            table.name.as_deref(),
+            &key,
+            &needle,
+            from,
+            forward,
+        ) {
+            Ok(Some((i, _))) => {
+                let wrapped = forward && i < from || !forward && i >= from;
+                self.dup_goto(i);
+                self.status = if wrapped {
+                    format!("已回绕定位到第 {}/{} 个值", i + 1, self.dup_total)
+                } else {
+                    format!("已定位到第 {}/{} 个值", i + 1, self.dup_total)
+                };
+            }
+            Ok(None) => {
+                self.status = "当前 Key 的值中没有匹配内容".to_string();
+            }
+            Err(e) => {
+                self.status = format!("搜索失败：{e}");
             }
         }
     }
@@ -592,6 +679,21 @@ fn parse_jump_input(input: &str, integer_key: bool) -> Result<JumpKey, String> {
     Ok(JumpKey::Bytes(s.as_bytes().to_vec()))
 }
 
+/// 通用字节输入解析：hex(...)/0x... → 十六进制字节；其余按 UTF-8 文本字节。
+/// 供多值搜索等场景复用。
+pub(crate) fn parse_bytes_input(s: &str) -> Result<Vec<u8>, String> {
+    let s = s.trim();
+    let hex = s
+        .strip_prefix("hex(")
+        .and_then(|x| x.strip_suffix(')'))
+        .or_else(|| s.strip_prefix("0x"))
+        .or_else(|| s.strip_prefix("0X"));
+    match hex {
+        Some(h) => parse_hex(h),
+        None => Ok(s.as_bytes().to_vec()),
+    }
+}
+
 fn parse_hex(h: &str) -> Result<Vec<u8>, String> {
     let cleaned: String = h.chars().filter(|c| !matches!(c, ' ' | '_' | ':')).collect();
     if cleaned.is_empty() || cleaned.len() % 2 != 0 {
@@ -637,12 +739,25 @@ impl eframe::App for MdbxerApp {
                         } else {
                             match self.base_index {
                                 Some(b) => format!("{}~{}", b + 1, b + self.rows.len()),
+                                None if table.dup_sort => {
+                                    format!("本页 {} 个 Key", self.rows.len())
+                                }
                                 None => format!("本页 {} 条", self.rows.len()),
                             }
                         };
+                        let total_desc = if table.dup_sort {
+                            format!("共 {} 个值对", table.entries)
+                        } else {
+                            format!("共 {} 条", table.entries)
+                        };
+                        let range_desc = if table.dup_sort {
+                            format!("第 {range} 个 Key")
+                        } else {
+                            format!("第 {range} 条")
+                        };
                         ui.label(format!(
-                            "{} — 第 {range} / 共 {} 条",
-                            table.display, table.entries
+                            "{} — {range_desc} / {total_desc}",
+                            table.display
                         ));
                         ui.separator();
                         ui.label(if dbh.no_sub_dir { "单文件模式" } else { "目录模式" });

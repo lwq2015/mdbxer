@@ -67,24 +67,6 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
 
         ui.horizontal(|ui| {
             ui.strong(title);
-            // 多值翻页
-            if !is_key && app.dup_total > 1 {
-                if ui
-                    .add_enabled(app.dup_index > 0, egui::Button::new("◀"))
-                    .clicked()
-                {
-                    app.dup_step(-1);
-                }
-                if ui
-                    .add_enabled(
-                        app.dup_index + 1 < app.dup_total,
-                        egui::Button::new("▶"),
-                    )
-                    .clicked()
-                {
-                    app.dup_step(1);
-                }
-            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("复制").clicked() {
                     ui.ctx()
@@ -104,6 +86,88 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
                 set_mode(app, is_key, mode);
             });
         });
+
+        // 多值导航：仅 Value 卡片、多值表显示
+        let is_dup = !is_key && app.cur_table().map(|t| t.dup_sort).unwrap_or(false);
+        if is_dup {
+            let (idx, total) = (app.dup_index, app.dup_total);
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(idx > 0, egui::Button::new("⏮"))
+                    .on_hover_text("第一个值")
+                    .clicked()
+                {
+                    app.dup_goto(0);
+                }
+                if ui
+                    .add_enabled(idx > 0, egui::Button::new("⏪"))
+                    .on_hover_text("向前翻 100 个值")
+                    .clicked()
+                {
+                    app.dup_page_step(-1);
+                }
+                if ui
+                    .add_enabled(idx > 0, egui::Button::new("◀"))
+                    .on_hover_text("上一个值")
+                    .clicked()
+                {
+                    app.dup_step(-1);
+                }
+                if ui
+                    .add_enabled(idx + 1 < total, egui::Button::new("▶"))
+                    .on_hover_text("下一个值")
+                    .clicked()
+                {
+                    app.dup_step(1);
+                }
+                if ui
+                    .add_enabled(idx + 1 < total, egui::Button::new("⏩"))
+                    .on_hover_text("向后翻 100 个值")
+                    .clicked()
+                {
+                    app.dup_page_step(1);
+                }
+                if ui
+                    .add_enabled(idx + 1 < total, egui::Button::new("⏭"))
+                    .on_hover_text("最后一个值")
+                    .clicked()
+                {
+                    app.dup_goto(total.saturating_sub(1));
+                }
+                ui.label("跳至");
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut app.dup_jump_input)
+                        .desired_width(48.0)
+                        .hint_text("#"),
+                );
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    app.dup_jump();
+                }
+            });
+            ui.horizontal(|ui| {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut app.dup_search_input)
+                        .desired_width(178.0)
+                        .hint_text("搜索值：文本或 hex(...)"),
+                );
+                let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if ui
+                    .button("↑")
+                    .on_hover_text("向前查找（值子串；到头回绕）")
+                    .clicked()
+                {
+                    app.dup_search(false);
+                }
+                if ui
+                    .button("↓")
+                    .on_hover_text("向后查找（回车等效；到头回绕）")
+                    .clicked() || enter
+                {
+                    app.dup_search(true);
+                }
+            });
+            ui.add_space(2.0);
+        }
 
         // 自动模式时显示猜测的类型
         if mode_of(app, is_key) == DecodeMode::Auto {

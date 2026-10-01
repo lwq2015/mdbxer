@@ -5,7 +5,7 @@ mod page;
 mod stats;
 
 pub use handle::{DbHandle, TableInfo};
-pub use page::{dups_of, dup_index_of, fetch_page, jump_to, Anchor, Direction, JumpKey, Row};
+pub use page::{dup_find, dups_of, fetch_page, jump_to, Anchor, Direction, JumpKey, Row};
 pub use stats::{env_info_view, table_stat_view};
 
 /// 数据库打开方式（对应 MDBX_NOSUBDIR）。

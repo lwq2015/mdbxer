@@ -222,12 +222,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 });
                 row_ui.col(|ui| {
                     let val_text = fmt::decode(&row.value, grid_mode, endian, cell_max);
-                    let mut rt = egui::RichText::new(val_text).monospace();
+                    // 多值表分组行：显示第一个值的预览 + 值总数（值列表在右侧翻看）
+                    let text = match row.dup_count {
+                        Some(n) => format!("{val_text}  〔{n} 个值〕"),
+                        None => val_text,
+                    };
+                    let mut rt = egui::RichText::new(text).monospace();
                     if let Some(c) = sel_color {
                         rt = rt.color(c);
                     }
                     if ui
                         .add(egui::Label::new(rt).sense(egui::Sense::click()))
+                        .on_hover_text("多值表：每 Key 占一行；选中后可在右侧详情中翻看全部值")
                         .clicked()
                     {
                         clicked_row = Some(i);
