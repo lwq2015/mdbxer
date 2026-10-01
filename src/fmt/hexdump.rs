@@ -23,7 +23,7 @@ pub fn hex_dump(
     base_offset: usize,
 ) -> String {
     if bytes.is_empty() {
-        return "（空）".to_string();
+        return crate::i18n::tr().empty.to_string();
     }
     let width = width.max(1);
 

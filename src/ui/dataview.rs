@@ -1,6 +1,7 @@
 //! 中间 "数据" 页签：工具条 + 表格。
 
 use super::{MdbxerApp, PAGE_SIZES, SortCol};
+use crate::i18n::tr;
 use egui_extras::{Column, TableBuilder};
 
 /// 列头单元格：文字与整列空白都可点击。返回是否被点击。
@@ -15,8 +16,9 @@ fn header_cell(ui: &mut egui::Ui, text: &str) -> bool {
 
 /// "数据"页签入口：工具条 + 行表格 + 列头排序处理。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    let t = tr();
     if app.cur_table().is_none() {
-        ui.label("请选择左侧表");
+        ui.label(t.select_table);
         return;
     }
 
@@ -31,16 +33,16 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 if app.sort_desc {
                     "Key ↓".to_string()
                 } else {
-                    "默认顺序".to_string()
+                    t.default_order.to_string()
                 }
             }
         };
         ui.add(egui::Label::new(sort_text).sense(egui::Sense::hover()))
-            .on_hover_text("点击列头排序：Key 列为全局遍历方向，其余列为当前页内排序");
+            .on_hover_text(t.sort_hint);
         let is_default = !app.sort_desc && app.col_sort.is_none();
         if ui
             .add_enabled(!is_default, egui::Button::new("↺"))
-            .on_hover_text("恢复为表中读取出来的顺序")
+            .on_hover_text(t.reset_order)
             .clicked()
         {
             app.sort_desc = false;
@@ -49,28 +51,24 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         }
 
         ui.separator();
-        if ui
-            .button("⏮")
-            .on_hover_text("首页（第一条）")
-            .clicked()
-        {
+        if ui.button("⏮").on_hover_text(t.tip_first).clicked() {
             app.load_first_page();
         }
         if ui
             .add_enabled(!app.at_start, egui::Button::new("◀"))
-            .on_hover_text("上一页")
+            .on_hover_text(t.tip_prev)
             .clicked()
         {
             app.load_prev_page();
         }
         if ui
             .add_enabled(!app.at_end, egui::Button::new("▶"))
-            .on_hover_text("下一页")
+            .on_hover_text(t.tip_next)
             .clicked()
         {
             app.load_next_page();
         }
-        if ui.button("⏭").on_hover_text("末页（最后一条）").clicked() {
+        if ui.button("⏭").on_hover_text(t.tip_last).clicked() {
             app.load_last_page();
         }
 
@@ -78,12 +76,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         let resp = ui.add(
             egui::TextEdit::singleline(&mut app.jump_input)
                 .desired_width(88.0)
-                .hint_text("hex(...) / 文本"),
+                .hint_text(t.jump_hint),
         );
         if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             app.jump();
         }
-        if ui.button("跳转").on_hover_text("跳转到指定 Key").clicked() {
+        if ui.button(t.jump_btn).on_hover_text(t.jump_btn).clicked() {
             app.jump();
         }
 
@@ -97,7 +95,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     ui.selectable_value(&mut ps, v, v.to_string());
                 }
             });
-        let page_resp = ir.response.on_hover_text("每页显示条数");
+        let page_resp = ir.response.on_hover_text(t.page_size_tip);
         super::wheel_cycle(ui.ctx(), &page_resp, &PAGE_SIZES, &mut ps);
         if ps != app.page_size {
             app.page_size = ps;
@@ -123,7 +121,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         _ => base.to_string(),
     };
     let index_title = col_title(SortCol::Index, "#");
-    let type_title = col_title(SortCol::Type, "类型");
+    let type_title = col_title(SortCol::Type, &SortCol::Type.label());
     let value_title = col_title(SortCol::Value, "Value");
 
     // 列头被点击的列：0=# 1=Key 2=类型 3=Value
@@ -219,7 +217,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 row_ui.col(|ui| {
                     // 多值表分组行：显示第一个值的预览 + 值总数（值列表在右侧翻看）
                     let text = match row.dup_count {
-                        Some(n) => format!("{}  〔{n} 个值〕", view.val_text),
+                        Some(n) => format!("{}{}", view.val_text, t.dup_n_values(n)),
                         None => view.val_text.clone(),
                     };
                     let mut rt = egui::RichText::new(text).monospace();
@@ -228,7 +226,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     }
                     if ui
                         .add(egui::Label::new(rt).sense(egui::Sense::click()))
-                        .on_hover_text("多值表：每 Key 占一行；选中后可在右侧详情中翻看全部值")
+                        .on_hover_text(t.dup_row_tip)
                         .clicked()
                     {
                         clicked_row = Some(i);

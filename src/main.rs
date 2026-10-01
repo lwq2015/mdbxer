@@ -7,14 +7,18 @@
 
 use std::path::PathBuf;
 
+mod config;
 mod db;
 mod fmt;
 mod history;
+mod i18n;
 mod ui;
 
-/// 程序入口：设置窗口选项、加载 CJK 字体、启动 eframe 事件循环。
+/// 程序入口：确定界面语言、设置窗口选项、加载 CJK 字体、启动 eframe 事件循环。
 /// 支持命令行传入数据库路径直接打开（便于拖文件到 exe）。
 fn main() -> eframe::Result<()> {
+    // 语言必须在任何界面文本产生前确定（含命令行直接打开时的状态消息）
+    i18n::set_lang(config::startup_lang());
     let title = app_title();
     let app_title = title.clone();
     let options = eframe::NativeOptions {

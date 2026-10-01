@@ -20,12 +20,10 @@ pub struct DbHandle {
 pub struct TableInfo {
     /// None 表示主表（未命名）
     pub name: Option<String>,
-    /// 显示名（主表显示为"（主表）"）
-    pub display: String,
     /// 条目数（entries），主表包含命名表的名称记录
     pub entries: usize,
-    /// 人类可读的标志描述，如 "多值, 整数键"
-    pub flags_desc: String,
+    /// 表标志原始位（显示文案按当前界面语言现算，见 `display`/`flags_desc`）
+    flags: TableFlags,
     /// 是否 DUP_SORT（多值表）
     pub dup_sort: bool,
     /// 是否 INTEGER_KEY（键按 u64 LE 排序）
@@ -34,33 +32,45 @@ pub struct TableInfo {
 
 impl TableInfo {
     fn new(name: Option<String>, entries: usize, flags: TableFlags) -> Self {
-        let mut desc = Vec::new();
-        if flags.contains(TableFlags::DUP_SORT) {
-            desc.push("多值");
-        }
-        if flags.contains(TableFlags::INTEGER_KEY) {
-            desc.push("整数键");
-        }
-        if flags.contains(TableFlags::DUP_FIXED) {
-            desc.push("定长多值");
-        }
-        if flags.contains(TableFlags::INTEGER_DUP) {
-            desc.push("整数值");
-        }
-        if flags.contains(TableFlags::REVERSE_KEY) {
-            desc.push("反序键");
-        }
-        if flags.contains(TableFlags::REVERSE_DUP) {
-            desc.push("反序值");
-        }
         Self {
-            display: name.clone().unwrap_or_else(|| "（主表）".to_string()),
             name,
             entries,
-            flags_desc: desc.join(", "),
+            flags,
             dup_sort: flags.contains(TableFlags::DUP_SORT),
             integer_key: flags.contains(TableFlags::INTEGER_KEY),
         }
+    }
+
+    /// 显示名：命名表用原名，主表显示"（主表）"（随界面语言）。
+    pub fn display(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| crate::i18n::tr().main_table.to_string())
+    }
+
+    /// 人类可读的标志描述，如 "多值, 整数键"（随界面语言；无标志返回空串）。
+    pub fn flags_desc(&self) -> String {
+        let t = crate::i18n::tr();
+        let mut desc: Vec<&str> = Vec::new();
+        if self.flags.contains(TableFlags::DUP_SORT) {
+            desc.push(t.flag_dup_sort);
+        }
+        if self.flags.contains(TableFlags::INTEGER_KEY) {
+            desc.push(t.flag_integer_key);
+        }
+        if self.flags.contains(TableFlags::DUP_FIXED) {
+            desc.push(t.flag_dup_fixed);
+        }
+        if self.flags.contains(TableFlags::INTEGER_DUP) {
+            desc.push(t.flag_integer_dup);
+        }
+        if self.flags.contains(TableFlags::REVERSE_KEY) {
+            desc.push(t.flag_reverse_key);
+        }
+        if self.flags.contains(TableFlags::REVERSE_DUP) {
+            desc.push(t.flag_reverse_dup);
+        }
+        desc.join(", ")
     }
 }
 
@@ -68,7 +78,7 @@ impl DbHandle {
     /// 以只读 + ACCEDE 方式打开环境（可查看正被其他进程使用的库）。
     pub fn open(path: &Path, mode: OpenMode) -> Result<Self, String> {
         if !path.exists() {
-            return Err(format!("路径不存在：{}", path.display()));
+            return Err(crate::i18n::tr().path_missing(&path.display().to_string()));
         }
         let no_sub_dir = match mode {
             OpenMode::Auto => path.is_file(),
@@ -83,7 +93,7 @@ impl DbHandle {
             ..Default::default()
         };
         let db = Database::<NoWriteMap>::open_with_options(path, options)
-            .map_err(|e| format!("打开环境失败：{e}"))?;
+            .map_err(|e| crate::i18n::tr().open_env_fail(&e.to_string()))?;
         let tables = Self::list_tables(&db)?;
         Ok(Self {
             db,

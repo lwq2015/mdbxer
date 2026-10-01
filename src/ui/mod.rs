@@ -96,6 +96,18 @@ pub enum CenterTab {
     EnvInfo,
 }
 
+impl CenterTab {
+    /// 页签名（随界面语言）。
+    pub fn label(self) -> &'static str {
+        let t = crate::i18n::tr();
+        match self {
+            CenterTab::Data => t.tab_data,
+            CenterTab::TableStat => t.tab_stat,
+            CenterTab::EnvInfo => t.tab_env,
+        }
+    }
+}
+
 /// 页内排序列（Key 列排序即全局遍历方向，由 sort_desc 表达，不在此列）。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SortCol {
@@ -108,11 +120,12 @@ pub enum SortCol {
 }
 
 impl SortCol {
-    pub fn label(self) -> &'static str {
+    /// 列头标题（随界面语言；"#"/"Value" 三种语言通用）。
+    pub fn label(self) -> String {
         match self {
-            SortCol::Index => "#",
-            SortCol::Type => "类型",
-            SortCol::Value => "Value",
+            SortCol::Index => "#".to_string(),
+            SortCol::Type => crate::i18n::tr().col_type.to_string(),
+            SortCol::Value => "Value".to_string(),
         }
     }
 }
@@ -150,12 +163,14 @@ impl TableSort {
         TableSort::CountDesc,
     ];
 
-    pub fn label(self) -> &'static str {
+    /// 排序下拉标签（随界面语言）。
+    pub fn label(self) -> String {
+        let t = crate::i18n::tr();
         match self {
-            TableSort::NameAsc => "名称 ↑",
-            TableSort::NameDesc => "名称 ↓",
-            TableSort::CountAsc => "条数 ↑",
-            TableSort::CountDesc => "条数 ↓",
+            TableSort::NameAsc => t.sort_name_asc.to_string(),
+            TableSort::NameDesc => t.sort_name_desc.to_string(),
+            TableSort::CountAsc => t.sort_count_asc.to_string(),
+            TableSort::CountDesc => t.sort_count_desc.to_string(),
         }
     }
 }
@@ -211,8 +226,8 @@ pub struct MdbxerApp {
     pub cell_max: usize,
     /// 当前页显示缓存（与 rows 一一对应），由 display_order 按需重建
     pub views: Vec<RowView>,
-    /// 缓存生成时的解码参数 (key_mode, val_mode, endian, cell_max, 千位分隔)；None = 需重建
-    views_key: Option<(DecodeMode, DecodeMode, crate::fmt::Endian, usize, bool)>,
+    /// 缓存生成时的解码参数 (key_mode, val_mode, endian, cell_max, 千位分隔, 语言)；None = 需重建
+    views_key: Option<(DecodeMode, DecodeMode, crate::fmt::Endian, usize, bool, u8)>,
     // ── 右栏 ──
     /// 右栏（详情）是否显示
     pub detail_visible: bool,
@@ -266,7 +281,7 @@ impl MdbxerApp {
             detail: DetailState::default(),
             stat_cache: None,
             env_cache: None,
-            status: "就绪".to_string(),
+            status: crate::i18n::tr().ready.to_string(),
             title: title_base.clone(),
             title_base,
         }
@@ -316,6 +331,7 @@ impl MdbxerApp {
             self.endian,
             self.cell_max,
             crate::fmt::thousands_sep(),
+            crate::i18n::lang() as u8,
         );
         if self.views_key == Some(key) && self.views.len() == self.rows.len() {
             return;
@@ -351,13 +367,16 @@ impl MdbxerApp {
     pub fn open_db(&mut self, path: &str) {
         let path = path.trim().trim_matches('"').to_string();
         if path.is_empty() {
-            self.status = "请输入数据库路径".to_string();
             return;
         }
         match DbHandle::open(std::path::Path::new(&path), self.open_mode) {
             Ok(handle) => {
                 let n = handle.tables.len();
-                let mode_desc = if handle.no_sub_dir { "单文件" } else { "目录" };
+                let mode_desc = if handle.no_sub_dir {
+                    crate::i18n::tr().m_file
+                } else {
+                    crate::i18n::tr().m_dir
+                };
                 self.history.add(&path, self.open_mode.as_str());
                 self.db = Some(handle);
                 self.opened_path = Some(path.clone());
@@ -365,7 +384,7 @@ impl MdbxerApp {
                 self.stat_cache = None;
                 self.env_cache = None;
                 self.selected_table = if n > 0 { Some(0) } else { None };
-                self.status = format!("已打开（{mode_desc}模式，{n} 个表）：{path}");
+                self.status = crate::i18n::tr().open_ok(mode_desc, n, &path);
                 if self.selected_table.is_some() {
                     self.load_first_page();
                 } else {
@@ -373,7 +392,7 @@ impl MdbxerApp {
                     self.base_index = None;
                     self.selected_row = None;
                     self.detail.clear();
-                    self.status = format!("已打开但没有任何数据表：{path}");
+                    self.status = crate::i18n::tr().open_no_tables(&path);
                 }
             }
             Err(e) => {
@@ -393,7 +412,7 @@ impl MdbxerApp {
         self.stat_cache = None;
         self.env_cache = None;
         self.detail.clear();
-        self.status = "已关闭".to_string();
+        self.status = crate::i18n::tr().closed.to_string();
     }
 
     /// 检测 `opened_path` 变化，同步更新窗口标题。
@@ -432,7 +451,7 @@ impl MdbxerApp {
                 Some((len, has_more))
             }
             Err(e) => {
-                self.status = format!("读取失败：{e}");
+                self.status = crate::i18n::tr().read_fail(&e);
                 None
             }
         }
@@ -538,7 +557,7 @@ impl MdbxerApp {
         let key = match parse_jump_input(&input, integer_key) {
             Ok(k) => k,
             Err(e) => {
-                self.status = format!("跳转输入错误：{e}");
+                self.status = crate::i18n::tr().jump_bad(&e);
                 return;
             }
         };
@@ -556,14 +575,14 @@ impl MdbxerApp {
                 self.at_end = !has_more;
                 self.base_index = None;
                 if found {
-                    self.status = "已定位".to_string();
+                    self.status = crate::i18n::tr().located.to_string();
                 } else {
-                    self.status = "未找到不小于该 key 的记录".to_string();
+                    self.status = crate::i18n::tr().not_found_ge.to_string();
                 }
                 self.after_load();
             }
             Err(e) => {
-                self.status = format!("跳转失败：{e}");
+                self.status = crate::i18n::tr().jump_fail(&e);
             }
         }
     }
@@ -619,21 +638,22 @@ impl MdbxerApp {
 
     /// 把完整原始字节另存为文件（不经任何截断）；返回 true 表示已写出。
     pub fn save_bytes(&mut self, default_name: &str, bytes: &[u8]) -> bool {
+        let t = crate::i18n::tr();
         let Some(path) = rfd::FileDialog::new()
             .set_file_name(default_name)
-            .add_filter("二进制", &["bin"])
-            .add_filter("所有文件", &["*"])
+            .add_filter(t.filter_binary, &["bin"])
+            .add_filter(t.filter_all, &["*"])
             .save_file()
         else {
             return false;
         };
         match std::fs::write(&path, bytes) {
             Ok(()) => {
-                self.status = format!("已导出 {} 字节到 {}", bytes.len(), path.display());
+                self.status = t.export_ok(bytes.len(), &path.display().to_string());
                 true
             }
             Err(e) => {
-                self.status = format!("导出失败：{e}");
+                self.status = t.export_fail(&e.to_string());
                 false
             }
         }
@@ -649,7 +669,7 @@ fn opposite(dir: Direction) -> Direction {
 }
 
 /// 从 Value 显示文本提取数值供排序：整体可解析（"42"/"2.5"/"1e20"/"1,234"），
-/// 或去掉"（补零）"后缀、" → 日期"注释后可解析时返回 Some；否则 None 按文本排序。
+/// 或去掉补零后缀、" → 日期"注释后可解析时返回 Some；否则 None 按文本排序。
 fn leading_num(s: &str) -> Option<f64> {
     // 先剥掉千位分隔逗号，再按纯数字解析
     let cleaned: String = s.trim().replace(',', "");
@@ -657,7 +677,7 @@ fn leading_num(s: &str) -> Option<f64> {
     if let Ok(v) = t.parse::<f64>() {
         return Some(v);
     }
-    if let Some(p) = t.strip_suffix("（补零）") {
+    if let Some(p) = t.strip_suffix(crate::i18n::tr().padded) {
         if let Ok(v) = p.trim().parse::<f64>() {
             return Some(v);
         }
@@ -685,7 +705,7 @@ fn parse_jump_input(input: &str, integer_key: bool) -> Result<JumpKey, String> {
         return s
             .parse::<u64>()
             .map(JumpKey::Int)
-            .map_err(|_| "整数键表请输入十进制数字，或 hex(...)/0x... 形式的字节".to_string());
+            .map_err(|_| crate::i18n::tr().int_key_hint.to_string());
     }
     Ok(JumpKey::Bytes(s.as_bytes().to_vec()))
 }
@@ -709,7 +729,7 @@ pub(crate) fn parse_bytes_input(s: &str) -> Result<Vec<u8>, String> {
 fn parse_hex(h: &str) -> Result<Vec<u8>, String> {
     let cleaned: String = h.chars().filter(|c| !matches!(c, ' ' | '_' | ':')).collect();
     if cleaned.is_empty() || cleaned.len() % 2 != 0 {
-        return Err("hex 长度必须为偶数".to_string());
+        return Err(crate::i18n::tr().hex_even.to_string());
     }
     (0..cleaned.len())
         .step_by(2)
@@ -744,6 +764,7 @@ impl eframe::App for MdbxerApp {
 
         // 底部状态栏
         egui::Panel::bottom("status_bar").show(ui, |ui| {
+            let t = crate::i18n::tr();
             ui.horizontal(|ui| {
                 match (&self.db, self.cur_table()) {
                     (Some(dbh), Some(table)) => {
@@ -752,33 +773,28 @@ impl eframe::App for MdbxerApp {
                         } else {
                             match self.base_index {
                                 Some(b) => format!("{}~{}", b + 1, b + self.rows.len()),
-                                None if table.dup_sort => {
-                                    format!("本页 {} 个 Key", self.rows.len())
-                                }
-                                None => format!("本页 {} 条", self.rows.len()),
+                                None if table.dup_sort => t.page_keys(self.rows.len()),
+                                None => t.page_rows(self.rows.len()),
                             }
                         };
                         let total_desc = if table.dup_sort {
-                            format!("共 {} 个值对", table.entries)
+                            t.total_pairs(table.entries)
                         } else {
-                            format!("共 {} 条", table.entries)
+                            t.total_rows(table.entries)
                         };
                         let range_desc = if table.dup_sort {
-                            format!("第 {range} 个 Key")
+                            t.range_keys(&range)
                         } else {
-                            format!("第 {range} 条")
+                            t.range_rows(&range)
                         };
-                        ui.label(format!(
-                            "{} — {range_desc} / {total_desc}",
-                            table.display
-                        ));
+                        ui.label(format!("{} — {range_desc} / {total_desc}", table.display()));
                         ui.separator();
-                        ui.label(if dbh.no_sub_dir { "单文件模式" } else { "目录模式" });
+                        ui.label(if dbh.no_sub_dir { t.mode_file } else { t.mode_dir });
                         ui.separator();
-                        ui.label(format!("窗口 {} 条", self.page_size));
+                        ui.label(t.window_size(self.page_size));
                     }
                     _ => {
-                        ui.label("未打开数据库 — 输入路径，或将文件/目录拖入窗口");
+                        ui.label(t.no_db_status);
                     }
                 }
                 ui.separator();
@@ -788,20 +804,21 @@ impl eframe::App for MdbxerApp {
 
         // 中央区域
         egui::CentralPanel::default().show(ui, |ui| {
+            let t = crate::i18n::tr();
             if self.db.is_none() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(120.0);
                     ui.heading("MDBXer");
-                    ui.label("libmdbx 数据库查看工具（只读）");
-                    ui.label("请在上方输入数据库路径，或将文件/目录拖入窗口");
+                    ui.label(t.subtitle);
+                    ui.label(t.no_db_center);
                 });
                 return;
             }
             let mut tab = self.tab;
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut tab, CenterTab::Data, "数据");
-                ui.selectable_value(&mut tab, CenterTab::TableStat, "表统计");
-                ui.selectable_value(&mut tab, CenterTab::EnvInfo, "环境信息");
+                ui.selectable_value(&mut tab, CenterTab::Data, CenterTab::Data.label());
+                ui.selectable_value(&mut tab, CenterTab::TableStat, CenterTab::TableStat.label());
+                ui.selectable_value(&mut tab, CenterTab::EnvInfo, CenterTab::EnvInfo.label());
             });
             if tab != self.tab {
                 self.tab = tab;

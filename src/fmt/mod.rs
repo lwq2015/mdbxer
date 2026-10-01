@@ -37,10 +37,12 @@ pub enum Endian {
 impl Endian {
     pub const ALL: [Endian; 2] = [Endian::Little, Endian::Big];
 
-    pub fn label(self) -> &'static str {
+    /// 下拉框显示文本（随界面语言）。
+    pub fn label(self) -> String {
+        let t = crate::i18n::tr();
         match self {
-            Endian::Little => "小端 LE",
-            Endian::Big => "大端 BE",
+            Endian::Little => t.endian_le.to_string(),
+            Endian::Big => t.endian_be.to_string(),
         }
     }
 
@@ -97,25 +99,26 @@ impl DecodeMode {
         DecodeMode::Binary,
     ];
 
-    pub fn label(self) -> &'static str {
+    /// 下拉框显示文本（"自动"随界面语言；类型名为国际通用写法不翻译）。
+    pub fn label(self) -> String {
         match self {
-            DecodeMode::Auto => "自动",
-            DecodeMode::Utf8 => "utf8",
-            DecodeMode::Utf16Le => "utf16 (LE)",
-            DecodeMode::Utf16Be => "utf16 (BE)",
-            DecodeMode::I8 => "int8",
-            DecodeMode::I16 => "int16",
-            DecodeMode::I32 => "int32",
-            DecodeMode::I64 => "int64",
-            DecodeMode::U8 => "uint8",
-            DecodeMode::U16 => "uint16",
-            DecodeMode::U32 => "uint32",
-            DecodeMode::U64 => "uint64",
-            DecodeMode::F32 => "float",
-            DecodeMode::F64 => "double",
-            DecodeMode::Hex => "hex",
-            DecodeMode::Dec => "dec",
-            DecodeMode::Binary => "binary",
+            DecodeMode::Auto => crate::i18n::tr().mode_auto.to_string(),
+            DecodeMode::Utf8 => "utf8".to_string(),
+            DecodeMode::Utf16Le => "utf16 (LE)".to_string(),
+            DecodeMode::Utf16Be => "utf16 (BE)".to_string(),
+            DecodeMode::I8 => "int8".to_string(),
+            DecodeMode::I16 => "int16".to_string(),
+            DecodeMode::I32 => "int32".to_string(),
+            DecodeMode::I64 => "int64".to_string(),
+            DecodeMode::U8 => "uint8".to_string(),
+            DecodeMode::U16 => "uint16".to_string(),
+            DecodeMode::U32 => "uint32".to_string(),
+            DecodeMode::U64 => "uint64".to_string(),
+            DecodeMode::F32 => "float".to_string(),
+            DecodeMode::F64 => "double".to_string(),
+            DecodeMode::Hex => "hex".to_string(),
+            DecodeMode::Dec => "dec".to_string(),
+            DecodeMode::Binary => "binary".to_string(),
         }
     }
 }

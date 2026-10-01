@@ -3,17 +3,18 @@
 use super::{value, Endian};
 
 /// 猜测字节内容的类型，返回 (类型标签, 显示文本)。
-/// 多字节整数按 endian 解释。
+/// 多字节整数按 endian 解释。标签随当前界面语言。
 pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
+    let t = crate::i18n::tr();
     if bytes.is_empty() {
-        return ("空".to_string(), "∅ 空".to_string());
+        return (t.guess_empty_label.to_string(), t.guess_empty_sym.to_string());
     }
     // 优先可打印 UTF-8 文本（允许 \t \n \r）
     if let Ok(s) = std::str::from_utf8(bytes) {
         if s.chars()
             .all(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
         {
-            return ("UTF-8 文本".to_string(), s.to_string());
+            return (t.guess_utf8.to_string(), s.to_string());
         }
     }
     let sfx = endian.suffix();
@@ -43,6 +44,6 @@ pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
             };
             (format!("u16 {sfx}"), value::with_sep(v.to_string()))
         }
-        _ => ("二进制".to_string(), value::hex_spaced(bytes)),
+        _ => (t.guess_binary.to_string(), value::hex_spaced(bytes)),
     }
 }

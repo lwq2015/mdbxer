@@ -1,4 +1,5 @@
 //! 表统计与环境信息，格式化为纯键值行供 UI 直接渲染。
+//! 标签文案随当前界面语言。
 
 use libmdbx::{Database, NoWriteMap};
 
@@ -25,28 +26,29 @@ pub fn table_stat_view(
     table: Option<&str>,
     flags_desc: &str,
 ) -> Result<Vec<(String, String)>, String> {
+    let t = crate::i18n::tr();
     let txn = db.begin_ro_txn().map_err(|e| e.to_string())?;
     let table = txn.open_table(table).map_err(|e| e.to_string())?;
     let stat = txn.table_stat(&table).map_err(|e| e.to_string())?;
     let flags = txn.table_flags(&table).map_err(|e| e.to_string())?;
 
     Ok(vec![
-        ("条目数".into(), stat.entries().to_string()),
-        ("B+树深度".into(), stat.depth().to_string()),
-        ("分支页数".into(), stat.branch_pages().to_string()),
-        ("叶子页数".into(), stat.leaf_pages().to_string()),
-        ("溢出页数".into(), stat.overflow_pages().to_string()),
-        ("页大小".into(), human_size(stat.page_size() as u64)),
-        ("数据总大小".into(), human_size(stat.total_size())),
+        (t.k_entries.to_string(), stat.entries().to_string()),
+        (t.k_depth.to_string(), stat.depth().to_string()),
+        (t.k_branch_pages.to_string(), stat.branch_pages().to_string()),
+        (t.k_leaf_pages.to_string(), stat.leaf_pages().to_string()),
+        (t.k_overflow_pages.to_string(), stat.overflow_pages().to_string()),
+        (t.k_page_size.to_string(), human_size(stat.page_size() as u64)),
+        (t.k_total_size.to_string(), human_size(stat.total_size())),
         (
-            "表标志".into(),
+            t.k_table_flags.to_string(),
             if flags_desc.is_empty() {
-                "（无）".into()
+                t.none.to_string()
             } else {
                 flags_desc.to_string()
             },
         ),
-        ("标志位原始值".into(), format!("0x{:X}", flags.bits())),
+        (t.k_raw_flags.to_string(), format!("0x{:X}", flags.bits())),
     ])
 }
 
@@ -54,6 +56,7 @@ pub fn table_stat_view(
 pub fn env_info_view(
     db: &Database<NoWriteMap>,
 ) -> Result<Vec<(String, String, String)>, String> {
+    let t = crate::i18n::tr();
     let info = db.info().map_err(|e| e.to_string())?;
     let stat = db.stat().map_err(|e| e.to_string())?;
     let freelist = db.freelist().unwrap_or(0);
@@ -62,23 +65,23 @@ pub fn env_info_view(
     let mut rows = Vec::new();
     let mut push = |g: &str, k: &str, v: String| rows.push((g.to_string(), k.to_string(), v));
 
-    push("几何", "文件下限", human_size(geo.min_size()));
-    push("几何", "文件上限", human_size(geo.max_size()));
-    push("几何", "当前大小", human_size(geo.current_size()));
-    push("几何", "增长步长", human_size(geo.growth_step()));
-    push("几何", "收缩阈值", human_size(geo.shrink_threshold()));
-    push("映射", "映射大小", human_size(info.map_size() as u64));
-    push("映射", "已用页数", (info.last_pgno() + 1).to_string());
-    push("映射", "空闲页数", freelist.to_string());
-    push("事务", "最后事务 ID", info.last_txnid().to_string());
-    push("读者", "读者槽位上限", info.max_readers().to_string());
-    push("读者", "当前读者数", info.num_readers().to_string());
-    push("主表", "页大小", human_size(stat.page_size() as u64));
-    push("主表", "B+树深度", stat.depth().to_string());
-    push("主表", "分支页", stat.branch_pages().to_string());
-    push("主表", "叶子页", stat.leaf_pages().to_string());
-    push("主表", "溢出页", stat.overflow_pages().to_string());
-    push("主表", "条目数", stat.entries().to_string());
+    push(t.g_geometry, t.k_min_size, human_size(geo.min_size()));
+    push(t.g_geometry, t.k_max_size, human_size(geo.max_size()));
+    push(t.g_geometry, t.k_current_size, human_size(geo.current_size()));
+    push(t.g_geometry, t.k_growth_step, human_size(geo.growth_step()));
+    push(t.g_geometry, t.k_shrink_threshold, human_size(geo.shrink_threshold()));
+    push(t.g_map, t.k_map_size, human_size(info.map_size() as u64));
+    push(t.g_map, t.k_pages_used, (info.last_pgno() + 1).to_string());
+    push(t.g_map, t.k_free_pages, freelist.to_string());
+    push(t.g_txn, t.k_last_txnid, info.last_txnid().to_string());
+    push(t.g_readers, t.k_max_readers, info.max_readers().to_string());
+    push(t.g_readers, t.k_num_readers, info.num_readers().to_string());
+    push(t.g_main, t.k_page_size, human_size(stat.page_size() as u64));
+    push(t.g_main, t.k_depth, stat.depth().to_string());
+    push(t.g_main, t.k_branch, stat.branch_pages().to_string());
+    push(t.g_main, t.k_leaf, stat.leaf_pages().to_string());
+    push(t.g_main, t.k_overflow, stat.overflow_pages().to_string());
+    push(t.g_main, t.k_entries, stat.entries().to_string());
 
     Ok(rows)
 }

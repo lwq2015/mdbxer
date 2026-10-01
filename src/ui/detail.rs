@@ -4,6 +4,7 @@
 use super::{MdbxerApp, parse_bytes_input};
 use crate::db;
 use crate::fmt::{self, DecodeMode};
+use crate::i18n::tr;
 use libmdbx::{Database, NoWriteMap};
 
 /// 右侧多值导航：每页懒加载的值个数。
@@ -161,27 +162,29 @@ impl DetailState {
 
     /// 序号跳转：输入为 1 起的十进制序号。返回状态栏消息。
     pub fn dup_jump(&mut self, ctx: &DupCtx) -> String {
+        let t = tr();
         let s = self.dup_jump_input.trim();
         match s.parse::<usize>() {
             Ok(n) if n >= 1 && n <= self.dup_total => {
                 self.dup_goto(ctx, n - 1);
-                format!("已定位到第 {n}/{} 个值", self.dup_total)
+                t.dup_located(n, self.dup_total)
             }
-            Ok(n) => format!("序号超出范围：{n}（共 {} 个值）", self.dup_total),
-            Err(_) => "请输入有效的值序号（1 起的十进制数字）".to_string(),
+            Ok(n) => t.dup_range(n, self.dup_total),
+            Err(_) => t.dup_bad_num.to_string(),
         }
     }
 
     /// 在当前 Key 的值中按内容搜索：文本按 UTF-8，hex(...)/0x... 按字节；字节子串匹配。
     /// `forward=false` 向小序号方向查找；主方向无命中时回绕。返回状态栏消息。
     pub fn dup_search(&mut self, ctx: &DupCtx, forward: bool) -> String {
+        let t = tr();
         let s = self.dup_search_input.trim();
         if s.is_empty() {
-            return "请输入要搜索的值内容（文本或 hex(...)）".to_string();
+            return t.dup_prompt.to_string();
         }
         let needle = match parse_bytes_input(s) {
             Ok(b) => b,
-            Err(e) => return format!("搜索内容错误：{e}"),
+            Err(e) => return t.dup_bad_query(&e),
         };
         // 向后从下一个值开始；向前从当前值之前开始
         let from = if forward { self.dup_index + 1 } else { self.dup_index };
@@ -190,13 +193,13 @@ impl DetailState {
                 let wrapped = forward && i < from || !forward && i >= from;
                 self.dup_goto(ctx, i);
                 if wrapped {
-                    format!("已回绕定位到第 {}/{} 个值", i + 1, self.dup_total)
+                    t.dup_wrap(i + 1, self.dup_total)
                 } else {
-                    format!("已定位到第 {}/{} 个值", i + 1, self.dup_total)
+                    t.dup_located(i + 1, self.dup_total)
                 }
             }
-            Ok(None) => "当前 Key 的值中没有匹配内容".to_string(),
-            Err(e) => format!("搜索失败：{e}"),
+            Ok(None) => t.dup_nomatch.to_string(),
+            Err(e) => t.dup_search_fail(&e),
         }
     }
 
@@ -240,6 +243,7 @@ impl DetailState {
     /// 跳至指定偏移：十进制或 0x 十六进制；向下对齐到段边界并夹到末尾段。
     /// 返回状态栏消息。
     pub fn seg_jump(&mut self, is_key: bool, total: usize) -> String {
+        let t = tr();
         let (off, input) = self.seg_state_mut(is_key);
         let s = input.trim();
         let parsed = if let Some(h) = s
@@ -253,16 +257,17 @@ impl DetailState {
         match parsed {
             Ok(v) if v < total => {
                 *off = (v / fmt::PAGE_BYTES) * fmt::PAGE_BYTES;
-                format!("已跳至偏移 {off}（0x{off:X}）")
+                t.seg_ok(*off)
             }
-            Ok(v) => format!("偏移超出范围：{v}（共 {total} 字节）"),
-            Err(_) => "请输入十进制偏移，或 0x 开头的十六进制偏移".to_string(),
+            Ok(v) => t.seg_range_msg(v, total),
+            Err(_) => t.seg_bad.to_string(),
         }
     }
 }
 
 /// 右栏入口：无选中行时显示提示；有选中行时显示 Key/Value 两张卡片。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    let t = tr();
     let max_w = detail_max_width(ui, &app.detail);
     egui::Panel::right("detail_panel")
         .default_size(360.0)
@@ -271,7 +276,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let Some(row_idx) = app.selected_row else {
                 ui.vertical_centered(|ui| {
                     ui.add_space(80.0);
-                    ui.weak("在中间表格选择一行以查看详情");
+                    ui.weak(t.detail_select_hint);
                 });
                 return;
             };
@@ -279,17 +284,17 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let key = row.key.clone();
             let Some(value) = app.current_value() else { return };
             let key_no = app.base_index.map(|b| b + row_idx + 1);
-            let dup_sort = app.cur_table().map(|t| t.dup_sort).unwrap_or(false);
+            let dup_sort = app.cur_table().map(|tbl| tbl.dup_sort).unwrap_or(false);
             let (dup_index, dup_total) = (app.detail.dup_index, app.detail.dup_total);
 
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("十六进制视图：");
-                    ui.checkbox(&mut app.detail.show_addr, "地址");
+                    ui.label(t.hex_view);
+                    ui.checkbox(&mut app.detail.show_addr, t.addr);
                     ui.checkbox(&mut app.detail.show_hex, "HEX");
                     ui.checkbox(&mut app.detail.show_ascii, "ASCII");
                     ui.separator();
-                    ui.label("宽度");
+                    ui.label(t.width);
                     let mut w = app.detail.hex_width;
                     let ir = egui::ComboBox::from_id_salt("hex_width")
                         .selected_text(w.to_string())
@@ -311,7 +316,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 ui.add_space(8.0);
 
                 let val_title = if dup_sort {
-                    format!("Value（第 {}/{} 个值）", dup_index + 1, dup_total)
+                    t.val_title(dup_index + 1, dup_total)
                 } else {
                     "Value".to_string()
                 };
@@ -330,7 +335,8 @@ fn kv_card(
     is_key: bool,
     key: &[u8],
 ) {
-    let dup_sort = app.cur_table().map(|t| t.dup_sort).unwrap_or(false);
+    let t = tr();
+    let dup_sort = app.cur_table().map(|tbl| tbl.dup_sort).unwrap_or(false);
     let save_name = if is_key {
         "key.bin".to_string()
     } else if dup_sort {
@@ -344,13 +350,13 @@ fn kv_card(
         ui.horizontal(|ui| {
             ui.strong(title);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("复制").clicked() {
+                if ui.button(t.copy).clicked() {
                     ui.ctx()
                         .copy_text(text_of(bytes, app.detail.mode_of(is_key), app.endian));
                 }
                 if ui
-                    .button("另存…")
-                    .on_hover_text("把完整原始字节保存为文件（不做任何截断）")
+                    .button(t.save_as)
+                    .on_hover_text(t.save_tip)
                     .clicked()
                 {
                     app.save_bytes(&save_name, bytes);
@@ -383,8 +389,8 @@ fn kv_card(
             ui.horizontal(|ui| {
                 // 按钮/输入框固定在最左：段号与偏移文本长度会变，放前面会挤动按钮
                 if ui
-                    .add_enabled(off > 0, egui::Button::new("◀ 段"))
-                    .on_hover_text("上一段（64 KiB）")
+                    .add_enabled(off > 0, egui::Button::new("◀"))
+                    .on_hover_text(t.seg_prev_tip)
                     .clicked()
                 {
                     app.detail.seg_step(is_key, total, -1);
@@ -392,9 +398,9 @@ fn kv_card(
                 if ui
                     .add_enabled(
                         off + fmt::PAGE_BYTES < total,
-                        egui::Button::new("段 ▶"),
+                        egui::Button::new("▶"),
                     )
-                    .on_hover_text("下一段（64 KiB）")
+                    .on_hover_text(t.seg_next_tip)
                     .clicked()
                 {
                     app.detail.seg_step(is_key, total, 1);
@@ -407,24 +413,22 @@ fn kv_card(
                 let resp = ui.add(
                     egui::TextEdit::singleline(input)
                         .desired_width(84.0)
-                        .hint_text("偏移/0x.."),
+                        .hint_text(t.seg_input_hint),
                 );
                 if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     app.status = app.detail.seg_jump(is_key, total);
                 }
                 let seg_no = off / fmt::PAGE_BYTES + 1;
                 let seg_cnt = (total + fmt::PAGE_BYTES - 1) / fmt::PAGE_BYTES;
-                ui.weak(format!(
-                    "第 {seg_no}/{seg_cnt} 段 · 偏移 {off} / {total}（0x{off:X}）"
-                ));
+                ui.weak(t.seg_line(seg_no, seg_cnt, off, total));
             });
         }
 
         // 多值导航：仅 Value 卡片、多值表显示
-        let is_dup = !is_key && app.cur_table().map(|t| t.dup_sort).unwrap_or(false);
+        let is_dup = !is_key && app.cur_table().map(|tbl| tbl.dup_sort).unwrap_or(false);
         if is_dup {
             let (idx, total) = (app.detail.dup_index, app.detail.dup_total);
-            let table_name = app.cur_table().and_then(|t| t.name.clone());
+            let table_name = app.cur_table().and_then(|tbl| tbl.name.clone());
             if let Some(dbh) = app.db.as_ref() {
                 let dctx = DupCtx {
                     db: &dbh.db,
@@ -434,47 +438,47 @@ fn kv_card(
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(idx > 0, egui::Button::new("⏮"))
-                        .on_hover_text("第一个值")
+                        .on_hover_text(t.dup_tip_first)
                         .clicked()
                     {
                         app.detail.dup_goto(&dctx, 0);
                     }
                     if ui
                         .add_enabled(idx > 0, egui::Button::new("⏪"))
-                        .on_hover_text("向前翻 100 个值")
+                        .on_hover_text(t.dup_tip_prev100)
                         .clicked()
                     {
                         app.detail.dup_page_step(&dctx, -1);
                     }
                     if ui
                         .add_enabled(idx > 0, egui::Button::new("◀"))
-                        .on_hover_text("上一个值")
+                        .on_hover_text(t.dup_tip_prev)
                         .clicked()
                     {
                         app.detail.dup_step(&dctx, -1);
                     }
                     if ui
                         .add_enabled(idx + 1 < total, egui::Button::new("▶"))
-                        .on_hover_text("下一个值")
+                        .on_hover_text(t.dup_tip_next)
                         .clicked()
                     {
                         app.detail.dup_step(&dctx, 1);
                     }
                     if ui
                         .add_enabled(idx + 1 < total, egui::Button::new("⏩"))
-                        .on_hover_text("向后翻 100 个值")
+                        .on_hover_text(t.dup_tip_next100)
                         .clicked()
                     {
                         app.detail.dup_page_step(&dctx, 1);
                     }
                     if ui
                         .add_enabled(idx + 1 < total, egui::Button::new("⏭"))
-                        .on_hover_text("最后一个值")
+                        .on_hover_text(t.dup_tip_last)
                         .clicked()
                     {
                         app.detail.dup_goto(&dctx, total.saturating_sub(1));
                     }
-                    ui.label("跳至");
+                    ui.label(t.goto);
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut app.detail.dup_jump_input)
                             .desired_width(48.0)
@@ -488,19 +492,19 @@ fn kv_card(
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut app.detail.dup_search_input)
                             .desired_width(178.0)
-                            .hint_text("搜索值：文本或 hex(...)"),
+                            .hint_text(t.search_hint),
                     );
                     let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if ui
                         .button("↑")
-                        .on_hover_text("向前查找（值子串；到头回绕）")
+                        .on_hover_text(t.search_prev_tip)
                         .clicked()
                     {
                         app.status = app.detail.dup_search(&dctx, false);
                     }
                     if ui
                         .button("↓")
-                        .on_hover_text("向后查找（回车等效；到头回绕）")
+                        .on_hover_text(t.search_next_tip)
                         .clicked()
                         || enter
                     {
@@ -513,13 +517,9 @@ fn kv_card(
 
         // 自动模式时显示猜测的类型
         if app.detail.mode_of(is_key) == DecodeMode::Auto {
-            ui.weak(format!(
-                "猜测：{}，{} 字节",
-                fmt::guess(bytes, app.endian).0,
-                bytes.len()
-            ));
+            ui.weak(t.guess_line(&fmt::guess(bytes, app.endian).0, bytes.len()));
         } else {
-            ui.weak(format!("{} 字节", bytes.len()));
+            ui.weak(t.bytes(bytes.len()));
         }
 
         // 分段窗口（导航条固定在卡片标题行正下方）
@@ -538,7 +538,7 @@ fn kv_card(
         );
         let text_rows = text.lines().count().clamp(1, 16);
         let default_open = total <= 512;
-        egui::CollapsingHeader::new("文本")
+        egui::CollapsingHeader::new(t.section_text)
             .id_salt(("detail_text", is_key, default_open))
             .default_open(default_open)
             .show(ui, |ui| {
@@ -562,7 +562,7 @@ fn kv_card(
             off,
         );
         let hex_rows = dump.lines().count().clamp(1, 20);
-        egui::CollapsingHeader::new("十六进制")
+        egui::CollapsingHeader::new(t.section_hex)
             .id_salt(("detail_hex", is_key))
             .default_open(true)
             .show(ui, |ui| {

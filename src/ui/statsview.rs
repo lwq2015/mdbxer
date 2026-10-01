@@ -2,19 +2,22 @@
 
 use super::MdbxerApp;
 use crate::db;
+use crate::i18n::tr;
 
 /// "表统计"页签：按选中表缓存，点"刷新"时清缓存重读。
 pub fn show_table_stat(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    let t = tr();
     let Some(index) = app.selected_table else {
-        ui.label("请选择左侧表");
+        ui.label(t.select_table);
         return;
     };
     if app.stat_cache.as_ref().map(|(i, _)| *i) != Some(index) {
         let Some(dbh) = &app.db else { return };
-        let t = &dbh.tables[index];
-        match db::table_stat_view(&dbh.db, t.name.as_deref(), &t.flags_desc) {
+        let tbl = &dbh.tables[index];
+        let flags_desc = tbl.flags_desc();
+        match db::table_stat_view(&dbh.db, tbl.name.as_deref(), &flags_desc) {
             Ok(rows) => app.stat_cache = Some((index, rows)),
-            Err(e) => app.status = format!("读取表统计失败：{e}"),
+            Err(e) => app.status = t.stat_fail(&e),
         }
     }
     let Some((_, rows)) = &app.stat_cache else {
@@ -24,7 +27,7 @@ pub fn show_table_stat(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
     egui::ScrollArea::both().show(ui, |ui| {
         ui.horizontal(|ui| {
-            if ui.button("刷新").clicked() {
+            if ui.button(t.refresh).clicked() {
                 app.stat_cache = None;
             }
         });
@@ -44,11 +47,12 @@ pub fn show_table_stat(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
 /// "环境信息"页签：整个库一份缓存，点"刷新"重读。
 pub fn show_env_info(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    let t = tr();
     if app.env_cache.is_none() {
         let Some(dbh) = &app.db else { return };
         match db::env_info_view(&dbh.db) {
             Ok(rows) => app.env_cache = Some(rows),
-            Err(e) => app.status = format!("读取环境信息失败：{e}"),
+            Err(e) => app.status = t.env_fail(&e),
         }
     }
     let Some(rows) = &app.env_cache else { return };
@@ -56,7 +60,7 @@ pub fn show_env_info(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
     egui::ScrollArea::both().show(ui, |ui| {
         ui.horizontal(|ui| {
-            if ui.button("刷新").clicked() {
+            if ui.button(t.refresh).clicked() {
                 app.env_cache = None;
             }
         });

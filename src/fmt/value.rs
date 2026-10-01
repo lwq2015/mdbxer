@@ -2,8 +2,15 @@
 
 use super::{guess, DecodeMode, Endian};
 
-const EMPTY: &str = "（空）";
-const PAD_NOTE: &str = "（补零）";
+/// 空数据占位文案（随界面语言）。
+fn empty_text() -> String {
+    crate::i18n::tr().empty.to_string()
+}
+
+/// 补零标注（随界面语言）。
+fn pad_note() -> &'static str {
+    crate::i18n::tr().padded
+}
 
 /// 给数字字符串加千位分隔符（如 `1625981420` → `1,625,981,420`，
 /// `1.62598142e20` → `1.62598142e20` 整数部分不变（太短）等）。
@@ -47,14 +54,15 @@ fn sep_int(s: &str) -> String {
 /// 结果最多 max_chars 个字符（超出截断并加省略号）。
 ///
 /// 字节数少于类型宽度时按零扩展补齐（小端补尾部、大端补头部，数值等价），
-/// 并在结果后标注"（补零）"；空数据显示"（空）"；超长取前 N 字节。
+/// 并在结果后标注补零说明；空数据显示空占位；超长取前 N 字节。
+/// 占位文案随当前界面语言。
 pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) -> String {
     // 整数分支：零扩展补齐。返回 (文本, 是否补齐)
     macro_rules! int {
         ($ty:ty) => {{
             let n = std::mem::size_of::<$ty>();
             if bytes.is_empty() {
-                EMPTY.to_string()
+                empty_text()
             } else {
                 let take = bytes.len().min(n);
                 let mut arr = [0u8; { std::mem::size_of::<$ty>() }];
@@ -67,7 +75,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) 
                     Endian::Big => <$ty>::from_be_bytes(arr),
                 };
                 if bytes.len() < n {
-                    format!("{}{PAD_NOTE}", with_sep(v.to_string()))
+                    format!("{}{}", with_sep(v.to_string()), pad_note())
                 } else {
                     with_sep(v.to_string())
                 }
@@ -80,7 +88,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) 
         ($ty:ty) => {{
             let n = std::mem::size_of::<$ty>();
             if bytes.is_empty() {
-                EMPTY.to_string()
+                empty_text()
             } else {
                 let take = bytes.len().min(n);
                 let mut arr = [0u8; { std::mem::size_of::<$ty>() }];
@@ -97,7 +105,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) 
                 let s = format!("{v}");
                 let s = if s.len() > 24 { format!("{v:e}") } else { s };
                 if bytes.len() < n {
-                    format!("{}{PAD_NOTE}", with_sep(s))
+                    format!("{}{}", with_sep(s), pad_note())
                 } else {
                     with_sep(s)
                 }
@@ -119,7 +127,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) 
         DecodeMode::U32 => int!(u32),
         DecodeMode::U64 => {
             if bytes.is_empty() {
-                EMPTY.to_string()
+                empty_text()
             } else {
                 let n = 8;
                 let take = bytes.len().min(n);
@@ -133,7 +141,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) 
                     Endian::Big => u64::from_be_bytes(arr),
                 };
                 if bytes.len() < n {
-                    format!("{}{PAD_NOTE}", u64_text(v))
+                    format!("{}{}", u64_text(v), pad_note())
                 } else {
                     u64_text(v)
                 }

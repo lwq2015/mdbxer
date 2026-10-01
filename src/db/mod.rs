@@ -23,11 +23,13 @@ pub enum OpenMode {
 impl OpenMode {
     pub const ALL: [OpenMode; 3] = [OpenMode::Auto, OpenMode::SingleFile, OpenMode::Directory];
 
-    pub fn label(self) -> &'static str {
+    /// 下拉框显示文本（随界面语言）。
+    pub fn label(self) -> String {
+        let t = crate::i18n::tr();
         match self {
-            OpenMode::Auto => "自动",
-            OpenMode::SingleFile => "单文件",
-            OpenMode::Directory => "目录",
+            OpenMode::Auto => t.m_auto.to_string(),
+            OpenMode::SingleFile => t.m_file.to_string(),
+            OpenMode::Directory => t.m_dir.to_string(),
         }
     }
 

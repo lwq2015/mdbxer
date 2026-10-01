@@ -1,15 +1,17 @@
 //! 左侧表（subDB）列表：过滤、排序、条数显示。
 
 use super::{MdbxerApp, TableSort};
+use crate::i18n::tr;
 
 /// 左侧表列表面板：标题 + 排序下拉 + 过滤框 + 可滚动列表。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    let t = tr();
     egui::Panel::left("table_list")
         .default_size(220.0)
         .resizable(true)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.strong("表 (subDB)");
+                ui.strong(t.tables_title);
                 ui.separator();
                 let mut sort = app.table_sort;
                 let ir = egui::ComboBox::from_id_salt("table_sort")
@@ -25,7 +27,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             });
             ui.add(
                 egui::TextEdit::singleline(&mut app.table_filter)
-                    .hint_text("过滤表名")
+                    .hint_text(t.filter_hint)
                     .desired_width(f32::INFINITY),
             );
             ui.separator();
@@ -36,15 +38,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let filter = app.table_filter.to_lowercase();
             let mut idx: Vec<usize> = (0..dbh.tables.len()).collect();
             idx.retain(|&i| {
-                filter.is_empty() || dbh.tables[i].display.to_lowercase().contains(&filter)
+                filter.is_empty() || dbh.tables[i].display().to_lowercase().contains(&filter)
             });
             match app.table_sort {
-                TableSort::NameAsc => idx.sort_by(|&a, &b| {
-                    dbh.tables[a].display.cmp(&dbh.tables[b].display)
-                }),
-                TableSort::NameDesc => idx.sort_by(|&a, &b| {
-                    dbh.tables[b].display.cmp(&dbh.tables[a].display)
-                }),
+                TableSort::NameAsc => {
+                    idx.sort_by(|&a, &b| dbh.tables[a].display().cmp(&dbh.tables[b].display()))
+                }
+                TableSort::NameDesc => {
+                    idx.sort_by(|&a, &b| dbh.tables[b].display().cmp(&dbh.tables[a].display()))
+                }
                 TableSort::CountAsc => {
                     idx.sort_by_key(|&i| dbh.tables[i].entries)
                 }
@@ -56,18 +58,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let mut clicked = None;
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for i in idx {
-                    let t = &dbh.tables[i];
+                    let tbl = &dbh.tables[i];
                     let selected = app.selected_table == Some(i);
-                    let mut text = format!("{}  ({} 条", t.display, t.entries);
-                    if !t.flags_desc.is_empty() {
-                        text.push_str(&format!("，{}", t.flags_desc));
-                    }
-                    text.push(')');
+                    let text = t.table_entry(&tbl.display(), tbl.entries, &tbl.flags_desc());
                     if ui
-                        .selectable_label(
-                            selected,
-                            egui::RichText::new(text).monospace(),
-                        )
+                        .selectable_label(selected, egui::RichText::new(text).monospace())
                         .clicked()
                     {
                         clicked = Some(i);

@@ -1,11 +1,15 @@
 //! 顶栏：打开模式/历史 + 文件/目录按钮 + 字节序/排版/单元格/面板开关（单行紧凑布局）。
+//! 最右侧为语言下拉。
 
 use super::MdbxerApp;
+use crate::config;
 use crate::db::OpenMode;
 use crate::fmt::{DecodeMode, Endian};
+use crate::i18n::{self, Lang};
 
-/// 顶栏面板：打开模式/历史 + 文件/目录按钮 + 字节序/排版/单元格 + 表/详情开关。
+/// 顶栏面板：打开模式/历史 + 文件/目录按钮 + 字节序/排版/单元格 + 表/详情开关 + 语言。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    let t = i18n::tr().clone();
     egui::Panel::top("top_bar").show(ui, |ui| {
         ui.horizontal(|ui| {
             let mut mode = app.open_mode;
@@ -20,7 +24,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             super::wheel_cycle(ui.ctx(), &ir.response, &OpenMode::ALL, &mut mode);
             app.open_mode = mode;
 
-            if ui.button("文件").clicked() {
+            if ui.button(t.btn_file).clicked() {
                 if let Some(p) = rfd::FileDialog::new()
                     .add_filter("MDBX", &["mdbx", "dat", "*"])
                     .pick_file()
@@ -29,13 +33,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     app.open_db(&p.display().to_string());
                 }
             }
-            if ui.button("目录").clicked() {
+            if ui.button(t.btn_dir).clicked() {
                 if let Some(p) = rfd::FileDialog::new().pick_folder() {
                     app.open_mode = OpenMode::Directory;
                     app.open_db(&p.display().to_string());
                 }
             }
-            if app.db.is_some() && ui.button("关闭").clicked() {
+            if app.db.is_some() && ui.button(t.btn_close).clicked() {
                 app.close_db();
             }
 
@@ -44,10 +48,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let mut del = None;
             egui::ComboBox::from_id_salt("history")
                 .width(56.0)
-                .selected_text("历史")
+                .selected_text(t.history)
                 .show_ui(ui, |ui| {
                     if app.history.entries.is_empty() {
-                        ui.label("（暂无历史记录）");
+                        ui.label(t.history_empty);
                     }
                     for (i, e) in app.history.entries.iter().enumerate() {
                         ui.horizontal(|ui| {
@@ -56,7 +60,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             }
                             if ui
                                 .small_button("×")
-                                .on_hover_text("从历史记录中删除该条")
+                                .on_hover_text(t.history_del_tip)
                                 .clicked()
                             {
                                 del = Some(i);
@@ -76,10 +80,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             ui.separator();
 
             // 字节序（默认小端，可切大端；影响整数/float/double 与自动猜测）
-            ui.label("字节序");
+            ui.label(t.endian);
             let mut en = app.endian;
             let ir = egui::ComboBox::from_id_salt("endian")
-                .width(54.0)
+                .width(72.0)
                 .selected_text(en.suffix())
                 .show_ui(ui, |ui| {
                     for e in Endian::ALL {
@@ -128,9 +132,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         ui.selectable_value(&mut cm, v, v.to_string());
                     }
                 });
-            let cm_resp = ir
-                .response
-                .on_hover_text("单元格最多显示的字符数（超出截断）");
+            let cm_resp = ir.response.on_hover_text(t.cell_max_tip);
             super::wheel_cycle(
                 ui.ctx(),
                 &cm_resp,
@@ -143,7 +145,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let mut ts = crate::fmt::thousands_sep();
             if ui
                 .selectable_label(ts, "1,234")
-                .on_hover_text("整数千位分隔（仅显示，不影响数据）")
+                .on_hover_text(t.thousands_tip)
                 .clicked()
             {
                 ts = !ts;
@@ -153,15 +155,38 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             ui.separator();
 
             let mut lv = app.left_visible;
-            if ui.selectable_label(lv, "表").clicked() {
+            if ui.selectable_label(lv, t.panel_tables).clicked() {
                 lv = !lv;
             }
             app.left_visible = lv;
             let mut dv = app.detail_visible;
-            if ui.selectable_label(dv, "详情").clicked() {
+            if ui.selectable_label(dv, t.panel_detail).clicked() {
                 dv = !dv;
             }
             app.detail_visible = dv;
+
+            // 语言选择：顶栏最右侧，切换即时生效并持久化
+            ui.separator();
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let old_lang = i18n::lang();
+                let mut lang = old_lang;
+                egui::ComboBox::from_id_salt("lang")
+                    .width(86.0)
+                    .selected_text(lang.label())
+                    .show_ui(ui, |ui| {
+                        for l in Lang::ALL {
+                            ui.selectable_value(&mut lang, l, l.label());
+                        }
+                    });
+                ui.label(t.language);
+                if lang != old_lang {
+                    i18n::set_lang(lang);
+                    config::save_lang(lang);
+                    // 统计/环境页是打开时缓存的，语言切换后强制重读
+                    app.stat_cache = None;
+                    app.env_cache = None;
+                }
+            });
         });
     });
 }
