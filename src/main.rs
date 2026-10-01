@@ -16,6 +16,7 @@ mod ui;
 /// 支持命令行传入数据库路径直接打开（便于拖文件到 exe）。
 fn main() -> eframe::Result<()> {
     let title = app_title();
+    let app_title = title.clone();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 760.0])
@@ -26,13 +27,12 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         &title,
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             load_cjk_fonts(&cc.egui_ctx);
-            let mut app = ui::MdbxerApp::new();
+            let mut app = ui::MdbxerApp::new(app_title);
             // 支持命令行传入路径直接打开（也便于拖文件到 exe）
             if let Some(p) = std::env::args().nth(1) {
-                app.path_input = p;
-                app.open_db();
+                app.open_db(&p);
             }
             Ok(Box::new(app))
         }),

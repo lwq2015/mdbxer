@@ -162,8 +162,6 @@ impl TableSort {
 
 pub struct MdbxerApp {
     // ── 顶栏 ──
-    /// 数据库路径输入框内容
-    pub path_input: String,
     /// 打开模式（自动/单文件/目录）
     pub open_mode: OpenMode,
     /// 历史记录（持久化到 %APPDATA%）
@@ -171,6 +169,8 @@ pub struct MdbxerApp {
     // ── 数据库 ──
     /// 当前打开的 MDBX 环境；None 表示未打开
     pub db: Option<DbHandle>,
+    /// 当前打开的数据库路径（用于窗口标题）；None 表示未打开
+    pub opened_path: Option<String>,
     // ── 左栏 ──
     /// 表名过滤输入框
     pub table_filter: String,
@@ -226,16 +226,22 @@ pub struct MdbxerApp {
     // ── 状态栏 ──
     /// 状态栏文本
     pub status: String,
+    // ── 窗口标题 ──
+    /// 基础标题（版本+日期，启动时由 main 传入）
+    title_base: String,
+    /// 当前已应用的窗口标题（含库路径），用于变化检测
+    title: String,
 }
 
 impl MdbxerApp {
     /// 新建应用状态：加载历史记录，其余字段取默认值。
-    pub fn new() -> Self {
+    /// `title_base` 为基础窗口标题（版本+日期），打开库后前缀库路径。
+    pub fn new(title_base: String) -> Self {
         Self {
-            path_input: String::new(),
             open_mode: OpenMode::Auto,
             history: History::load(),
             db: None,
+            opened_path: None,
             table_filter: String::new(),
             table_sort: TableSort::NameAsc,
             left_visible: true,
@@ -261,6 +267,8 @@ impl MdbxerApp {
             stat_cache: None,
             env_cache: None,
             status: "就绪".to_string(),
+            title: title_base.clone(),
+            title_base,
         }
     }
 
@@ -339,9 +347,9 @@ impl MdbxerApp {
 
     // ── 打开 / 关闭 ─────────────────────────────────────────────
 
-    /// 打开 `path_input` 指向的数据库；成功后加载第一页。
-    pub fn open_db(&mut self) {
-        let path = self.path_input.trim().trim_matches('"').to_string();
+    /// 打开 `path` 指向的数据库；成功后加载第一页并把路径写入窗口标题。
+    pub fn open_db(&mut self, path: &str) {
+        let path = path.trim().trim_matches('"').to_string();
         if path.is_empty() {
             self.status = "请输入数据库路径".to_string();
             return;
@@ -352,6 +360,7 @@ impl MdbxerApp {
                 let mode_desc = if handle.no_sub_dir { "单文件" } else { "目录" };
                 self.history.add(&path, self.open_mode.as_str());
                 self.db = Some(handle);
+                self.opened_path = Some(path.clone());
                 self.tab = CenterTab::Data;
                 self.stat_cache = None;
                 self.env_cache = None;
@@ -373,9 +382,10 @@ impl MdbxerApp {
         }
     }
 
-    /// 关闭当前数据库并清空所有相关状态。
+    /// 关闭当前数据库并清空所有相关状态；窗口标题恢复为基础标题。
     pub fn close_db(&mut self) {
         self.db = None;
+        self.opened_path = None;
         self.rows.clear();
         self.base_index = None;
         self.selected_table = None;
@@ -384,6 +394,18 @@ impl MdbxerApp {
         self.env_cache = None;
         self.detail.clear();
         self.status = "已关闭".to_string();
+    }
+
+    /// 检测 `opened_path` 变化，同步更新窗口标题。
+    fn update_title(&mut self, ctx: &egui::Context) {
+        let want = match &self.opened_path {
+            Some(p) => format!("{} · {p}", self.title_base),
+            None => self.title_base.clone(),
+        };
+        if want != self.title {
+            self.title = want.clone();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(want));
+        }
     }
 
     // ── 分页导航 ────────────────────────────────────────────────
@@ -703,11 +725,12 @@ impl eframe::App for MdbxerApp {
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         if let Some(file) = dropped.into_iter().next() {
             if let Some(path) = file.path().to_str() {
-                self.path_input = path.to_string();
                 self.open_mode = OpenMode::Auto;
-                self.open_db();
+                self.open_db(path);
             }
         }
+
+        self.update_title(ctx);
 
         topbar::show(ui, self);
         if self.db.is_some() {
