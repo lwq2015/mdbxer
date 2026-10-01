@@ -6,6 +6,8 @@ mod sidebar;
 mod statsview;
 mod topbar;
 
+pub use detail::DetailState;
+
 use crate::db::{self, Anchor, DbHandle, Direction, JumpKey, OpenMode, Row, TableInfo};
 use crate::fmt::DecodeMode;
 use crate::history::History;
@@ -13,7 +15,6 @@ use crate::history::History;
 pub const PAGE_SIZES: [usize; 5] = [50, 100, 200, 500, 1000];
 pub const DEFAULT_PAGE_SIZE: usize = 200;
 pub const DEFAULT_CELL_MAX: usize = 256;
-pub const DUP_PAGE_SIZE: usize = 100;
 
 /// 让 ComboBox 支持滚轮：悬停在按钮上（未展开）时逐格切换选项。
 /// - 鼠标滚轮：一个刻度事件切换一项（不跳格）
@@ -87,16 +88,22 @@ pub fn wheel_cycle<T: Copy + PartialEq>(
 /// 中间页签。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CenterTab {
+    /// 数据浏览（表格 + 翻页 + 跳转）
     Data,
+    /// 表统计（B+树/页分布/标志）
     TableStat,
+    /// 环境信息（几何/映射/事务/读者/主表）
     EnvInfo,
 }
 
 /// 页内排序列（Key 列排序即全局遍历方向，由 sort_desc 表达，不在此列）。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SortCol {
+    /// 绝对序号列
     Index,
+    /// 类型猜测列
     Type,
+    /// Value 列
     Value,
 }
 
@@ -110,12 +117,28 @@ impl SortCol {
     }
 }
 
+/// 一行的显示缓存：渲染与页内排序共用，避免每帧重复解码。
+pub struct RowView {
+    /// Key 的显示文本（按当前表格解码格式）
+    pub key_text: String,
+    /// Value 的显示文本（按当前表格解码格式）
+    pub val_text: String,
+    /// Value 的类型猜测标签
+    pub type_label: String,
+    /// val_text 开头能解析出的数值（数值排序用；hex/文本等为 None）
+    pub val_num: Option<f64>,
+}
+
 /// 左侧表列表排序。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TableSort {
+    /// 名称升序
     NameAsc,
+    /// 名称降序
     NameDesc,
+    /// 条数升序
     CountAsc,
+    /// 条数降序
     CountDesc,
 }
 
@@ -138,63 +161,75 @@ impl TableSort {
 }
 
 pub struct MdbxerApp {
-    // 顶栏
+    // ── 顶栏 ──
+    /// 数据库路径输入框内容
     pub path_input: String,
+    /// 打开模式（自动/单文件/目录）
     pub open_mode: OpenMode,
+    /// 历史记录（持久化到 %APPDATA%）
     pub history: History,
-    // 数据库
+    // ── 数据库 ──
+    /// 当前打开的 MDBX 环境；None 表示未打开
     pub db: Option<DbHandle>,
-    // 左栏
+    // ── 左栏 ──
+    /// 表名过滤输入框
     pub table_filter: String,
+    /// 表列表排序方式
     pub table_sort: TableSort,
+    /// 左栏（表列表）是否显示
     pub left_visible: bool,
-    // 中间
+    // ── 中间 ──
+    /// 当前页签
     pub tab: CenterTab,
+    /// 选中的表在 dbh.tables 中的下标
     pub selected_table: Option<usize>,
+    /// 全局遍历方向（true = 降序，即 Key 列排序）
     pub sort_desc: bool,
     /// 页内排序：(列, 升序?)。None = 表中读取出来的原始顺序
     pub col_sort: Option<(SortCol, bool)>,
+    /// 每页条数（用户可选 50/100/200/500/1000）
     pub page_size: usize,
+    /// 当前页数据行
     pub rows: Vec<Row>,
     /// 当前页首行的估算绝对序号（跳转型导航后为 None）
     pub base_index: Option<usize>,
+    /// 已在取值方向的最前
     pub at_start: bool,
+    /// 已在取值方向的最后
     pub at_end: bool,
+    /// 选中的行在 self.rows 中的下标
     pub selected_row: Option<usize>,
+    /// Key 跳转输入框内容
     pub jump_input: String,
-    pub grid_mode: DecodeMode,
+    /// Key 列解码格式（默认自动；编码固定的表可手动指定）
+    pub key_mode: DecodeMode,
+    /// Value 列解码格式（默认自动：Value 逐行猜测）
+    pub val_mode: DecodeMode,
     /// 多字节整数的字节序（默认小端，可切大端）
     pub endian: crate::fmt::Endian,
+    /// 单元格最多显示字符数（超出截断）
     pub cell_max: usize,
-    // 右栏
+    /// 当前页显示缓存（与 rows 一一对应），由 display_order 按需重建
+    pub views: Vec<RowView>,
+    /// 缓存生成时的解码参数 (key_mode, val_mode, endian, cell_max, 千位分隔)；None = 需重建
+    views_key: Option<(DecodeMode, DecodeMode, crate::fmt::Endian, usize, bool)>,
+    // ── 右栏 ──
+    /// 右栏（详情）是否显示
     pub detail_visible: bool,
-    pub key_mode: DecodeMode,
-    pub val_mode: DecodeMode,
-    pub show_addr: bool,
-    pub show_hex: bool,
-    pub show_ascii: bool,
-    pub hex_width: usize,
-    pub dup_total: usize,
-    pub dup_index: usize,
-    pub dup_page_start: usize,
-    pub dup_values: Vec<Vec<u8>>,
-    /// 右侧多值：序号跳转输入（1 起）
-    pub dup_jump_input: String,
-    /// 右侧多值：值内容搜索输入（文本或 hex(...)）
-    pub dup_search_input: String,
-    // 右栏大字段分段查看（Key / Value 各自的字节偏移与跳转输入）
-    pub key_seg_off: usize,
-    pub val_seg_off: usize,
-    pub key_seg_input: String,
-    pub val_seg_input: String,
-    // 页签缓存
+    /// 右栏详情状态（hex 视图配置 / 多值导航 / 大字段分段查看）
+    pub detail: DetailState,
+    // ── 页签缓存 ──
+    /// 表统计缓存：(表下标, 行数据)
     pub stat_cache: Option<(usize, Vec<(String, String)>)>,
+    /// 环境信息缓存
     pub env_cache: Option<Vec<(String, String, String)>>,
-    // 状态栏
+    // ── 状态栏 ──
+    /// 状态栏文本
     pub status: String,
 }
 
 impl MdbxerApp {
+    /// 新建应用状态：加载历史记录，其余字段取默认值。
     pub fn new() -> Self {
         Self {
             path_input: String::new(),
@@ -215,32 +250,21 @@ impl MdbxerApp {
             at_end: true,
             selected_row: None,
             jump_input: String::new(),
-            grid_mode: DecodeMode::Auto,
-            endian: crate::fmt::Endian::Little,
-            cell_max: DEFAULT_CELL_MAX,
             key_mode: DecodeMode::Auto,
             val_mode: DecodeMode::Auto,
-            show_addr: true,
-            show_hex: true,
-            show_ascii: true,
-            hex_width: crate::fmt::DEFAULT_HEX_WIDTH,
+            endian: crate::fmt::Endian::Little,
+            cell_max: DEFAULT_CELL_MAX,
+            views: Vec::new(),
+            views_key: None,
             detail_visible: true,
-            dup_total: 1,
-            dup_index: 0,
-            dup_page_start: 0,
-            dup_values: Vec::new(),
-            dup_jump_input: String::new(),
-            dup_search_input: String::new(),
-            key_seg_off: 0,
-            val_seg_off: 0,
-            key_seg_input: String::new(),
-            val_seg_input: String::new(),
+            detail: DetailState::default(),
             stat_cache: None,
             env_cache: None,
             status: "就绪".to_string(),
         }
     }
 
+    /// 当前选中的表信息（未打开库或未选表时为 None）。
     pub fn cur_table(&self) -> Option<&TableInfo> {
         self.db
             .as_ref()
@@ -248,29 +272,26 @@ impl MdbxerApp {
     }
 
     /// 当前页的显示顺序（实际行索引列表）。未排序时即读取顺序 0..n。
-    pub fn display_order(&self) -> Vec<usize> {
+    /// 页内排序使用 views 缓存的显示文本：Value 列数值按数值比较，其余按文本。
+    pub fn display_order(&mut self) -> Vec<usize> {
+        self.refresh_views();
         let mut order: Vec<usize> = (0..self.rows.len()).collect();
         let Some((col, asc)) = self.col_sort else { return order };
         match col {
             SortCol::Index => {}
             SortCol::Type => order.sort_by(|&a, &b| {
-                crate::fmt::guess(&self.rows[a].value, self.endian)
-                    .0
-                    .cmp(&crate::fmt::guess(&self.rows[b].value, self.endian).0)
+                self.views[a].type_label.cmp(&self.views[b].type_label)
             }),
             SortCol::Value => order.sort_by(|&a, &b| {
-                crate::fmt::decode(
-                    &self.rows[a].value,
-                    self.grid_mode,
-                    self.endian,
-                    self.cell_max,
-                )
-                .cmp(&crate::fmt::decode(
-                    &self.rows[b].value,
-                    self.grid_mode,
-                    self.endian,
-                    self.cell_max,
-                ))
+                let (va, vb) = (&self.views[a], &self.views[b]);
+                match (va.val_num, vb.val_num) {
+                    // 两边都是数值：按数值比（避免 "10" < "9" 的字典序问题）
+                    (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+                    // 数值排在文本前
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => va.val_text.cmp(&vb.val_text),
+                }
             }),
         }
         if !asc {
@@ -279,6 +300,35 @@ impl MdbxerApp {
         order
     }
 
+    /// 确保 views 显示缓存与 rows + 当前解码参数一致；任一变化时整页重建。
+    fn refresh_views(&mut self) {
+        let key = (
+            self.key_mode,
+            self.val_mode,
+            self.endian,
+            self.cell_max,
+            crate::fmt::thousands_sep(),
+        );
+        if self.views_key == Some(key) && self.views.len() == self.rows.len() {
+            return;
+        }
+        self.views = self
+            .rows
+            .iter()
+            .map(|r| {
+                let val_text = crate::fmt::decode(&r.value, self.val_mode, self.endian, self.cell_max);
+                RowView {
+                    key_text: crate::fmt::decode(&r.key, self.key_mode, self.endian, self.cell_max),
+                    type_label: crate::fmt::guess(&r.value, self.endian).0,
+                    val_num: leading_num(&val_text),
+                    val_text,
+                }
+            })
+            .collect();
+        self.views_key = Some(key);
+    }
+
+    /// 全局遍历方向（升序/降序）转为 db 层的 Direction。
     fn sort_dir(&self) -> Direction {
         if self.sort_desc {
             Direction::Backward
@@ -289,6 +339,7 @@ impl MdbxerApp {
 
     // ── 打开 / 关闭 ─────────────────────────────────────────────
 
+    /// 打开 `path_input` 指向的数据库；成功后加载第一页。
     pub fn open_db(&mut self) {
         let path = self.path_input.trim().trim_matches('"').to_string();
         if path.is_empty() {
@@ -312,7 +363,7 @@ impl MdbxerApp {
                     self.rows.clear();
                     self.base_index = None;
                     self.selected_row = None;
-                    self.clear_dups();
+                    self.detail.clear();
                     self.status = format!("已打开但没有任何数据表：{path}");
                 }
             }
@@ -322,6 +373,7 @@ impl MdbxerApp {
         }
     }
 
+    /// 关闭当前数据库并清空所有相关状态。
     pub fn close_db(&mut self) {
         self.db = None;
         self.rows.clear();
@@ -330,13 +382,14 @@ impl MdbxerApp {
         self.selected_row = None;
         self.stat_cache = None;
         self.env_cache = None;
-        self.clear_dups();
+        self.detail.clear();
         self.status = "已关闭".to_string();
     }
 
     // ── 分页导航 ────────────────────────────────────────────────
 
     /// 取一页并写入 self.rows，返回 (页内条数, has_more)。
+    /// 错误信息写入 status 并返回 None。
     fn fetch(
         &mut self,
         dir: Direction,
@@ -363,22 +416,25 @@ impl MdbxerApp {
         }
     }
 
+    /// 页面加载完成后：选中首行（或清空选中）并加载右侧多值。
     fn after_load(&mut self) {
         if self.rows.is_empty() {
             self.selected_row = None;
-            self.clear_dups();
+            self.detail.clear();
         } else {
             self.selected_row = Some(0);
             self.load_dups();
         }
     }
 
+    /// 切换选中表并加载第一页。
     pub fn select_table(&mut self, index: usize) {
         self.selected_table = Some(index);
         self.stat_cache = None;
         self.load_first_page();
     }
 
+    /// 首页（取值方向最前）。
     pub fn load_first_page(&mut self) {
         let dir = self.sort_dir();
         if let Some((_len, has_more)) = self.fetch(dir, None, false) {
@@ -389,6 +445,7 @@ impl MdbxerApp {
         }
     }
 
+    /// 末页（取值方向最后）。
     pub fn load_last_page(&mut self) {
         let opp = opposite(self.sort_dir());
         if let Some((_len, has_more)) = self.fetch(opp, None, false) {
@@ -401,6 +458,7 @@ impl MdbxerApp {
         }
     }
 
+    /// 下一页（沿当前遍历方向）。
     pub fn load_next_page(&mut self) {
         let Some(anchor) = self.rows.last().map(|r| self.anchor_of(r)) else {
             return;
@@ -420,6 +478,7 @@ impl MdbxerApp {
         }
     }
 
+    /// 上一页（沿当前遍历方向的反方向）。
     pub fn load_prev_page(&mut self) {
         let Some(anchor) = self.rows.first().map(|r| self.anchor_of(r)) else {
             return;
@@ -447,6 +506,7 @@ impl MdbxerApp {
 
     // ── 跳转 ────────────────────────────────────────────────────
 
+    /// Key 跳转（跳转型导航，base_index 置 None）。
     pub fn jump(&mut self) {
         let input = self.jump_input.trim().to_string();
         if input.is_empty() {
@@ -488,43 +548,28 @@ impl MdbxerApp {
 
     // ── 多值 ────────────────────────────────────────────────────
 
-    fn clear_dups(&mut self) {
-        self.dup_total = 1;
-        self.dup_index = 0;
-        self.dup_page_start = 0;
-        self.dup_values.clear();
-        self.dup_jump_input.clear();
-        self.dup_search_input.clear();
-    }
-
     /// 选中行后加载右侧多值内容。多值表按 Key 分组显示，选中分组行
     /// 即从该 Key 的第一个值开始；值列表每页 DUP_PAGE_SIZE 个懒加载。
     fn load_dups(&mut self) {
-        self.clear_dups();
-        // 换了行：Key/Value 分段偏移都归零
-        self.key_seg_off = 0;
-        self.val_seg_off = 0;
-        self.key_seg_input.clear();
-        self.val_seg_input.clear();
         let Some(row) = self.selected_row.and_then(|i| self.rows.get(i)) else {
+            self.detail.clear();
             return;
         };
-        let Some(dbh) = self.db.as_ref() else { return };
-        let Some(table) = self.cur_table() else { return };
-        if !table.dup_sort {
+        let key = row.key.clone();
+        let Some(table) = self.cur_table() else {
+            self.detail.clear();
             return;
-        }
-        let name = table.name.clone();
-        if let Ok((total, values)) =
-            db::dups_of(&dbh.db, name.as_deref(), &row.key, 0, DUP_PAGE_SIZE)
-        {
-            self.dup_total = total.max(1);
-            self.dup_index = 0;
-            self.dup_page_start = 0;
-            self.dup_values = values;
-        }
+        };
+        let (name, dup_sort) = (table.name.clone(), table.dup_sort);
+        let Some(dbh) = self.db.as_ref() else {
+            self.detail.clear();
+            return;
+        };
+        self.detail
+            .load_dups(&dbh.db, name.as_deref(), dup_sort, &key);
     }
 
+    /// 选中一行并加载其多值（普通表无操作）。
     pub fn select_row(&mut self, index: usize) {
         if self.selected_row == Some(index) {
             return;
@@ -533,171 +578,20 @@ impl MdbxerApp {
         self.load_dups();
     }
 
-    /// 跳转到当前 Key 的第 `idx` 个值（0 起）；自动夹到有效范围，跨值页时懒加载。
-    pub fn dup_goto(&mut self, idx: usize) {
-        if self.dup_total == 0 {
-            return;
-        }
-        let idx = idx.min(self.dup_total - 1);
-        let in_page = idx >= self.dup_page_start
-            && idx < self.dup_page_start + self.dup_values.len();
-        if !in_page {
-            let Some(row) = self.selected_row.and_then(|i| self.rows.get(i)) else {
-                return;
-            };
-            let key = row.key.clone();
-            let Some(dbh) = self.db.as_ref() else { return };
-            let Some(table) = self.cur_table() else { return };
-            let page_index = idx / DUP_PAGE_SIZE;
-            if let Ok((total, values)) = db::dups_of(
-                &dbh.db,
-                table.name.as_deref(),
-                &key,
-                page_index,
-                DUP_PAGE_SIZE,
-            ) {
-                self.dup_total = total.max(1);
-                self.dup_page_start = page_index * DUP_PAGE_SIZE;
-                self.dup_values = values;
-            }
-        }
-        self.dup_index = idx.min(self.dup_total.saturating_sub(1));
-        // 切换到另一个值：Value 分段偏移归零
-        self.val_seg_off = 0;
-        self.val_seg_input.clear();
-    }
-
-    /// 上/下一个值（边界停止）。
-    pub fn dup_step(&mut self, delta: isize) {
-        let new = self.dup_index as isize + delta;
-        if new < 0 || new >= self.dup_total as isize {
-            return;
-        }
-        self.dup_goto(new as usize);
-    }
-
-    /// 上/下翻一个值页（DUP_PAGE_SIZE 个值），到头自动夹住。
-    pub fn dup_page_step(&mut self, pages: isize) {
-        let target = self.dup_index as isize + pages * DUP_PAGE_SIZE as isize;
-        if target < 0 {
-            self.dup_goto(0);
+    /// 当前应显示的 value：多值表取当前 dup，否则取选中行的 value。
+    pub fn current_value(&self) -> Option<Vec<u8>> {
+        let row = self.selected_row.and_then(|i| self.rows.get(i))?;
+        let is_dup = self.cur_table().map(|t| t.dup_sort).unwrap_or(false);
+        if is_dup {
+            Some(
+                self.detail
+                    .dup_values
+                    .get(self.detail.dup_index.saturating_sub(self.detail.dup_page_start))
+                    .cloned()
+                    .unwrap_or_else(|| row.value.clone()),
+            )
         } else {
-            self.dup_goto(target as usize);
-        }
-    }
-
-    /// 序号跳转：输入为 1 起的十进制序号。
-    pub fn dup_jump(&mut self) {
-        let s = self.dup_jump_input.trim();
-        match s.parse::<usize>() {
-            Ok(n) if n >= 1 && n <= self.dup_total => {
-                self.dup_goto(n - 1);
-                self.status = format!("已定位到第 {n}/{} 个值", self.dup_total);
-            }
-            Ok(n) => {
-                self.status = format!("序号超出范围：{n}（共 {} 个值）", self.dup_total);
-            }
-            Err(_) => {
-                self.status = "请输入有效的值序号（1 起的十进制数字）".to_string();
-            }
-        }
-    }
-
-    /// 在当前 Key 的值中按内容搜索：文本按 UTF-8，hex(...)/0x... 按字节；字节子串匹配。
-    /// `forward=false` 向小序号方向查找；主方向无命中时回绕。
-    pub fn dup_search(&mut self, forward: bool) {
-        let s = self.dup_search_input.trim();
-        if s.is_empty() {
-            self.status = "请输入要搜索的值内容（文本或 hex(...)）".to_string();
-            return;
-        }
-        let needle = match parse_bytes_input(s) {
-            Ok(b) => b,
-            Err(e) => {
-                self.status = format!("搜索内容错误：{e}");
-                return;
-            }
-        };
-        let Some(row) = self.selected_row.and_then(|i| self.rows.get(i)) else {
-            return;
-        };
-        let key = row.key.clone();
-        let Some(dbh) = self.db.as_ref() else { return };
-        let Some(table) = self.cur_table() else { return };
-        // 向后从下一个值开始；向前从当前值之前开始
-        let from = if forward { self.dup_index + 1 } else { self.dup_index };
-        match db::dup_find(
-            &dbh.db,
-            table.name.as_deref(),
-            &key,
-            &needle,
-            from,
-            forward,
-        ) {
-            Ok(Some((i, _))) => {
-                let wrapped = forward && i < from || !forward && i >= from;
-                self.dup_goto(i);
-                self.status = if wrapped {
-                    format!("已回绕定位到第 {}/{} 个值", i + 1, self.dup_total)
-                } else {
-                    format!("已定位到第 {}/{} 个值", i + 1, self.dup_total)
-                };
-            }
-            Ok(None) => {
-                self.status = "当前 Key 的值中没有匹配内容".to_string();
-            }
-            Err(e) => {
-                self.status = format!("搜索失败：{e}");
-            }
-        }
-    }
-
-    // ── 大字段分段查看 / 导出 ───────────────────────────────────
-
-    pub fn seg_off(&self, is_key: bool) -> usize {
-        if is_key { self.key_seg_off } else { self.val_seg_off }
-    }
-
-    fn seg_state_mut(&mut self, is_key: bool) -> (&mut usize, &mut String) {
-        if is_key {
-            (&mut self.key_seg_off, &mut self.key_seg_input)
-        } else {
-            (&mut self.val_seg_off, &mut self.val_seg_input)
-        }
-    }
-
-    /// 上/下翻 `pages` 个段（每段 fmt::PAGE_BYTES 字节），自动夹到有效范围。
-    pub fn seg_step(&mut self, is_key: bool, total: usize, pages: isize) {
-        let (off, _) = self.seg_state_mut(is_key);
-        let cur = (*off / crate::fmt::PAGE_BYTES) as isize;
-        let max_seg = total.saturating_sub(1) / crate::fmt::PAGE_BYTES;
-        let target = (cur + pages).clamp(0, max_seg as isize) as usize;
-        *off = target * crate::fmt::PAGE_BYTES;
-    }
-
-    /// 跳至指定偏移：十进制或 0x 十六进制；向下对齐到段边界并夹到末尾段。
-    pub fn seg_jump(&mut self, is_key: bool, total: usize) {
-        let (off, input) = self.seg_state_mut(is_key);
-        let s = input.trim();
-        let parsed = if let Some(h) = s
-            .strip_prefix("0x")
-            .or_else(|| s.strip_prefix("0X"))
-        {
-            usize::from_str_radix(h, 16)
-        } else {
-            s.parse::<usize>()
-        };
-        match parsed {
-            Ok(v) if v < total => {
-                *off = (v / crate::fmt::PAGE_BYTES) * crate::fmt::PAGE_BYTES;
-                self.status = format!("已跳至偏移 {off}（0x{off:X}）");
-            }
-            Ok(v) => {
-                self.status = format!("偏移超出范围：{v}（共 {total} 字节）");
-            }
-            Err(_) => {
-                self.status = "请输入十进制偏移，或 0x 开头的十六进制偏移".to_string();
-            }
+            Some(row.value.clone())
         }
     }
 
@@ -722,29 +616,36 @@ impl MdbxerApp {
             }
         }
     }
-
-    /// 当前应显示的 value：多值表取当前 dup，否则取选中行的 value。
-    pub fn current_value(&self) -> Option<Vec<u8>> {
-        let row = self.selected_row.and_then(|i| self.rows.get(i))?;
-        let is_dup = self.cur_table().map(|t| t.dup_sort).unwrap_or(false);
-        if is_dup {
-            Some(
-                self.dup_values
-                    .get(self.dup_index.saturating_sub(self.dup_page_start))
-                    .cloned()
-                    .unwrap_or_else(|| row.value.clone()),
-            )
-        } else {
-            Some(row.value.clone())
-        }
-    }
 }
 
+/// 反转取值方向（供"上一页"等反向操作使用）。
 fn opposite(dir: Direction) -> Direction {
     match dir {
         Direction::Forward => Direction::Backward,
         Direction::Backward => Direction::Forward,
     }
+}
+
+/// 从 Value 显示文本提取数值供排序：整体可解析（"42"/"2.5"/"1e20"/"1,234"），
+/// 或去掉"（补零）"后缀、" → 日期"注释后可解析时返回 Some；否则 None 按文本排序。
+fn leading_num(s: &str) -> Option<f64> {
+    // 先剥掉千位分隔逗号，再按纯数字解析
+    let cleaned: String = s.trim().replace(',', "");
+    let t = cleaned.as_str();
+    if let Ok(v) = t.parse::<f64>() {
+        return Some(v);
+    }
+    if let Some(p) = t.strip_suffix("（补零）") {
+        if let Ok(v) = p.trim().parse::<f64>() {
+            return Some(v);
+        }
+    }
+    if let Some((p, _)) = t.split_once(" → ") {
+        if let Ok(v) = p.trim().parse::<f64>() {
+            return Some(v);
+        }
+    }
+    None
 }
 
 /// 解析跳转输入：hex(...)/0x... → 字节；整数键表接受十进制；其余按 UTF-8 文本。
@@ -782,6 +683,7 @@ pub(crate) fn parse_bytes_input(s: &str) -> Result<Vec<u8>, String> {
     }
 }
 
+/// 解析十六进制文本为字节：忽略空格/下划线/冒号，长度须为偶数。
 fn parse_hex(h: &str) -> Result<Vec<u8>, String> {
     let cleaned: String = h.chars().filter(|c| !matches!(c, ' ' | '_' | ':')).collect();
     if cleaned.is_empty() || cleaned.len() % 2 != 0 {

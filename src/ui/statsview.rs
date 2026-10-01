@@ -3,6 +3,7 @@
 use super::MdbxerApp;
 use crate::db;
 
+/// "表统计"页签：按选中表缓存，点"刷新"时清缓存重读。
 pub fn show_table_stat(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let Some(index) = app.selected_table else {
         ui.label("请选择左侧表");
@@ -41,6 +42,7 @@ pub fn show_table_stat(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     });
 }
 
+/// "环境信息"页签：整个库一份缓存，点"刷新"重读。
 pub fn show_env_info(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     if app.env_cache.is_none() {
         let Some(dbh) = &app.db else { return };

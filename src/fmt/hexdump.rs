@@ -12,6 +12,8 @@ pub const DEFAULT_HEX_WIDTH: usize = 8;
 ///
 /// `base_offset` 为这段数据在原始字节序列中的起始偏移，
 /// 地址列显示的是绝对偏移（分段查看时每段从上一段末尾继续编号）。
+///
+/// 空数据返回"（空）"。
 pub fn hex_dump(
     bytes: &[u8],
     width: usize,

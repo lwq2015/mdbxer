@@ -2,6 +2,7 @@
 
 use super::{MdbxerApp, TableSort};
 
+/// 左侧表列表面板：标题 + 排序下拉 + 过滤框 + 可滚动列表。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     egui::Panel::left("table_list")
         .default_size(220.0)

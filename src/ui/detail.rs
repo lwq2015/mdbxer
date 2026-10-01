@@ -1,10 +1,269 @@
-//! 右侧详情：Key / Value 卡片（格式下拉、复制、文本、hex dump、多值翻页）。
+//! 右侧详情：Key / Value 卡片（格式下拉、复制、文本、hex dump、多值翻页），
+//! 以及右栏全部状态（[`DetailState`]）。
 
-use super::MdbxerApp;
+use super::{MdbxerApp, parse_bytes_input};
+use crate::db;
 use crate::fmt::{self, DecodeMode};
+use libmdbx::{Database, NoWriteMap};
 
+/// 右侧多值导航：每页懒加载的值个数。
+pub const DUP_PAGE_SIZE: usize = 100;
+
+/// 右侧详情面板状态：hex 视图配置、多值（DUP_SORT）导航、大字段分段查看。
+pub struct DetailState {
+    /// Key 卡片的解码格式
+    pub key_mode: DecodeMode,
+    /// Value 卡片的解码格式
+    pub val_mode: DecodeMode,
+    /// hex dump 是否显示地址列
+    pub show_addr: bool,
+    /// hex dump 是否显示十六进制列
+    pub show_hex: bool,
+    /// hex dump 是否显示 ASCII 列
+    pub show_ascii: bool,
+    /// hex dump 行宽（每行字节数：4/8/16/32）
+    pub hex_width: usize,
+    /// 多值表当前 Key 的值总数
+    pub dup_total: usize,
+    /// 当前选中值的全局序号（0 起）
+    pub dup_index: usize,
+    /// dup_values 中第一个值的全局序号（跨页加载用）
+    pub dup_page_start: usize,
+    /// 当前值页的数据（最多 DUP_PAGE_SIZE 个）
+    pub dup_values: Vec<Vec<u8>>,
+    /// 多值：序号跳转输入（1 起）
+    pub dup_jump_input: String,
+    /// 多值：值内容搜索输入（文本或 hex(...)）
+    pub dup_search_input: String,
+    /// Key 卡片当前段起始偏移
+    pub key_seg_off: usize,
+    /// Value 卡片当前段起始偏移
+    pub val_seg_off: usize,
+    /// Key 卡片偏移跳转输入框
+    pub key_seg_input: String,
+    /// Value 卡片偏移跳转输入框
+    pub val_seg_input: String,
+}
+
+impl Default for DetailState {
+    fn default() -> Self {
+        Self {
+            key_mode: DecodeMode::Auto,
+            val_mode: DecodeMode::Auto,
+            show_addr: true,
+            show_hex: true,
+            show_ascii: true,
+            hex_width: fmt::DEFAULT_HEX_WIDTH,
+            dup_total: 1,
+            dup_index: 0,
+            dup_page_start: 0,
+            dup_values: Vec::new(),
+            dup_jump_input: String::new(),
+            dup_search_input: String::new(),
+            key_seg_off: 0,
+            val_seg_off: 0,
+            key_seg_input: String::new(),
+            val_seg_input: String::new(),
+        }
+    }
+}
+
+/// 多值/分段操作需要的数据库上下文：库句柄 + 表名（None = 主表）+ 当前 Key。
+pub struct DupCtx<'a> {
+    /// 数据库句柄（只读）
+    pub db: &'a Database<NoWriteMap>,
+    /// 表名；None = 主表
+    pub table: Option<&'a str>,
+    /// 当前选中行的 Key 字节
+    pub key: &'a [u8],
+}
+
+impl DetailState {
+    /// 清空多值与分段状态（换行/换表/关库时调用）。
+    pub fn clear(&mut self) {
+        self.dup_total = 1;
+        self.dup_index = 0;
+        self.dup_page_start = 0;
+        self.dup_values.clear();
+        self.dup_jump_input.clear();
+        self.dup_search_input.clear();
+        self.key_seg_off = 0;
+        self.val_seg_off = 0;
+        self.key_seg_input.clear();
+        self.val_seg_input.clear();
+    }
+
+    /// 加载指定 Key 的多值首页（值列表每页 DUP_PAGE_SIZE 个懒加载）；
+    /// 非多值表只清空状态。
+    ///
+    /// - `table`：None = 主表
+    /// - `dup_sort`：该表是否为 DUP_SORT 多值表
+    /// - `key`：选中行的 Key 字节
+    pub fn load_dups(
+        &mut self,
+        db: &Database<NoWriteMap>,
+        table: Option<&str>,
+        dup_sort: bool,
+        key: &[u8],
+    ) {
+        self.clear();
+        if !dup_sort {
+            return;
+        }
+        if let Ok((total, values)) = db::dups_of(db, table, key, 0, DUP_PAGE_SIZE) {
+            self.dup_total = total.max(1);
+            self.dup_values = values;
+        }
+    }
+
+    /// 跳转到当前 Key 的第 `idx` 个值（0 起）；自动夹到有效范围，跨值页时懒加载。
+    pub fn dup_goto(&mut self, ctx: &DupCtx, idx: usize) {
+        if self.dup_total == 0 {
+            return;
+        }
+        let idx = idx.min(self.dup_total - 1);
+        let in_page =
+            idx >= self.dup_page_start && idx < self.dup_page_start + self.dup_values.len();
+        if !in_page {
+            let page_index = idx / DUP_PAGE_SIZE;
+            if let Ok((total, values)) =
+                db::dups_of(ctx.db, ctx.table, ctx.key, page_index, DUP_PAGE_SIZE)
+            {
+                self.dup_total = total.max(1);
+                self.dup_page_start = page_index * DUP_PAGE_SIZE;
+                self.dup_values = values;
+            }
+        }
+        self.dup_index = idx.min(self.dup_total.saturating_sub(1));
+        // 切换到另一个值：Value 分段偏移归零
+        self.val_seg_off = 0;
+        self.val_seg_input.clear();
+    }
+
+    /// 上/下一个值（边界停止）。
+    pub fn dup_step(&mut self, ctx: &DupCtx, delta: isize) {
+        let new = self.dup_index as isize + delta;
+        if new < 0 || new >= self.dup_total as isize {
+            return;
+        }
+        self.dup_goto(ctx, new as usize);
+    }
+
+    /// 上/下翻一个值页（DUP_PAGE_SIZE 个值），到头自动夹住。
+    pub fn dup_page_step(&mut self, ctx: &DupCtx, pages: isize) {
+        let target = self.dup_index as isize + pages * DUP_PAGE_SIZE as isize;
+        if target < 0 {
+            self.dup_goto(ctx, 0);
+        } else {
+            self.dup_goto(ctx, target as usize);
+        }
+    }
+
+    /// 序号跳转：输入为 1 起的十进制序号。返回状态栏消息。
+    pub fn dup_jump(&mut self, ctx: &DupCtx) -> String {
+        let s = self.dup_jump_input.trim();
+        match s.parse::<usize>() {
+            Ok(n) if n >= 1 && n <= self.dup_total => {
+                self.dup_goto(ctx, n - 1);
+                format!("已定位到第 {n}/{} 个值", self.dup_total)
+            }
+            Ok(n) => format!("序号超出范围：{n}（共 {} 个值）", self.dup_total),
+            Err(_) => "请输入有效的值序号（1 起的十进制数字）".to_string(),
+        }
+    }
+
+    /// 在当前 Key 的值中按内容搜索：文本按 UTF-8，hex(...)/0x... 按字节；字节子串匹配。
+    /// `forward=false` 向小序号方向查找；主方向无命中时回绕。返回状态栏消息。
+    pub fn dup_search(&mut self, ctx: &DupCtx, forward: bool) -> String {
+        let s = self.dup_search_input.trim();
+        if s.is_empty() {
+            return "请输入要搜索的值内容（文本或 hex(...)）".to_string();
+        }
+        let needle = match parse_bytes_input(s) {
+            Ok(b) => b,
+            Err(e) => return format!("搜索内容错误：{e}"),
+        };
+        // 向后从下一个值开始；向前从当前值之前开始
+        let from = if forward { self.dup_index + 1 } else { self.dup_index };
+        match db::dup_find(ctx.db, ctx.table, ctx.key, &needle, from, forward) {
+            Ok(Some((i, _))) => {
+                let wrapped = forward && i < from || !forward && i >= from;
+                self.dup_goto(ctx, i);
+                if wrapped {
+                    format!("已回绕定位到第 {}/{} 个值", i + 1, self.dup_total)
+                } else {
+                    format!("已定位到第 {}/{} 个值", i + 1, self.dup_total)
+                }
+            }
+            Ok(None) => "当前 Key 的值中没有匹配内容".to_string(),
+            Err(e) => format!("搜索失败：{e}"),
+        }
+    }
+
+    /// Key/Value 卡片当前的解码格式（`is_key` 决定用 key_mode 还是 val_mode）。
+    pub fn mode_of(&self, is_key: bool) -> DecodeMode {
+        if is_key { self.key_mode } else { self.val_mode }
+    }
+
+    /// 写回 Key/Value 卡片的解码格式。
+    pub fn set_mode(&mut self, is_key: bool, mode: DecodeMode) {
+        if is_key {
+            self.key_mode = mode;
+        } else {
+            self.val_mode = mode;
+        }
+    }
+
+    /// Key/Value 卡片当前段偏移（`is_key=true` 取 Key，否则 Value）。
+    pub fn seg_off(&self, is_key: bool) -> usize {
+        if is_key { self.key_seg_off } else { self.val_seg_off }
+    }
+
+    /// Key/Value 卡片分段状态（偏移 + 跳转输入框）的可变引用。
+    fn seg_state_mut(&mut self, is_key: bool) -> (&mut usize, &mut String) {
+        if is_key {
+            (&mut self.key_seg_off, &mut self.key_seg_input)
+        } else {
+            (&mut self.val_seg_off, &mut self.val_seg_input)
+        }
+    }
+
+    /// 上/下翻 `pages` 个段（每段 fmt::PAGE_BYTES 字节），自动夹到有效范围。
+    pub fn seg_step(&mut self, is_key: bool, total: usize, pages: isize) {
+        let (off, _) = self.seg_state_mut(is_key);
+        let cur = (*off / fmt::PAGE_BYTES) as isize;
+        let max_seg = total.saturating_sub(1) / fmt::PAGE_BYTES;
+        let target = (cur + pages).clamp(0, max_seg as isize) as usize;
+        *off = target * fmt::PAGE_BYTES;
+    }
+
+    /// 跳至指定偏移：十进制或 0x 十六进制；向下对齐到段边界并夹到末尾段。
+    /// 返回状态栏消息。
+    pub fn seg_jump(&mut self, is_key: bool, total: usize) -> String {
+        let (off, input) = self.seg_state_mut(is_key);
+        let s = input.trim();
+        let parsed = if let Some(h) = s
+            .strip_prefix("0x")
+            .or_else(|| s.strip_prefix("0X"))
+        {
+            usize::from_str_radix(h, 16)
+        } else {
+            s.parse::<usize>()
+        };
+        match parsed {
+            Ok(v) if v < total => {
+                *off = (v / fmt::PAGE_BYTES) * fmt::PAGE_BYTES;
+                format!("已跳至偏移 {off}（0x{off:X}）")
+            }
+            Ok(v) => format!("偏移超出范围：{v}（共 {total} 字节）"),
+            Err(_) => "请输入十进制偏移，或 0x 开头的十六进制偏移".to_string(),
+        }
+    }
+}
+
+/// 右栏入口：无选中行时显示提示；有选中行时显示 Key/Value 两张卡片。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
-    let max_w = detail_max_width(ui, app);
+    let max_w = detail_max_width(ui, &app.detail);
     egui::Panel::right("detail_panel")
         .default_size(360.0)
         .size_range(240.0..=max_w)
@@ -21,17 +280,17 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let Some(value) = app.current_value() else { return };
             let key_no = app.base_index.map(|b| b + row_idx + 1);
             let dup_sort = app.cur_table().map(|t| t.dup_sort).unwrap_or(false);
-            let (dup_index, dup_total) = (app.dup_index, app.dup_total);
+            let (dup_index, dup_total) = (app.detail.dup_index, app.detail.dup_total);
 
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("十六进制视图：");
-                    ui.checkbox(&mut app.show_addr, "地址");
-                    ui.checkbox(&mut app.show_hex, "HEX");
-                    ui.checkbox(&mut app.show_ascii, "ASCII");
+                    ui.checkbox(&mut app.detail.show_addr, "地址");
+                    ui.checkbox(&mut app.detail.show_hex, "HEX");
+                    ui.checkbox(&mut app.detail.show_ascii, "ASCII");
                     ui.separator();
                     ui.label("宽度");
-                    let mut w = app.hex_width;
+                    let mut w = app.detail.hex_width;
                     let ir = egui::ComboBox::from_id_salt("hex_width")
                         .selected_text(w.to_string())
                         .show_ui(ui, |ui| {
@@ -40,7 +299,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             }
                         });
                     super::wheel_cycle(ui.ctx(), &ir.response, &fmt::HEX_WIDTHS, &mut w);
-                    app.hex_width = w;
+                    app.detail.hex_width = w;
                 });
                 ui.separator();
 
@@ -48,7 +307,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     Some(n) => format!("Key #{n}"),
                     None => "Key".to_string(),
                 };
-                kv_card(ui, app, &key_title, &key, true);
+                kv_card(ui, app, &key_title, &key, true, &key);
                 ui.add_space(8.0);
 
                 let val_title = if dup_sort {
@@ -56,18 +315,26 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 } else {
                     "Value".to_string()
                 };
-                kv_card(ui, app, &val_title, &value, false);
+                kv_card(ui, app, &val_title, &value, false, &key);
             });
         });
 }
 
-/// 一个 Key 或 Value 卡片。`is_key` 决定使用 key_mode 还是 val_mode。
-fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is_key: bool) {
+/// 一个 Key 或 Value 卡片。`is_key` 决定使用 key_mode 还是 val_mode；
+/// `key` 为选中行的 Key 字节（多值导航操作要用）。
+fn kv_card(
+    ui: &mut egui::Ui,
+    app: &mut MdbxerApp,
+    title: &str,
+    bytes: &[u8],
+    is_key: bool,
+    key: &[u8],
+) {
     let dup_sort = app.cur_table().map(|t| t.dup_sort).unwrap_or(false);
     let save_name = if is_key {
         "key.bin".to_string()
     } else if dup_sort {
-        format!("value_{:06}.bin", app.dup_index + 1)
+        format!("value_{:06}.bin", app.detail.dup_index + 1)
     } else {
         "value.bin".to_string()
     };
@@ -79,7 +346,7 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("复制").clicked() {
                     ui.ctx()
-                        .copy_text(text_of(bytes, mode_of(app, is_key), app.endian));
+                        .copy_text(text_of(bytes, app.detail.mode_of(is_key), app.endian));
                 }
                 if ui
                     .button("另存…")
@@ -89,7 +356,7 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
                     app.save_bytes(&save_name, bytes);
                 }
                 // 格式下拉
-                let mut mode = mode_of(app, is_key);
+                let mut mode = app.detail.mode_of(is_key);
                 let ir = egui::ComboBox::from_id_salt(("detail_mode", is_key))
                     .selected_text(mode.label())
                     .height(430.0)
@@ -99,14 +366,14 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
                         }
                     });
                 super::wheel_cycle(ui.ctx(), &ir.response, &DecodeMode::ALL, &mut mode);
-                set_mode(app, is_key, mode);
+                app.detail.set_mode(is_key, mode);
             });
         });
 
         // 大字段分段：固定放在标题行正下方，避免随字节数/多值导航行数上下位移。
         // 每段 fmt::PAGE_BYTES 字节，超出时显示导航条。
         let total = bytes.len();
-        let off = app.seg_off(is_key);
+        let off = app.detail.seg_off(is_key);
         let off = if off >= total {
             total.saturating_sub(fmt::PAGE_BYTES.min(total))
         } else {
@@ -120,7 +387,7 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
                     .on_hover_text("上一段（64 KiB）")
                     .clicked()
                 {
-                    app.seg_step(is_key, total, -1);
+                    app.detail.seg_step(is_key, total, -1);
                 }
                 if ui
                     .add_enabled(
@@ -130,12 +397,12 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
                     .on_hover_text("下一段（64 KiB）")
                     .clicked()
                 {
-                    app.seg_step(is_key, total, 1);
+                    app.detail.seg_step(is_key, total, 1);
                 }
                 let input = if is_key {
-                    &mut app.key_seg_input
+                    &mut app.detail.key_seg_input
                 } else {
-                    &mut app.val_seg_input
+                    &mut app.detail.val_seg_input
                 };
                 let resp = ui.add(
                     egui::TextEdit::singleline(input)
@@ -143,7 +410,7 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
                         .hint_text("偏移/0x.."),
                 );
                 if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    app.seg_jump(is_key, total);
+                    app.status = app.detail.seg_jump(is_key, total);
                 }
                 let seg_no = off / fmt::PAGE_BYTES + 1;
                 let seg_cnt = (total + fmt::PAGE_BYTES - 1) / fmt::PAGE_BYTES;
@@ -156,87 +423,96 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
         // 多值导航：仅 Value 卡片、多值表显示
         let is_dup = !is_key && app.cur_table().map(|t| t.dup_sort).unwrap_or(false);
         if is_dup {
-            let (idx, total) = (app.dup_index, app.dup_total);
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(idx > 0, egui::Button::new("⏮"))
-                    .on_hover_text("第一个值")
-                    .clicked()
-                {
-                    app.dup_goto(0);
-                }
-                if ui
-                    .add_enabled(idx > 0, egui::Button::new("⏪"))
-                    .on_hover_text("向前翻 100 个值")
-                    .clicked()
-                {
-                    app.dup_page_step(-1);
-                }
-                if ui
-                    .add_enabled(idx > 0, egui::Button::new("◀"))
-                    .on_hover_text("上一个值")
-                    .clicked()
-                {
-                    app.dup_step(-1);
-                }
-                if ui
-                    .add_enabled(idx + 1 < total, egui::Button::new("▶"))
-                    .on_hover_text("下一个值")
-                    .clicked()
-                {
-                    app.dup_step(1);
-                }
-                if ui
-                    .add_enabled(idx + 1 < total, egui::Button::new("⏩"))
-                    .on_hover_text("向后翻 100 个值")
-                    .clicked()
-                {
-                    app.dup_page_step(1);
-                }
-                if ui
-                    .add_enabled(idx + 1 < total, egui::Button::new("⏭"))
-                    .on_hover_text("最后一个值")
-                    .clicked()
-                {
-                    app.dup_goto(total.saturating_sub(1));
-                }
-                ui.label("跳至");
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut app.dup_jump_input)
-                        .desired_width(48.0)
-                        .hint_text("#"),
-                );
-                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    app.dup_jump();
-                }
-            });
-            ui.horizontal(|ui| {
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut app.dup_search_input)
-                        .desired_width(178.0)
-                        .hint_text("搜索值：文本或 hex(...)"),
-                );
-                let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if ui
-                    .button("↑")
-                    .on_hover_text("向前查找（值子串；到头回绕）")
-                    .clicked()
-                {
-                    app.dup_search(false);
-                }
-                if ui
-                    .button("↓")
-                    .on_hover_text("向后查找（回车等效；到头回绕）")
-                    .clicked() || enter
-                {
-                    app.dup_search(true);
-                }
-            });
-            ui.add_space(2.0);
+            let (idx, total) = (app.detail.dup_index, app.detail.dup_total);
+            let table_name = app.cur_table().and_then(|t| t.name.clone());
+            if let Some(dbh) = app.db.as_ref() {
+                let dctx = DupCtx {
+                    db: &dbh.db,
+                    table: table_name.as_deref(),
+                    key,
+                };
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(idx > 0, egui::Button::new("⏮"))
+                        .on_hover_text("第一个值")
+                        .clicked()
+                    {
+                        app.detail.dup_goto(&dctx, 0);
+                    }
+                    if ui
+                        .add_enabled(idx > 0, egui::Button::new("⏪"))
+                        .on_hover_text("向前翻 100 个值")
+                        .clicked()
+                    {
+                        app.detail.dup_page_step(&dctx, -1);
+                    }
+                    if ui
+                        .add_enabled(idx > 0, egui::Button::new("◀"))
+                        .on_hover_text("上一个值")
+                        .clicked()
+                    {
+                        app.detail.dup_step(&dctx, -1);
+                    }
+                    if ui
+                        .add_enabled(idx + 1 < total, egui::Button::new("▶"))
+                        .on_hover_text("下一个值")
+                        .clicked()
+                    {
+                        app.detail.dup_step(&dctx, 1);
+                    }
+                    if ui
+                        .add_enabled(idx + 1 < total, egui::Button::new("⏩"))
+                        .on_hover_text("向后翻 100 个值")
+                        .clicked()
+                    {
+                        app.detail.dup_page_step(&dctx, 1);
+                    }
+                    if ui
+                        .add_enabled(idx + 1 < total, egui::Button::new("⏭"))
+                        .on_hover_text("最后一个值")
+                        .clicked()
+                    {
+                        app.detail.dup_goto(&dctx, total.saturating_sub(1));
+                    }
+                    ui.label("跳至");
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut app.detail.dup_jump_input)
+                            .desired_width(48.0)
+                            .hint_text("#"),
+                    );
+                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        app.status = app.detail.dup_jump(&dctx);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut app.detail.dup_search_input)
+                            .desired_width(178.0)
+                            .hint_text("搜索值：文本或 hex(...)"),
+                    );
+                    let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if ui
+                        .button("↑")
+                        .on_hover_text("向前查找（值子串；到头回绕）")
+                        .clicked()
+                    {
+                        app.status = app.detail.dup_search(&dctx, false);
+                    }
+                    if ui
+                        .button("↓")
+                        .on_hover_text("向后查找（回车等效；到头回绕）")
+                        .clicked()
+                        || enter
+                    {
+                        app.status = app.detail.dup_search(&dctx, true);
+                    }
+                });
+                ui.add_space(2.0);
+            }
         }
 
         // 自动模式时显示猜测的类型
-        if mode_of(app, is_key) == DecodeMode::Auto {
+        if app.detail.mode_of(is_key) == DecodeMode::Auto {
             ui.weak(format!(
                 "猜测：{}，{} 字节",
                 fmt::guess(bytes, app.endian).0,
@@ -252,11 +528,13 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
 
         // 文本视图（可折叠；长文本默认折叠，方便直接看 hex）。
         // 高度按内容自适应：行少就收缩，超过 16 行封顶并出滚动条。
+        // 字符额度按最宽的 binary 展开（9 字符/字节）+ 64 余量，
+        // 避免时间戳这类"小字节大文本"被截断出省略号。
         let text = fmt::decode(
             window,
-            mode_of(app, is_key),
+            app.detail.mode_of(is_key),
             app.endian,
-            window.len() * 4 + 16,
+            window.len() * 9 + 64,
         );
         let text_rows = text.lines().count().clamp(1, 16);
         let default_open = total <= 512;
@@ -277,10 +555,10 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
         // 超过 20 行封顶并出滚动条，避免整段（宽 8 时最多 8192 行）撑爆。
         let dump = fmt::hex_dump(
             window,
-            app.hex_width,
-            app.show_addr,
-            app.show_hex,
-            app.show_ascii,
+            app.detail.hex_width,
+            app.detail.show_addr,
+            app.detail.show_hex,
+            app.detail.show_ascii,
             off,
         );
         let hex_rows = dump.lines().count().clamp(1, 20);
@@ -299,18 +577,7 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
     });
 }
 
-fn mode_of(app: &MdbxerApp, is_key: bool) -> DecodeMode {
-    if is_key { app.key_mode } else { app.val_mode }
-}
-
-fn set_mode(app: &mut MdbxerApp, is_key: bool, mode: DecodeMode) {
-    if is_key {
-        app.key_mode = mode;
-    } else {
-        app.val_mode = mode;
-    }
-}
-
+/// 复制按钮用：完整解码文本（不受 cell_max 截断）。
 fn text_of(bytes: &[u8], mode: DecodeMode, endian: fmt::Endian) -> String {
     fmt::decode(bytes, mode, endian, usize::MAX)
 }
@@ -318,21 +585,21 @@ fn text_of(bytes: &[u8], mode: DecodeMode, endian: fmt::Endian) -> String {
 /// 右栏宽度上限：保证当前 hex 配置下最长一行（32 字节时最宽）
 /// 在面板内不折行。按等宽字体实测字宽计算，再扣除各级边距；
 /// 同时不超过窗口宽度减去给左栏+表格保留的 300 点。
-fn detail_max_width(ui: &egui::Ui, app: &MdbxerApp) -> f32 {
+fn detail_max_width(ui: &egui::Ui, d: &DetailState) -> f32 {
     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
     let char_w = ui.fonts_mut(|f| f.glyph_width(&font_id, '0'));
 
-    let n = app.hex_width as f32;
+    let n = d.hex_width as f32;
     let mut line_chars = 0.0_f32;
-    if app.show_addr {
+    if d.show_addr {
         // 8 位十六进制地址 + 列后 2 空格
         line_chars += 10.0;
     }
-    if app.show_hex {
+    if d.show_hex {
         // 每字节 "XX "，宽行中间额外 1 个分隔空格
-        line_chars += n * 3.0 + if app.hex_width >= 8 { 1.0 } else { 0.0 };
+        line_chars += n * 3.0 + if d.hex_width >= 8 { 1.0 } else { 0.0 };
     }
-    if app.show_ascii {
+    if d.show_ascii {
         line_chars += n;
     }
     // 面板边框/分组 frame/折叠缩进/文本框内边距与滚动条余量

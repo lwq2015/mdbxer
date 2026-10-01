@@ -4,6 +4,7 @@ use super::MdbxerApp;
 use crate::db::OpenMode;
 use crate::fmt::{DecodeMode, Endian};
 
+/// 顶栏面板：路径/打开/历史/模式 + 字节序/排版/单元格 + 表/详情开关。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     egui::Panel::top("top_bar").show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -66,7 +67,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             if ui.selectable_label(false, &e.path).clicked() {
                                 pick = Some(i);
                             }
-                            if ui.small_button("✕").clicked() {
+                            if ui
+                                .small_button("×")
+                                .on_hover_text("从历史记录中删除该条")
+                                .clicked()
+                            {
                                 del = Some(i);
                             }
                         });
@@ -98,20 +103,35 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             super::wheel_cycle(ui.ctx(), &ir.response, &Endian::ALL, &mut en);
             app.endian = en;
 
-            // 排版（数据页 Key/Value 列的显示格式）
-            ui.label("排版");
-            let mut gm = app.grid_mode;
-            let ir = egui::ComboBox::from_id_salt("grid_mode")
-                .width(92.0)
-                .selected_text(gm.label())
+            // Key 排版（默认自动；编码固定的表可手动指定）
+            ui.label("Key");
+            let mut km = app.key_mode;
+            let ir = egui::ComboBox::from_id_salt("key_mode")
+                .width(82.0)
+                .selected_text(km.label())
                 .height(430.0)
                 .show_ui(ui, |ui| {
                     for m in DecodeMode::ALL {
-                        ui.selectable_value(&mut gm, m, m.label());
+                        ui.selectable_value(&mut km, m, m.label());
                     }
                 });
-            super::wheel_cycle(ui.ctx(), &ir.response, &DecodeMode::ALL, &mut gm);
-            app.grid_mode = gm;
+            super::wheel_cycle(ui.ctx(), &ir.response, &DecodeMode::ALL, &mut km);
+            app.key_mode = km;
+
+            // Value 排版（默认自动：Value 逐行猜测）
+            ui.label("Value");
+            let mut vm = app.val_mode;
+            let ir = egui::ComboBox::from_id_salt("val_mode")
+                .width(82.0)
+                .selected_text(vm.label())
+                .height(430.0)
+                .show_ui(ui, |ui| {
+                    for m in DecodeMode::ALL {
+                        ui.selectable_value(&mut vm, m, m.label());
+                    }
+                });
+            super::wheel_cycle(ui.ctx(), &ir.response, &DecodeMode::ALL, &mut vm);
+            app.val_mode = vm;
 
             let mut cm = app.cell_max;
             let ir = egui::ComboBox::from_id_salt("cell_max")
@@ -132,6 +152,17 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 &mut cm,
             );
             app.cell_max = cm;
+
+            // 整数千位分隔开关（影响所有 decode/guess 输出）
+            let mut ts = crate::fmt::thousands_sep();
+            if ui
+                .selectable_label(ts, "1,234")
+                .on_hover_text("整数千位分隔（仅显示，不影响数据）")
+                .clicked()
+            {
+                ts = !ts;
+            }
+            crate::fmt::set_thousands_sep(ts);
 
             ui.separator();
 

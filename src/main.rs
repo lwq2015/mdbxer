@@ -12,7 +12,10 @@ mod fmt;
 mod history;
 mod ui;
 
+/// 程序入口：设置窗口选项、加载 CJK 字体、启动 eframe 事件循环。
+/// 支持命令行传入数据库路径直接打开（便于拖文件到 exe）。
 fn main() -> eframe::Result<()> {
+    let title = app_title();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 760.0])
@@ -21,7 +24,7 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
     eframe::run_native(
-        "MDBXer",
+        &title,
         options,
         Box::new(|cc| {
             load_cjk_fonts(&cc.egui_ctx);
@@ -34,6 +37,24 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(app))
         }),
     )
+}
+
+/// 窗口标题："MDBXer v<版本> · <构建日期>"。
+/// 版本取 Cargo.toml；日期取 exe 自身的修改时间（即本次构建/发布时间），
+/// 无需 build.rs，跨平台。取不到时省略日期。
+fn app_title() -> String {
+    let date = std::env::current_exe()
+        .and_then(|p| std::fs::metadata(p))
+        .and_then(|m| m.modified())
+        .ok()
+        .map(|t| {
+            let dt: chrono::DateTime<chrono::Local> = t.into();
+            dt.format("%Y-%m-%d").to_string()
+        });
+    match date {
+        Some(d) => format!("MDBXer v{} · {d}", env!("CARGO_PKG_VERSION")),
+        None => format!("MDBXer v{}", env!("CARGO_PKG_VERSION")),
+    }
 }
 
 /// 运行时从系统目录查找并加载一个 CJK 字体，作为两族字体的 fallback。

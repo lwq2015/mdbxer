@@ -1,7 +1,6 @@
 //! 中间 "数据" 页签：工具条 + 表格。
 
 use super::{MdbxerApp, PAGE_SIZES, SortCol};
-use crate::fmt;
 use egui_extras::{Column, TableBuilder};
 
 /// 列头单元格：文字与整列空白都可点击。返回是否被点击。
@@ -14,6 +13,7 @@ fn header_cell(ui: &mut egui::Ui, text: &str) -> bool {
     r1.clicked() || r2.clicked()
 }
 
+/// "数据"页签入口：工具条 + 行表格 + 列头排序处理。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     if app.cur_table().is_none() {
         ui.label("请选择左侧表");
@@ -111,9 +111,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let text_height = egui::TextStyle::Body.resolve(ui.style()).size + 4.0;
     let total_rows = app.rows.len();
     let selected = app.selected_row;
-    let cell_max = app.cell_max;
-    let grid_mode = app.grid_mode;
-    let endian = app.endian;
     let order = app.display_order();
     let sort_desc = app.sort_desc;
     let col_sort = app.col_sort;
@@ -170,6 +167,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 let di = row_ui.index();
                 let i = order[di];
                 let row = &app.rows[i];
+                let view = &app.views[i];
                 let is_sel = selected == Some(i);
                 row_ui.set_selected(is_sel);
                 // 选中行文字反白，与文本选区颜色区分开
@@ -195,8 +193,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     }
                 });
                 row_ui.col(|ui| {
-                    let key_text = fmt::decode(&row.key, grid_mode, endian, cell_max);
-                    let mut rt = egui::RichText::new(key_text).monospace();
+                    let mut rt = egui::RichText::new(&view.key_text).monospace();
                     if let Some(c) = sel_color {
                         rt = rt.color(c);
                     }
@@ -208,8 +205,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     }
                 });
                 row_ui.col(|ui| {
-                    let (label, _) = fmt::guess(&row.value, endian);
-                    let mut rt = egui::RichText::new(label);
+                    let mut rt = egui::RichText::new(&view.type_label);
                     if let Some(c) = sel_color {
                         rt = rt.color(c);
                     }
@@ -221,11 +217,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     }
                 });
                 row_ui.col(|ui| {
-                    let val_text = fmt::decode(&row.value, grid_mode, endian, cell_max);
                     // 多值表分组行：显示第一个值的预览 + 值总数（值列表在右侧翻看）
                     let text = match row.dup_count {
-                        Some(n) => format!("{val_text}  〔{n} 个值〕"),
-                        None => val_text,
+                        Some(n) => format!("{}  〔{n} 个值〕", view.val_text),
+                        None => view.val_text.clone(),
                     };
                     let mut rt = egui::RichText::new(text).monospace();
                     if let Some(c) = sel_color {

@@ -82,10 +82,15 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
         (b"f32_2.5_neg", (-2.5f32).to_le_bytes().to_vec()),
         (b"f32_0.618", 0.618f32.to_le_bytes().to_vec()),
         (b"f32_1e20", 1e20f32.to_le_bytes().to_vec()),
+        // 整数部分 ≥5 位：验证浮点数千位分隔（应显示 123,456.75）
+        (b"f32_123456.75", 123456.75f32.to_le_bytes().to_vec()),
         (b"f64_0", 0.0f64.to_le_bytes().to_vec()),
-        (b"f64_1.41421356_neg", (-1.4142135623730951f64).to_le_bytes().to_vec()),
-        (b"f64_3.14159265", 3.14159265358979f64.to_le_bytes().to_vec()),
+        (b"f64_1.41421356_neg", (-1.41421356f64).to_le_bytes().to_vec()),
+        (b"f64_3.14159265", 3.14159265f64.to_le_bytes().to_vec()),
         (b"f64_1e100", 1e100f64.to_le_bytes().to_vec()),
+        // 整数部分长：应显示 123,456,789.25 / -9,876,543,210.5
+        (b"f64_123456789.25", 123456789.25f64.to_le_bytes().to_vec()),
+        (b"f64_9876543210.5_neg", (-9876543210.5f64).to_le_bytes().to_vec()),
     ];
     let entries: Vec<(&[u8], Vec<u8>)> = vec![
         (b"hello", b"world".to_vec()),

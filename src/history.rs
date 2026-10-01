@@ -5,8 +5,10 @@ use std::path::PathBuf;
 
 const MAX_ENTRIES: usize = 20;
 
+/// 一条历史记录。
 #[derive(Serialize, Deserialize, Clone)]
 pub struct HistoryEntry {
+    /// 数据库路径（文件或目录）
     pub path: String,
     /// "auto" | "file" | "dir"
     pub mode: String,
@@ -14,12 +16,16 @@ pub struct HistoryEntry {
     pub last_open: u64,
 }
 
+/// 历史记录集合；`file` 为 None 时仅存在于内存（不写盘）。
 pub struct History {
+    /// 最近打开在前，最多 MAX_ENTRIES 条
     pub entries: Vec<HistoryEntry>,
+    /// 持久化文件路径；取不到 %APPDATA% 也无 exe 目录时为 None
     file: Option<PathBuf>,
 }
 
 impl History {
+    /// 从磁盘加载；文件缺失或 JSON 损坏时返回空历史。
     pub fn load() -> Self {
         let file = storage_path();
         if let Some(f) = &file {
@@ -36,6 +42,7 @@ impl History {
     }
 
     /// 记录一次打开：同路径去重置顶，最多保留 MAX_ENTRIES 条。
+    /// `mode` 取 [`crate::db::OpenMode::as_str`]。
     pub fn add(&mut self, path: &str, mode: &str) {
         self.entries.retain(|e| e.path != path);
         let last_open = std::time::SystemTime::now()
@@ -54,6 +61,7 @@ impl History {
         self.save();
     }
 
+    /// 删除第 `index` 条并写盘；越界时忽略。
     pub fn remove(&mut self, index: usize) {
         if index < self.entries.len() {
             self.entries.remove(index);
@@ -74,6 +82,8 @@ impl History {
     }
 }
 
+/// 存储路径：优先 `%APPDATA%\mdbxer\history.json`；
+/// 无 %APPDATA%（非 Windows）时退化为 exe 旁的 `mdbxer-history.json`。
 fn storage_path() -> Option<PathBuf> {
     if let Some(appdata) = std::env::var_os("APPDATA") {
         return Some(PathBuf::from(appdata).join("mdbxer").join("history.json"));

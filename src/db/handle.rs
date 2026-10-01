@@ -7,9 +7,11 @@ use super::OpenMode;
 
 /// 一个已打开的 MDBX 环境（只读）。
 pub struct DbHandle {
+    /// 底层只读数据库连接
     pub db: Database<NoWriteMap>,
     /// 实际生效的打开方式：true = 单文件（NOSUBDIR）
     pub no_sub_dir: bool,
+    /// 主表 + 所有命名子表
     pub tables: Vec<TableInfo>,
 }
 
@@ -20,10 +22,13 @@ pub struct TableInfo {
     pub name: Option<String>,
     /// 显示名（主表显示为"（主表）"）
     pub display: String,
+    /// 条目数（entries），主表包含命名表的名称记录
     pub entries: usize,
     /// 人类可读的标志描述，如 "多值, 整数键"
     pub flags_desc: String,
+    /// 是否 DUP_SORT（多值表）
     pub dup_sort: bool,
+    /// 是否 INTEGER_KEY（键按 u64 LE 排序）
     pub integer_key: bool,
 }
 

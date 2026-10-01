@@ -10,6 +10,7 @@ use libmdbx::{Database, NoWriteMap};
 /// 一行表格数据。
 #[derive(Clone, Debug)]
 pub struct Row {
+    /// 原始键字节
     pub key: Vec<u8>,
     /// 多值表分组行中为"代表值"（该 Key 的第一个值），普通表即唯一值。
     pub value: Vec<u8>,
@@ -17,7 +18,7 @@ pub struct Row {
     pub dup_count: Option<usize>,
 }
 
-/// 取值方向。
+/// 取值方向（Cursor 遍历顺序）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Direction {
     /// 升序（first → next/next_nodup）
@@ -27,22 +28,26 @@ pub enum Direction {
 }
 
 /// 分页锚点：按 Key 定位（多值表落在该 Key 的第一个值）。
+/// 第二个元素为多值表的精确 value 锚点（当前未使用）。
 pub type Anchor = (Vec<u8>, Option<Vec<u8>>);
 
 /// 一页数据，rows 按取值方向排列。
 pub struct Page {
+    /// 页内行（最多 `limit` 条）
     pub rows: Vec<Row>,
     /// 取值方向上是否还有数据
     pub has_more: bool,
 }
 
-/// 跳转目标的 key。
+/// 跳转目标的 key 形式。
 pub enum JumpKey {
+    /// 任意字节序列
     Bytes(Vec<u8>),
     /// INTEGER_KEY 表：内部自动尝试 8/4 字节 LE
     Int(u64),
 }
 
+/// 游标当前项：`(key_bytes, value_bytes)` 或 `None`（已越界）。
 type CursorItem = Option<(Vec<u8>, Vec<u8>)>;
 
 /// 当前游标所在 Key 的重复值数量（仅 DUP_SORT 表有意义）。
@@ -64,6 +69,8 @@ fn dup_count_at(cursor: &mut libmdbx::Cursor<'_, libmdbx::RO>) -> Option<usize> 
 
 /// 沿取值方向移动到下一条记录。
 /// 多值表分组模式使用 nodup 原语：一次跨过当前 Key 的其余值，到下一个 Key。
+///
+/// - `grouped`：true 时多值表按 Key 分组（用 next_nodup/prev_nodup）
 fn step(
     cursor: &mut libmdbx::Cursor<'_, libmdbx::RO>,
     grouped: bool,
@@ -79,6 +86,8 @@ fn step(
 }
 
 /// 把游标当前位置的记录构造成一个分组行（取值数量、统一代表值）。
+///
+/// - `value`：游标当前值；多值表降序时会用 first_dup 换回首值
 fn make_row(
     cursor: &mut libmdbx::Cursor<'_, libmdbx::RO>,
     grouped: bool,
@@ -105,6 +114,9 @@ fn make_row(
     }
 }
 
+/// 从 `first` 开始沿 `dir` 方向收集最多 `limit` 条。
+///
+/// - `first`：起始项；None 表示表已空
 fn collect(
     cursor: &mut libmdbx::Cursor<'_, libmdbx::RO>,
     grouped: bool,
@@ -129,10 +141,13 @@ fn collect(
 
 /// 从锚点（含）或表首/尾开始取一页。
 ///
+/// - `table`：None = 主表
+/// - `dup_sort`：true 时多值表按 Key 分组；false 逐条遍历
 /// - `anchor: None` → 从表首（Forward）或表尾（Backward）开始；
 /// - `anchor: Some` → 用 set_lowerbound 定位到锚点 Key（多值表落在其第一个值，
 ///   Key 不存在则落在其后第一个 Key）；
 /// - `skip_anchor: true` → 跳过锚点 Key 本身（用于"下一页/上一页"）。
+/// - `limit`：页大小（最多取 limit 条）
 pub fn fetch_page(
     db: &Database<NoWriteMap>,
     table: Option<&str>,
@@ -165,6 +180,7 @@ pub fn fetch_page(
     collect(&mut cursor, dup_sort, dir, first, limit)
 }
 
+/// 按方向定位到 `key`：升序用 set_lowerbound（≥key 首项），降序用 set_upperbound（≤key 末项）。
 fn jump_bytes(
     cursor: &mut libmdbx::Cursor<'_, libmdbx::RO>,
     dir: Direction,
@@ -182,6 +198,11 @@ fn jump_bytes(
 }
 
 /// 跳转到指定 key，以定位处为页首取一页。
+///
+/// - `table`：None = 主表
+/// - `dup_sort`：true 时多值表按 Key 分组
+/// - `key`：见 [`JumpKey`]；INTEGER_KEY 表用 `JumpKey::Int`（内部自动尝试 8/4 字节 LE）
+/// - `limit`：页大小
 pub fn jump_to(
     db: &Database<NoWriteMap>,
     table: Option<&str>,
@@ -211,6 +232,9 @@ pub fn jump_to(
 ///
 /// 总数用 `mdbx_cursor_count` 直接获取（不必遍历全部值）；
 /// 值列表按页遍历（每页 DUP_PAGE_SIZE 个，在调用方设定）。
+///
+/// - `page_index`：0 起的页号
+/// - `page_size`：每页值个数
 pub fn dups_of(
     db: &Database<NoWriteMap>,
     table: Option<&str>,
@@ -254,6 +278,8 @@ pub fn dups_of(
 
 /// 在某个 Key 的值列表中按**字节子串**搜索。
 ///
+/// - `needle`：搜索子串（字节）
+/// - `from_index`：搜索起始序号；forward 时含，backward 时不含
 /// - `forward=true`：从 `from_index`（含）起向后找第一个命中；找不到则回绕到开头。
 /// - `forward=false`：从 `from_index`（不含）起向前找最近命中；找不到则回绕到末尾。
 ///

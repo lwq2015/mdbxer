@@ -18,6 +18,8 @@ fn human_size(bytes: u64) -> String {
 }
 
 /// 表统计页签内容：(标签, 值)。
+///
+/// - `table`：None = 主表
 pub fn table_stat_view(
     db: &Database<NoWriteMap>,
     table: Option<&str>,
@@ -49,7 +51,9 @@ pub fn table_stat_view(
 }
 
 /// 环境信息页签内容：(分组, 标签, 值)。
-pub fn env_info_view(db: &Database<NoWriteMap>) -> Result<Vec<(String, String, String)>, String> {
+pub fn env_info_view(
+    db: &Database<NoWriteMap>,
+) -> Result<Vec<(String, String, String)>, String> {
     let info = db.info().map_err(|e| e.to_string())?;
     let stat = db.stat().map_err(|e| e.to_string())?;
     let freelist = db.freelist().unwrap_or(0);
