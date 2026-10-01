@@ -1,0 +1,9 @@
+MDBXer
+Copyright 2026 lwq_yu
+
+This product includes software developed as part of the MDBXer project
+(https://gitee.com/lwq_yu/mdbxer).
+
+MDBXer links against libmdbx (https://github.com/erthink/libmdbx) via
+the libmdbx-rs binding, distributed under the OpenLDAP Public License,
+Version 2.8.
