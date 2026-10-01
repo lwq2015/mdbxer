@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 分页读取、跳转定位与多值（DUP_SORT）读取。
 //!
 //! 多值表在表格中**按 Key 分组**：一个 Key 只占一行（值列表在右侧详情中翻看），

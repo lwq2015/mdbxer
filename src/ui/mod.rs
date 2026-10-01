@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 界面层：应用状态与导航动作。只接触 db 层暴露的纯数据结构。
 
 mod dataview;

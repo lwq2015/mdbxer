@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 应用配置：JSON 持久化到 %APPDATA%\mdbxer\config.json。
 //!
 //! 当前只保存界面语言；首次启动（无配置文件）时按系统区域设置自动选择。

@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 按指定格式把字节解码为显示文本。
 
 use super::{guess, DecodeMode, Endian};

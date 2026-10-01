@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 界面多语言（中文 / English / Русский）。
 //!
 //! 零依赖方案：编译期三张静态字符串表 + 全局原子语言状态。

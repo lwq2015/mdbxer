@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 中间 "表统计" 与 "环境信息" 页签：渲染 db::stats 返回的键值行。
 
 use super::MdbxerApp;

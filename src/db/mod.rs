@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! DB 层：仅依赖 libmdbx + std，封装所有 MDBX 访问，对上层暴露自有纯数据结构。
 
 mod handle;

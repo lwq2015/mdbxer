@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 环境打开与 subDB 枚举。
 
 use libmdbx::{Database, DatabaseOptions, Mode, NoWriteMap, TableFlags};

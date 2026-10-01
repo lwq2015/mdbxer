@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 生成测试用 MDBX 数据库（目录模式与单文件模式各一份）。
 //!
 //! 用法：`cargo run --example make_test_db`

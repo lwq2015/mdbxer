@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 左侧表（subDB）列表：过滤、排序、条数显示。
 
 use super::{MdbxerApp, TableSort};

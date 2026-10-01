@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 字节内容的自动类型猜测。
 
 use super::{value, Endian};

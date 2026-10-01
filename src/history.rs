@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 打开历史记录：JSON 持久化到 %APPDATA%\mdbxer\history.json。
 
 use serde::{Deserialize, Serialize};

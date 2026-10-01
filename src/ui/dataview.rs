@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 中间 "数据" 页签：工具条 + 表格。
 
 use super::{MdbxerApp, PAGE_SIZES, SortCol};

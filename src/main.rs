@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! MDBXer — libmdbx 数据库查看工具（只读）。
 //!
 //! 分层：main → ui → db / fmt / history，单向依赖。

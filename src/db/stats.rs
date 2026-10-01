@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 表统计与环境信息，格式化为纯键值行供 UI 直接渲染。
 //! 标签文案随当前界面语言。
 

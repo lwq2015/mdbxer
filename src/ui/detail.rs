@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 右侧详情：Key / Value 卡片（格式下拉、复制、文本、hex dump、多值翻页），
 //! 以及右栏全部状态（[`DetailState`]）。
 

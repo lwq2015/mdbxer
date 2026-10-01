@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! HEX 转储（可开关 地址/HEX/ASCII 三段，行宽可选）。
 
 /// 详情区 hex/文本视图每段渲染的字节数（64 KiB）。

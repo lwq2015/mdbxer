@@ -1,3 +1,6 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
 //! 格式解析层：纯函数，仅依赖 std + chrono。
 
 use std::sync::atomic::{AtomicBool, Ordering};
