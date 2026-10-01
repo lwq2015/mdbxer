@@ -182,6 +182,11 @@ pub struct MdbxerApp {
     pub dup_jump_input: String,
     /// 右侧多值：值内容搜索输入（文本或 hex(...)）
     pub dup_search_input: String,
+    // 右栏大字段分段查看（Key / Value 各自的字节偏移与跳转输入）
+    pub key_seg_off: usize,
+    pub val_seg_off: usize,
+    pub key_seg_input: String,
+    pub val_seg_input: String,
     // 页签缓存
     pub stat_cache: Option<(usize, Vec<(String, String)>)>,
     pub env_cache: Option<Vec<(String, String, String)>>,
@@ -226,6 +231,10 @@ impl MdbxerApp {
             dup_values: Vec::new(),
             dup_jump_input: String::new(),
             dup_search_input: String::new(),
+            key_seg_off: 0,
+            val_seg_off: 0,
+            key_seg_input: String::new(),
+            val_seg_input: String::new(),
             stat_cache: None,
             env_cache: None,
             status: "就绪".to_string(),
@@ -492,6 +501,11 @@ impl MdbxerApp {
     /// 即从该 Key 的第一个值开始；值列表每页 DUP_PAGE_SIZE 个懒加载。
     fn load_dups(&mut self) {
         self.clear_dups();
+        // 换了行：Key/Value 分段偏移都归零
+        self.key_seg_off = 0;
+        self.val_seg_off = 0;
+        self.key_seg_input.clear();
+        self.val_seg_input.clear();
         let Some(row) = self.selected_row.and_then(|i| self.rows.get(i)) else {
             return;
         };
@@ -548,6 +562,9 @@ impl MdbxerApp {
             }
         }
         self.dup_index = idx.min(self.dup_total.saturating_sub(1));
+        // 切换到另一个值：Value 分段偏移归零
+        self.val_seg_off = 0;
+        self.val_seg_input.clear();
     }
 
     /// 上/下一个值（边界停止）。
@@ -631,6 +648,77 @@ impl MdbxerApp {
             }
             Err(e) => {
                 self.status = format!("搜索失败：{e}");
+            }
+        }
+    }
+
+    // ── 大字段分段查看 / 导出 ───────────────────────────────────
+
+    pub fn seg_off(&self, is_key: bool) -> usize {
+        if is_key { self.key_seg_off } else { self.val_seg_off }
+    }
+
+    fn seg_state_mut(&mut self, is_key: bool) -> (&mut usize, &mut String) {
+        if is_key {
+            (&mut self.key_seg_off, &mut self.key_seg_input)
+        } else {
+            (&mut self.val_seg_off, &mut self.val_seg_input)
+        }
+    }
+
+    /// 上/下翻 `pages` 个段（每段 fmt::PAGE_BYTES 字节），自动夹到有效范围。
+    pub fn seg_step(&mut self, is_key: bool, total: usize, pages: isize) {
+        let (off, _) = self.seg_state_mut(is_key);
+        let cur = (*off / crate::fmt::PAGE_BYTES) as isize;
+        let max_seg = total.saturating_sub(1) / crate::fmt::PAGE_BYTES;
+        let target = (cur + pages).clamp(0, max_seg as isize) as usize;
+        *off = target * crate::fmt::PAGE_BYTES;
+    }
+
+    /// 跳至指定偏移：十进制或 0x 十六进制；向下对齐到段边界并夹到末尾段。
+    pub fn seg_jump(&mut self, is_key: bool, total: usize) {
+        let (off, input) = self.seg_state_mut(is_key);
+        let s = input.trim();
+        let parsed = if let Some(h) = s
+            .strip_prefix("0x")
+            .or_else(|| s.strip_prefix("0X"))
+        {
+            usize::from_str_radix(h, 16)
+        } else {
+            s.parse::<usize>()
+        };
+        match parsed {
+            Ok(v) if v < total => {
+                *off = (v / crate::fmt::PAGE_BYTES) * crate::fmt::PAGE_BYTES;
+                self.status = format!("已跳至偏移 {off}（0x{off:X}）");
+            }
+            Ok(v) => {
+                self.status = format!("偏移超出范围：{v}（共 {total} 字节）");
+            }
+            Err(_) => {
+                self.status = "请输入十进制偏移，或 0x 开头的十六进制偏移".to_string();
+            }
+        }
+    }
+
+    /// 把完整原始字节另存为文件（不经任何截断）；返回 true 表示已写出。
+    pub fn save_bytes(&mut self, default_name: &str, bytes: &[u8]) -> bool {
+        let Some(path) = rfd::FileDialog::new()
+            .set_file_name(default_name)
+            .add_filter("二进制", &["bin"])
+            .add_filter("所有文件", &["*"])
+            .save_file()
+        else {
+            return false;
+        };
+        match std::fs::write(&path, bytes) {
+            Ok(()) => {
+                self.status = format!("已导出 {} 字节到 {}", bytes.len(), path.display());
+                true
+            }
+            Err(e) => {
+                self.status = format!("导出失败：{e}");
+                false
             }
         }
     }

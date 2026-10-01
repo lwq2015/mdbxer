@@ -4,9 +4,10 @@ use super::MdbxerApp;
 use crate::fmt::{self, DecodeMode};
 
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    let max_w = detail_max_width(ui, app);
     egui::Panel::right("detail_panel")
         .default_size(360.0)
-        .size_range(240.0..=720.0)
+        .size_range(240.0..=max_w)
         .show(ui, |ui| {
             let Some(row_idx) = app.selected_row else {
                 ui.vertical_centered(|ui| {
@@ -62,6 +63,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
 /// 一个 Key 或 Value 卡片。`is_key` 决定使用 key_mode 还是 val_mode。
 fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is_key: bool) {
+    let dup_sort = app.cur_table().map(|t| t.dup_sort).unwrap_or(false);
+    let save_name = if is_key {
+        "key.bin".to_string()
+    } else if dup_sort {
+        format!("value_{:06}.bin", app.dup_index + 1)
+    } else {
+        "value.bin".to_string()
+    };
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.set_width(ui.available_width());
 
@@ -71,6 +80,13 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
                 if ui.button("复制").clicked() {
                     ui.ctx()
                         .copy_text(text_of(bytes, mode_of(app, is_key), app.endian));
+                }
+                if ui
+                    .button("另存…")
+                    .on_hover_text("把完整原始字节保存为文件（不做任何截断）")
+                    .clicked()
+                {
+                    app.save_bytes(&save_name, bytes);
                 }
                 // 格式下拉
                 let mut mode = mode_of(app, is_key);
@@ -86,6 +102,56 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
                 set_mode(app, is_key, mode);
             });
         });
+
+        // 大字段分段：固定放在标题行正下方，避免随字节数/多值导航行数上下位移。
+        // 每段 fmt::PAGE_BYTES 字节，超出时显示导航条。
+        let total = bytes.len();
+        let off = app.seg_off(is_key);
+        let off = if off >= total {
+            total.saturating_sub(fmt::PAGE_BYTES.min(total))
+        } else {
+            off
+        };
+        if total > fmt::PAGE_BYTES {
+            ui.horizontal(|ui| {
+                // 按钮/输入框固定在最左：段号与偏移文本长度会变，放前面会挤动按钮
+                if ui
+                    .add_enabled(off > 0, egui::Button::new("◀ 段"))
+                    .on_hover_text("上一段（64 KiB）")
+                    .clicked()
+                {
+                    app.seg_step(is_key, total, -1);
+                }
+                if ui
+                    .add_enabled(
+                        off + fmt::PAGE_BYTES < total,
+                        egui::Button::new("段 ▶"),
+                    )
+                    .on_hover_text("下一段（64 KiB）")
+                    .clicked()
+                {
+                    app.seg_step(is_key, total, 1);
+                }
+                let input = if is_key {
+                    &mut app.key_seg_input
+                } else {
+                    &mut app.val_seg_input
+                };
+                let resp = ui.add(
+                    egui::TextEdit::singleline(input)
+                        .desired_width(84.0)
+                        .hint_text("偏移/0x.."),
+                );
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    app.seg_jump(is_key, total);
+                }
+                let seg_no = off / fmt::PAGE_BYTES + 1;
+                let seg_cnt = (total + fmt::PAGE_BYTES - 1) / fmt::PAGE_BYTES;
+                ui.weak(format!(
+                    "第 {seg_no}/{seg_cnt} 段 · 偏移 {off} / {total}（0x{off:X}）"
+                ));
+            });
+        }
 
         // 多值导航：仅 Value 卡片、多值表显示
         let is_dup = !is_key && app.cur_table().map(|t| t.dup_sort).unwrap_or(false);
@@ -180,9 +246,20 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
             ui.weak(format!("{} 字节", bytes.len()));
         }
 
-        // 文本视图（可折叠；长文本默认折叠，方便直接看 hex）
-        let text = text_of(bytes, mode_of(app, is_key), app.endian);
-        let default_open = text.chars().count() <= 512;
+        // 分段窗口（导航条固定在卡片标题行正下方）
+        let end = (off + fmt::PAGE_BYTES).min(total);
+        let window = &bytes[off..end];
+
+        // 文本视图（可折叠；长文本默认折叠，方便直接看 hex）。
+        // 高度按内容自适应：行少就收缩，超过 16 行封顶并出滚动条。
+        let text = fmt::decode(
+            window,
+            mode_of(app, is_key),
+            app.endian,
+            window.len() * 4 + 16,
+        );
+        let text_rows = text.lines().count().clamp(1, 16);
+        let default_open = total <= 512;
         egui::CollapsingHeader::new("文本")
             .id_salt(("detail_text", is_key, default_open))
             .default_open(default_open)
@@ -192,27 +269,31 @@ fn kv_card(ui: &mut egui::Ui, app: &mut MdbxerApp, title: &str, bytes: &[u8], is
                     egui::TextEdit::multiline(&mut text)
                         .font(egui::TextStyle::Monospace)
                         .desired_width(f32::INFINITY)
-                        .desired_rows(2),
+                        .desired_rows(text_rows),
                 );
             });
 
-        // 十六进制视图
+        // 十六进制视图：高度随段内实际行数自适应（1 行数据就 1 行高），
+        // 超过 20 行封顶并出滚动条，避免整段（宽 8 时最多 8192 行）撑爆。
+        let dump = fmt::hex_dump(
+            window,
+            app.hex_width,
+            app.show_addr,
+            app.show_hex,
+            app.show_ascii,
+            off,
+        );
+        let hex_rows = dump.lines().count().clamp(1, 20);
         egui::CollapsingHeader::new("十六进制")
             .id_salt(("detail_hex", is_key))
             .default_open(true)
             .show(ui, |ui| {
-                let mut dump = fmt::hex_dump(
-                    bytes,
-                    app.hex_width,
-                    app.show_addr,
-                    app.show_hex,
-                    app.show_ascii,
-                );
+                let mut dump = dump;
                 ui.add(
                     egui::TextEdit::multiline(&mut dump)
                         .font(egui::TextStyle::Monospace)
                         .desired_width(f32::INFINITY)
-                        .desired_rows(4),
+                        .desired_rows(hex_rows),
                 );
             });
     });
@@ -232,4 +313,34 @@ fn set_mode(app: &mut MdbxerApp, is_key: bool, mode: DecodeMode) {
 
 fn text_of(bytes: &[u8], mode: DecodeMode, endian: fmt::Endian) -> String {
     fmt::decode(bytes, mode, endian, usize::MAX)
+}
+
+/// 右栏宽度上限：保证当前 hex 配置下最长一行（32 字节时最宽）
+/// 在面板内不折行。按等宽字体实测字宽计算，再扣除各级边距；
+/// 同时不超过窗口宽度减去给左栏+表格保留的 300 点。
+fn detail_max_width(ui: &egui::Ui, app: &MdbxerApp) -> f32 {
+    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+    let char_w = ui.fonts_mut(|f| f.glyph_width(&font_id, '0'));
+
+    let n = app.hex_width as f32;
+    let mut line_chars = 0.0_f32;
+    if app.show_addr {
+        // 8 位十六进制地址 + 列后 2 空格
+        line_chars += 10.0;
+    }
+    if app.show_hex {
+        // 每字节 "XX "，宽行中间额外 1 个分隔空格
+        line_chars += n * 3.0 + if app.hex_width >= 8 { 1.0 } else { 0.0 };
+    }
+    if app.show_ascii {
+        line_chars += n;
+    }
+    // 面板边框/分组 frame/折叠缩进/文本框内边距与滚动条余量
+    const CHROME: f32 = 100.0;
+    let needed = line_chars * char_w + CHROME;
+
+    let screen = ui.ctx().viewport_rect().width();
+    needed
+        .max(720.0)
+        .min((screen - 300.0).max(720.0))
 }

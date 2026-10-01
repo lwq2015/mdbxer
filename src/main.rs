@@ -5,6 +5,8 @@
 // release 版不弹出控制台窗口
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::path::PathBuf;
+
 mod db;
 mod fmt;
 mod history;
@@ -34,30 +36,146 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-/// 运行时从系统目录加载 CJK 字体，作为两族字体的 fallback。
+/// 运行时从系统目录查找并加载一个 CJK 字体，作为两族字体的 fallback。
+/// 候选路径全部按平台规则/环境变量动态生成，不写死盘符或用户目录。
 fn load_cjk_fonts(ctx: &egui::Context) {
-    const CANDIDATES: [&str; 5] = [
-        r"C:\Windows\Fonts\msyh.ttc",
-        r"C:\Windows\Fonts\msjh.ttc",
-        r"C:\Windows\Fonts\simhei.ttf",
-        r"C:\Windows\Fonts\simsun.ttc",
-        r"C:\Windows\Fonts\Deng.ttf",
-    ];
-    for path in CANDIDATES {
-        let Ok(data) = std::fs::read(path) else { continue };
-        let mut fonts = egui::FontDefinitions::default();
-        fonts.font_data.insert(
-            "cjk".to_string(),
-            std::sync::Arc::new(egui::FontData::from_owned(data)),
-        );
-        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            fonts
-                .families
-                .entry(family)
-                .or_default()
-                .push("cjk".to_string());
-        }
-        ctx.set_fonts(fonts);
+    let Some(path) = cjk_font_candidates().into_iter().find(|p| p.is_file()) else {
+        eprintln!("未找到系统 CJK 字体，中文可能显示为方框（可安装 微软雅黑/苹方/Noto CJK）");
         return;
+    };
+    let Ok(data) = std::fs::read(&path) else {
+        return;
+    };
+    let mut fonts = egui::FontDefinitions::default();
+    fonts
+        .font_data
+        .insert("cjk".to_string(), std::sync::Arc::new(
+            egui::FontData::from_owned(data),
+        ));
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .push("cjk".to_string());
     }
+    ctx.set_fonts(fonts);
+}
+
+/// Windows：系统字体目录取 %WINDIR%\Fonts，并补查用户字体目录。
+#[cfg(target_os = "windows")]
+fn cjk_font_candidates() -> Vec<PathBuf> {
+    const NAMES: [&str; 5] = [
+        "msyh.ttc",   // 微软雅黑
+        "msjh.ttc",   // 微软正黑体
+        "simhei.ttf", // 黑体
+        "simsun.ttc", // 宋体
+        "Deng.tt",    // 等线
+    ];
+    let mut dirs = Vec::new();
+    if let Some(windir) = std::env::var_os("WINDIR") {
+        dirs.push(PathBuf::from(windir).join("Fonts"));
+    }
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        dirs.push(
+            PathBuf::from(local)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Fonts"),
+        );
+    }
+    let mut paths = Vec::new();
+    for dir in &dirs {
+        for name in NAMES {
+            paths.push(dir.join(name));
+        }
+    }
+    paths
+}
+
+/// macOS：系统自带中文字体（/System/Library/Fonts 为平台固定位置）。
+#[cfg(target_os = "macos")]
+fn cjk_font_candidates() -> Vec<PathBuf> {
+    const PATHS: [&str; 5] = [
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/System/Library/Fonts/Supplemental/Songti.ttc",
+        "/Library/Fonts/Arial Unicode.ttf",
+    ];
+    PATHS.iter().map(PathBuf::from).collect()
+}
+
+/// Linux/BSD：遍历 FHS 与 XDG 字体目录下的常见 CJK 字体，
+/// 最后用 fontconfig（fc-match）查询系统实际配置作为兜底。
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
+fn cjk_font_candidates() -> Vec<PathBuf> {
+    const RELATIVE: [&str; 10] = [
+        "opentype/noto/NotoSansCJK-Regular.ttc",
+        "truetype/noto/NotoSansCJK-Regular.ttc",
+        "opentype/noto/NotoSansCJKsc-Regular.otf",
+        "truetype/noto/NotoSansCJKsc-Regular.otf",
+        "opentype/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        "truetype/wqy/wqy-microhei.ttc",
+        "truetype/wqy/wqy-zenhei.ttc",
+        "truetype/droid/DroidSansFallbackFull.ttf",
+        "truetype/droid/DroidSansFallback.ttf",
+        "truetype/arphic/uming.ttc",
+    ];
+    let mut dirs: Vec<PathBuf> = vec![
+        PathBuf::from("/usr/share/fonts"),
+        PathBuf::from("/usr/local/share/fonts"),
+    ];
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        dirs.push(PathBuf::from(xdg).join("fonts"));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        dirs.push(home.join(".local").join("share").join("fonts"));
+        dirs.push(home.join(".fonts"));
+    }
+    let mut paths = Vec::new();
+    for dir in &dirs {
+        for rel in RELATIVE {
+            paths.push(dir.join(rel));
+        }
+    }
+    if let Some(p) = fontconfig_cjk() {
+        paths.push(p);
+    }
+    paths
+}
+
+/// 调用 `fc-match` 让 fontconfig 给出当前系统匹配中文的字体文件。
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
+fn fontconfig_cjk() -> Option<PathBuf> {
+    let out = std::process::Command::new("fc-match")
+        .args(["-f", "%{file}", ":lang=zh"])
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!s.is_empty()).then(|| PathBuf::from(s))
+}
+
+/// 其他平台：不内置路径（egui 默认字体无 CJK 字形，缺失时仅提示）。
+#[cfg(not(any(
+    target_os = "windows",
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+)))]
+fn cjk_font_candidates() -> Vec<PathBuf> {
+    Vec::new()
 }

@@ -154,18 +154,30 @@ pub fn u64_text(v: u64) -> String {
     }
 }
 
-/// 识别秒（1e9..1e10）或毫秒（1e12..1e13）级 Unix 时间戳，格式化为本地时间。
+/// 识别秒（1e9..1e10）或毫秒（1e12..1e13）级 Unix 时间戳，格式化为本地时间；
+/// 毫秒级保留并显示 3 位毫秒（`.000`），秒级只到秒。
 fn epoch_to_local(v: u64) -> Option<String> {
-    let secs = if (1_000_000_000..10_000_000_000).contains(&v) {
-        v as i64
+    if (1_000_000_000..10_000_000_000).contains(&v) {
+        let dt = chrono::DateTime::from_timestamp(v as i64, 0)?;
+        Some(
+            dt.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S (%Z%:z)")
+                .to_string(),
+        )
     } else if (1_000_000_000_000..10_000_000_000_000).contains(&v) {
-        (v / 1000) as i64
+        // 毫秒：余数转成纳秒传入，格式串里 %.3f 显示 .xxx
+        let dt = chrono::DateTime::from_timestamp(
+            (v / 1000) as i64,
+            (v % 1000 * 1_000_000) as u32,
+        )?;
+        Some(
+            dt.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S%.3f (%Z%:z)")
+                .to_string(),
+        )
     } else {
-        return None;
-    };
-    let dt = chrono::DateTime::from_timestamp(secs, 0)?;
-    let local = dt.with_timezone(&chrono::Local);
-    Some(local.format("%Y-%m-%d %H:%M:%S (%Z%:z)").to_string())
+        None
+    }
 }
 
 fn truncate_chars(s: String, max_chars: usize) -> String {

@@ -5,7 +5,7 @@ mod hexdump;
 mod value;
 
 pub use guess::guess;
-pub use hexdump::{DEFAULT_HEX_WIDTH, HEX_WIDTHS, hex_dump};
+pub use hexdump::{DEFAULT_HEX_WIDTH, HEX_WIDTHS, PAGE_BYTES, hex_dump};
 pub use value::decode;
 
 /// 多字节整数的字节序（默认小端，可切换为大端）。
