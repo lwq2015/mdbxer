@@ -1,3 +1,4 @@
 /target
 /testdata/file_db.mdbx-lck
 /dist
+testdata/dir_db/mdbx.lck
