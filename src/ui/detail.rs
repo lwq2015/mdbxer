@@ -536,7 +536,8 @@ fn kv_card(
         let window = &bytes[off..end];
 
         // 文本视图（可折叠；长文本默认折叠，方便直接看 hex）。
-        // 高度按内容自适应：行少就收缩，超过 16 行封顶并出滚动条。
+        // 注意：egui 的 desired_rows 只设最小高度（内容少于该行数时撑开），
+        // 不封顶；超出部分由外层右栏 ScrollArea 统一滚动。
         // 字符额度按最宽的 binary 展开（9 字符/字节）+ 64 余量，
         // 避免时间戳这类"小字节大文本"被截断出省略号。
         let text = fmt::decode(
@@ -560,8 +561,8 @@ fn kv_card(
                 );
             });
 
-        // 十六进制视图：高度随段内实际行数自适应（1 行数据就 1 行高），
-        // 超过 20 行封顶并出滚动条，避免整段（宽 8 时最多 8192 行）撑爆。
+        // 十六进制视图：desired_rows 只设最小高度（内容少时撑开），不封顶；
+        // 整段行数多时由外层右栏 ScrollArea 统一滚动。
         let dump = fmt::hex_dump(
             window,
             app.detail.hex_width,
