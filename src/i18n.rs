@@ -192,6 +192,7 @@ pub struct I18n {
     pub dup_bad_query_t: &'static str,
     pub dup_nomatch: &'static str,
     pub dup_fail_t: &'static str,
+    pub dup_load_fail_t: &'static str,
     pub seg_ok_t: &'static str,
     pub seg_range_t: &'static str,
     pub seg_bad: &'static str,
@@ -426,6 +427,10 @@ impl I18n {
         fill(self.dup_fail_t, &[("e", e)])
     }
 
+    pub fn dup_load_fail(&self, e: &str) -> String {
+        fill(self.dup_load_fail_t, &[("e", e)])
+    }
+
     pub fn seg_ok(&self, off: usize) -> String {
         fill(self.seg_ok_t, &[("off", &off.to_string()), ("hex", &format!("{off:X}"))])
     }
@@ -566,6 +571,7 @@ const ZH: I18n = I18n {
     dup_bad_query_t: "搜索内容错误：{e}",
     dup_nomatch: "当前 Key 的值中没有匹配内容",
     dup_fail_t: "搜索失败：{e}",
+    dup_load_fail_t: "加载值失败：{e}",
     seg_ok_t: "已跳至偏移 {off}（0x{hex}）",
     seg_range_t: "偏移超出范围：{v}（共 {total} 字节）",
     seg_bad: "请输入十进制偏移，或 0x 开头的十六进制偏移",
@@ -739,6 +745,7 @@ const EN: I18n = I18n {
     dup_bad_query_t: "Invalid search input: {e}",
     dup_nomatch: "No matching value under this Key",
     dup_fail_t: "Search failed: {e}",
+    dup_load_fail_t: "Failed to load values: {e}",
     seg_ok_t: "Jumped to offset {off} (0x{hex})",
     seg_range_t: "Offset out of range: {v} ({total} bytes)",
     seg_bad: "Enter a decimal offset, or hexadecimal prefixed with 0x",
@@ -912,6 +919,7 @@ const RU: I18n = I18n {
     dup_bad_query_t: "Неверный запрос поиска: {e}",
     dup_nomatch: "Среди значений этого Key совпадений нет",
     dup_fail_t: "Ошибка поиска: {e}",
+    dup_load_fail_t: "Не удалось загрузить значения: {e}",
     seg_ok_t: "Переход к смещению {off} (0x{hex})",
     seg_range_t: "Смещение вне диапазона: {v} ({total} байт)",
     seg_bad: "Введите десятичное смещение или шестнадцатеричное с префиксом 0x",

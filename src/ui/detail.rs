@@ -121,45 +121,51 @@ impl DetailState {
     }
 
     /// 跳转到当前 Key 的第 `idx` 个值（0 起）；自动夹到有效范围，跨值页时懒加载。
-    pub fn dup_goto(&mut self, ctx: &DupCtx, idx: usize) {
+    ///
+    /// 返回 `Ok(())` 表示成功（或目标已在当前页，无需 IO）；
+    /// 返回 `Err(msg)` 表示跨页加载失败，此时 `dup_index` 保持不变，
+    /// 调用者应将 `msg` 显示到状态栏。
+    pub fn dup_goto(&mut self, ctx: &DupCtx, idx: usize) -> Result<(), String> {
         if self.dup_total == 0 {
-            return;
+            return Ok(());
         }
         let idx = idx.min(self.dup_total - 1);
         let in_page =
             idx >= self.dup_page_start && idx < self.dup_page_start + self.dup_values.len();
         if !in_page {
             let page_index = idx / DUP_PAGE_SIZE;
-            if let Ok((total, values)) =
-                db::dups_of(ctx.db, ctx.table, ctx.key, page_index, DUP_PAGE_SIZE)
-            {
-                self.dup_total = total.max(1);
-                self.dup_page_start = page_index * DUP_PAGE_SIZE;
-                self.dup_values = values;
+            match db::dups_of(ctx.db, ctx.table, ctx.key, page_index, DUP_PAGE_SIZE) {
+                Ok((total, values)) => {
+                    self.dup_total = total.max(1);
+                    self.dup_page_start = page_index * DUP_PAGE_SIZE;
+                    self.dup_values = values;
+                }
+                Err(e) => return Err(tr().dup_load_fail(&e)),
             }
         }
         self.dup_index = idx.min(self.dup_total.saturating_sub(1));
         // 切换到另一个值：Value 分段偏移归零
         self.val_seg_off = 0;
         self.val_seg_input.clear();
+        Ok(())
     }
 
-    /// 上/下一个值（边界停止）。
-    pub fn dup_step(&mut self, ctx: &DupCtx, delta: isize) {
+    /// 上/下一个值（边界停止）。跨页加载失败时返回错误消息。
+    pub fn dup_step(&mut self, ctx: &DupCtx, delta: isize) -> Result<(), String> {
         let new = self.dup_index as isize + delta;
         if new < 0 || new >= self.dup_total as isize {
-            return;
+            return Ok(());
         }
-        self.dup_goto(ctx, new as usize);
+        self.dup_goto(ctx, new as usize)
     }
 
-    /// 上/下翻一个值页（DUP_PAGE_SIZE 个值），到头自动夹住。
-    pub fn dup_page_step(&mut self, ctx: &DupCtx, pages: isize) {
+    /// 上/下翻一个值页（DUP_PAGE_SIZE 个值），到头自动夹住。跨页加载失败时返回错误消息。
+    pub fn dup_page_step(&mut self, ctx: &DupCtx, pages: isize) -> Result<(), String> {
         let target = self.dup_index as isize + pages * DUP_PAGE_SIZE as isize;
         if target < 0 {
-            self.dup_goto(ctx, 0);
+            self.dup_goto(ctx, 0)
         } else {
-            self.dup_goto(ctx, target as usize);
+            self.dup_goto(ctx, target as usize)
         }
     }
 
@@ -168,10 +174,10 @@ impl DetailState {
         let t = tr();
         let s = self.dup_jump_input.trim();
         match s.parse::<usize>() {
-            Ok(n) if n >= 1 && n <= self.dup_total => {
-                self.dup_goto(ctx, n - 1);
-                t.dup_located(n, self.dup_total)
-            }
+            Ok(n) if n >= 1 && n <= self.dup_total => match self.dup_goto(ctx, n - 1) {
+                Ok(()) => t.dup_located(n, self.dup_total),
+                Err(e) => e,
+            },
             Ok(n) => t.dup_range(n, self.dup_total),
             Err(_) => t.dup_bad_num.to_string(),
         }
@@ -194,11 +200,15 @@ impl DetailState {
         match db::dup_find(ctx.db, ctx.table, ctx.key, &needle, from, forward) {
             Ok(Some((i, _))) => {
                 let wrapped = forward && i < from || !forward && i >= from;
-                self.dup_goto(ctx, i);
-                if wrapped {
-                    t.dup_wrap(i + 1, self.dup_total)
-                } else {
-                    t.dup_located(i + 1, self.dup_total)
+                match self.dup_goto(ctx, i) {
+                    Ok(()) => {
+                        if wrapped {
+                            t.dup_wrap(i + 1, self.dup_total)
+                        } else {
+                            t.dup_located(i + 1, self.dup_total)
+                        }
+                    }
+                    Err(e) => e,
                 }
             }
             Ok(None) => t.dup_nomatch.to_string(),
@@ -450,42 +460,54 @@ fn kv_card(
                         .on_hover_text(t.dup_tip_first)
                         .clicked()
                     {
-                        app.detail.dup_goto(&dctx, 0);
+                        if let Err(e) = app.detail.dup_goto(&dctx, 0) {
+                            app.status = Status::Msg(e);
+                        }
                     }
                     if ui
                         .add_enabled(idx > 0, egui::Button::new("⏪"))
                         .on_hover_text(t.dup_tip_prev100)
                         .clicked()
                     {
-                        app.detail.dup_page_step(&dctx, -1);
+                        if let Err(e) = app.detail.dup_page_step(&dctx, -1) {
+                            app.status = Status::Msg(e);
+                        }
                     }
                     if ui
                         .add_enabled(idx > 0, egui::Button::new("◀"))
                         .on_hover_text(t.dup_tip_prev)
                         .clicked()
                     {
-                        app.detail.dup_step(&dctx, -1);
+                        if let Err(e) = app.detail.dup_step(&dctx, -1) {
+                            app.status = Status::Msg(e);
+                        }
                     }
                     if ui
                         .add_enabled(idx + 1 < total, egui::Button::new("▶"))
                         .on_hover_text(t.dup_tip_next)
                         .clicked()
                     {
-                        app.detail.dup_step(&dctx, 1);
+                        if let Err(e) = app.detail.dup_step(&dctx, 1) {
+                            app.status = Status::Msg(e);
+                        }
                     }
                     if ui
                         .add_enabled(idx + 1 < total, egui::Button::new("⏩"))
                         .on_hover_text(t.dup_tip_next100)
                         .clicked()
                     {
-                        app.detail.dup_page_step(&dctx, 1);
+                        if let Err(e) = app.detail.dup_page_step(&dctx, 1) {
+                            app.status = Status::Msg(e);
+                        }
                     }
                     if ui
                         .add_enabled(idx + 1 < total, egui::Button::new("⏭"))
                         .on_hover_text(t.dup_tip_last)
                         .clicked()
                     {
-                        app.detail.dup_goto(&dctx, total.saturating_sub(1));
+                        if let Err(e) = app.detail.dup_goto(&dctx, total.saturating_sub(1)) {
+                            app.status = Status::Msg(e);
+                        }
                     }
                     ui.label(t.goto);
                     let resp = ui.add(
