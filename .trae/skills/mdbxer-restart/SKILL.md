@@ -26,4 +26,4 @@ Get-Process -Name mdbxer -ErrorAction SilentlyContinue | Stop-Process -Force; St
    Get-Process -Name mdbxer -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Milliseconds 700; cargo run --example make_test_db 2>&1 | Select-Object -Last 4
    ```
    成功输出"已生成：testdata\dir_db / testdata\file_db.mdbx"，之后再按标准流程构建重启。
-4. 提交代码属于独立动作，用户没要求 `git commit` 时不得顺手提交；提交信息用 PowerShell here-string（`@' ... '@`），不要用 bash 的 `<<'EOF'`。
+4. 提交规则（2026-10-02 用户偏好）：完成一个完整功能/修复且 cargo check 零错误零警告后，可**自动本地 commit**（中文提交信息，PowerShell here-string `@' ... '@`，不要用 bash 的 `<<'EOF'`）；**push 必须等用户明确指令**，重启流程本身不负责提交。
