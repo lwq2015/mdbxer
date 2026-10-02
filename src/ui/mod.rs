@@ -19,6 +19,53 @@ pub const PAGE_SIZES: [usize; 5] = [50, 100, 200, 500, 1000];
 pub const DEFAULT_PAGE_SIZE: usize = 200;
 pub const DEFAULT_CELL_MAX: usize = 256;
 
+/// 左栏宽度范围（点）
+pub const LEFT_PANEL_MIN: f32 = 180.0;
+pub const LEFT_PANEL_MAX: f32 = 320.0;
+/// 中央数据表保留的最小宽度：两侧面板拖宽时不得把它挤得更窄
+pub const MIDDLE_MIN_WIDTH: f32 = 360.0;
+
+/// 状态栏消息。
+/// 持久状态（就绪/已打开/已关闭等）每帧按当前语言渲染，切换语言即时跟随；
+/// 一次性提示（错误、跳转结果等）保留生成时的文本，下次操作自然被替换。
+pub enum Status {
+    /// 就绪（启动初始态）
+    Ready,
+    /// 已打开：是否单文件模式、表数量、路径
+    Opened {
+        file_mode: bool,
+        n: usize,
+        path: String,
+    },
+    /// 已打开但库中没有任何表
+    NoTables(String),
+    /// 已关闭
+    Closed,
+    /// 一次性消息（沿用生成时的语言）
+    Msg(String),
+}
+
+impl Status {
+    /// 按当前语言渲染为状态栏文本。
+    pub fn text(&self) -> String {
+        let t = crate::i18n::tr();
+        match self {
+            Status::Ready => t.ready.to_string(),
+            Status::Opened {
+                file_mode,
+                n,
+                path,
+            } => {
+                let mode = if *file_mode { t.m_file } else { t.m_dir };
+                t.open_ok(mode, *n, path)
+            }
+            Status::NoTables(path) => t.open_no_tables(path),
+            Status::Closed => t.closed.to_string(),
+            Status::Msg(s) => s.clone(),
+        }
+    }
+}
+
 /// 让 ComboBox 支持滚轮：悬停在按钮上（未展开）时逐格切换选项。
 /// - 鼠标滚轮：一个刻度事件切换一项（不跳格）
 /// - 触控板像素滚动：累计满 40 点切换一项
@@ -196,6 +243,8 @@ pub struct MdbxerApp {
     pub table_sort: TableSort,
     /// 左栏（表列表）是否显示
     pub left_visible: bool,
+    /// 左栏当前宽度（上一帧实测，用于约束右栏上限；默认 220）
+    pub left_panel_w: f32,
     // ── 中间 ──
     /// 当前页签
     pub tab: CenterTab,
@@ -236,14 +285,16 @@ pub struct MdbxerApp {
     pub detail_visible: bool,
     /// 右栏详情状态（hex 视图配置 / 多值导航 / 大字段分段查看）
     pub detail: DetailState,
+    /// 右栏当前宽度（上一帧实测，用于约束左栏上限；默认 360）
+    pub detail_panel_w: f32,
     // ── 页签缓存 ──
     /// 表统计缓存：(表下标, 行数据)
     pub stat_cache: Option<(usize, Vec<(String, String)>)>,
     /// 环境信息缓存
     pub env_cache: Option<Vec<(String, String, String)>>,
     // ── 状态栏 ──
-    /// 状态栏文本
-    pub status: String,
+    /// 状态栏消息（持久状态随语言即时渲染）
+    pub status: Status,
     // ── 窗口标题 ──
     /// 基础标题（版本+日期，启动时由 main 传入）
     title_base: String,
@@ -263,6 +314,7 @@ impl MdbxerApp {
             table_filter: String::new(),
             table_sort: TableSort::NameAsc,
             left_visible: true,
+            left_panel_w: 220.0,
             tab: CenterTab::Data,
             selected_table: None,
             sort_desc: false,
@@ -282,9 +334,10 @@ impl MdbxerApp {
             views_key: None,
             detail_visible: true,
             detail: DetailState::default(),
+            detail_panel_w: 360.0,
             stat_cache: None,
             env_cache: None,
-            status: crate::i18n::tr().ready.to_string(),
+            status: Status::Ready,
             title: title_base.clone(),
             title_base,
         }
@@ -375,11 +428,7 @@ impl MdbxerApp {
         match DbHandle::open(std::path::Path::new(&path), self.open_mode) {
             Ok(handle) => {
                 let n = handle.tables.len();
-                let mode_desc = if handle.no_sub_dir {
-                    crate::i18n::tr().m_file
-                } else {
-                    crate::i18n::tr().m_dir
-                };
+                let file_mode = handle.no_sub_dir;
                 self.history.add(&path, self.open_mode.as_str());
                 self.db = Some(handle);
                 self.opened_path = Some(path.clone());
@@ -387,7 +436,11 @@ impl MdbxerApp {
                 self.stat_cache = None;
                 self.env_cache = None;
                 self.selected_table = if n > 0 { Some(0) } else { None };
-                self.status = crate::i18n::tr().open_ok(mode_desc, n, &path);
+                self.status = Status::Opened {
+                    file_mode,
+                    n,
+                    path: path.clone(),
+                };
                 if self.selected_table.is_some() {
                     self.load_first_page();
                 } else {
@@ -395,11 +448,11 @@ impl MdbxerApp {
                     self.base_index = None;
                     self.selected_row = None;
                     self.detail.clear();
-                    self.status = crate::i18n::tr().open_no_tables(&path);
+                    self.status = Status::NoTables(path);
                 }
             }
             Err(e) => {
-                self.status = e;
+                self.status = Status::Msg(e);
             }
         }
     }
@@ -415,7 +468,7 @@ impl MdbxerApp {
         self.stat_cache = None;
         self.env_cache = None;
         self.detail.clear();
-        self.status = crate::i18n::tr().closed.to_string();
+        self.status = Status::Closed;
     }
 
     /// 检测 `opened_path` 变化，同步更新窗口标题。
@@ -454,7 +507,7 @@ impl MdbxerApp {
                 Some((len, has_more))
             }
             Err(e) => {
-                self.status = crate::i18n::tr().read_fail(&e);
+                self.status = Status::Msg(crate::i18n::tr().read_fail(&e));
                 None
             }
         }
@@ -560,7 +613,7 @@ impl MdbxerApp {
         let key = match parse_jump_input(&input, integer_key) {
             Ok(k) => k,
             Err(e) => {
-                self.status = crate::i18n::tr().jump_bad(&e);
+                self.status = Status::Msg(crate::i18n::tr().jump_bad(&e));
                 return;
             }
         };
@@ -578,14 +631,14 @@ impl MdbxerApp {
                 self.at_end = !has_more;
                 self.base_index = None;
                 if found {
-                    self.status = crate::i18n::tr().located.to_string();
+                    self.status = Status::Msg(crate::i18n::tr().located.to_string());
                 } else {
-                    self.status = crate::i18n::tr().not_found_ge.to_string();
+                    self.status = Status::Msg(crate::i18n::tr().not_found_ge.to_string());
                 }
                 self.after_load();
             }
             Err(e) => {
-                self.status = crate::i18n::tr().jump_fail(&e);
+                self.status = Status::Msg(crate::i18n::tr().jump_fail(&e));
             }
         }
     }
@@ -652,11 +705,11 @@ impl MdbxerApp {
         };
         match std::fs::write(&path, bytes) {
             Ok(()) => {
-                self.status = t.export_ok(bytes.len(), &path.display().to_string());
+                self.status = Status::Msg(t.export_ok(bytes.len(), &path.display().to_string()));
                 true
             }
             Err(e) => {
-                self.status = t.export_fail(&e.to_string());
+                self.status = Status::Msg(t.export_fail(&e.to_string()));
                 false
             }
         }
@@ -801,7 +854,7 @@ impl eframe::App for MdbxerApp {
                     }
                 }
                 ui.separator();
-                ui.label(&self.status);
+                ui.label(self.status.text());
             });
         });
 

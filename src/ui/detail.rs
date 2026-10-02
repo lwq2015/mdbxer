@@ -4,7 +4,7 @@
 //! 右侧详情：Key / Value 卡片（格式下拉、复制、文本、hex dump、多值翻页），
 //! 以及右栏全部状态（[`DetailState`]）。
 
-use super::{MdbxerApp, parse_bytes_input};
+use super::{MdbxerApp, Status, parse_bytes_input};
 use crate::db;
 use crate::fmt::{self, DecodeMode};
 use crate::i18n::tr;
@@ -271,8 +271,13 @@ impl DetailState {
 /// 右栏入口：无选中行时显示提示；有选中行时显示 Key/Value 两张卡片。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let t = tr();
-    let max_w = detail_max_width(ui, &app.detail);
-    egui::Panel::right("detail_panel")
+    let left_w = if app.left_visible {
+        app.left_panel_w
+    } else {
+        0.0
+    };
+    let max_w = detail_max_width(ui, &app.detail, left_w);
+    let resp = egui::Panel::right("detail_panel")
         .default_size(360.0)
         .size_range(240.0..=max_w)
         .show(ui, |ui| {
@@ -326,6 +331,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 kv_card(ui, app, &val_title, &value, false, &key);
             });
         });
+    app.detail_panel_w = resp.response.rect.width();
 }
 
 /// 一个 Key 或 Value 卡片。`is_key` 决定使用 key_mode 还是 val_mode；
@@ -419,7 +425,7 @@ fn kv_card(
                         .hint_text(t.seg_input_hint),
                 );
                 if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    app.status = app.detail.seg_jump(is_key, total);
+                    app.status = Status::Msg(app.detail.seg_jump(is_key, total));
                 }
                 let seg_no = off / fmt::PAGE_BYTES + 1;
                 let seg_cnt = (total + fmt::PAGE_BYTES - 1) / fmt::PAGE_BYTES;
@@ -488,7 +494,7 @@ fn kv_card(
                             .hint_text("#"),
                     );
                     if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        app.status = app.detail.dup_jump(&dctx);
+                        app.status = Status::Msg(app.detail.dup_jump(&dctx));
                     }
                 });
                 ui.horizontal(|ui| {
@@ -503,7 +509,7 @@ fn kv_card(
                         .on_hover_text(t.search_prev_tip)
                         .clicked()
                     {
-                        app.status = app.detail.dup_search(&dctx, false);
+                        app.status = Status::Msg(app.detail.dup_search(&dctx, false));
                     }
                     if ui
                         .button("↓")
@@ -511,7 +517,7 @@ fn kv_card(
                         .clicked()
                         || enter
                     {
-                        app.status = app.detail.dup_search(&dctx, true);
+                        app.status = Status::Msg(app.detail.dup_search(&dctx, true));
                     }
                 });
                 ui.add_space(2.0);
@@ -587,8 +593,9 @@ fn text_of(bytes: &[u8], mode: DecodeMode, endian: fmt::Endian) -> String {
 
 /// 右栏宽度上限：保证当前 hex 配置下最长一行（32 字节时最宽）
 /// 在面板内不折行。按等宽字体实测字宽计算，再扣除各级边距；
-/// 同时不超过窗口宽度减去给左栏+表格保留的 300 点。
-fn detail_max_width(ui: &egui::Ui, d: &DetailState) -> f32 {
+/// 同时不超过窗口宽度减去左栏与中央表格最小保留宽度，
+/// 窄窗口时下限放宽到右栏最小宽度 240，优先保证中央表格。
+fn detail_max_width(ui: &egui::Ui, d: &DetailState, left_w: f32) -> f32 {
     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
     let char_w = ui.fonts_mut(|f| f.glyph_width(&font_id, '0'));
 
@@ -612,5 +619,5 @@ fn detail_max_width(ui: &egui::Ui, d: &DetailState) -> f32 {
     let screen = ui.ctx().viewport_rect().width();
     needed
         .max(720.0)
-        .min((screen - 300.0).max(720.0))
+        .min((screen - left_w - super::MIDDLE_MIN_WIDTH).max(240.0))
 }

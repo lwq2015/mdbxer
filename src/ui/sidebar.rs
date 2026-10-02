@@ -3,15 +3,24 @@
 
 //! 左侧表（subDB）列表：过滤、排序、条数显示。
 
-use super::{MdbxerApp, TableSort};
+use super::{LEFT_PANEL_MAX, LEFT_PANEL_MIN, MIDDLE_MIN_WIDTH, MdbxerApp, TableSort};
 use crate::i18n::tr;
 
 /// 左侧表列表面板：标题 + 排序下拉 + 过滤框 + 可滚动列表。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let t = tr();
-    egui::Panel::left("table_list")
+    // 上限取硬上限与"给右栏+中央表格留足宽度"两者中的较小值
+    let screen = ui.ctx().viewport_rect().width();
+    let right_w = if app.detail_visible {
+        app.detail_panel_w
+    } else {
+        0.0
+    };
+    let max_w = (screen - right_w - MIDDLE_MIN_WIDTH).clamp(LEFT_PANEL_MIN, LEFT_PANEL_MAX);
+    let resp = egui::Panel::left("table_list")
         .default_size(220.0)
         .resizable(true)
+        .size_range(LEFT_PANEL_MIN..=max_w)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.strong(t.tables_title);
@@ -76,4 +85,5 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 app.select_table(i);
             }
         });
+    app.left_panel_w = resp.response.rect.width();
 }
