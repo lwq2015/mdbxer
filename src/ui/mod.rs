@@ -301,6 +301,15 @@ pub struct MdbxerApp {
     // ── 状态栏 ──
     /// 状态栏消息（持久状态随语言即时渲染）
     pub status: Status,
+    // ── 导出 ──
+    /// 导出进度接收端（Some = 导出进行中，也用于禁用导出按钮防重入）
+    pub export_rx: Option<std::sync::mpsc::Receiver<crate::export::ExportProgress>>,
+    /// 导出已写出条数（进度显示）
+    pub export_count: usize,
+    /// 导出目标文件路径（完成消息用）
+    pub export_path: String,
+    /// 导出格式选择
+    pub export_format: crate::export::ExportFormat,
     // ── 窗口标题 ──
     /// 基础标题（版本+日期，启动时由 main 传入）
     title_base: String,
@@ -347,6 +356,10 @@ impl MdbxerApp {
             stat_cache: None,
             env_cache: None,
             status: Status::Ready,
+            export_rx: None,
+            export_count: 0,
+            export_path: String::new(),
+            export_format: crate::export::ExportFormat::default(),
             title: title_base.clone(),
             title_base,
         }
@@ -771,6 +784,74 @@ impl MdbxerApp {
             }
         }
     }
+
+    // ── 导出 ────────────────────────────────────────────────────
+
+    /// 启动后台导出线程（防重入：若已有导出在运行则忽略）。
+    pub fn start_export(&mut self) {
+        if self.export_rx.is_some() {
+            return;
+        }
+        let t = crate::i18n::tr();
+        let Some(table) = self.cur_table() else { return };
+        let Some(path_str) = self.opened_path.clone() else { return };
+        let name = table.display();
+        let ext = self.export_format.ext();
+        let Some(out) = rfd::FileDialog::new()
+            .set_file_name(format!("{}.{ext}", name.replace(|c: char| !c.is_alphanumeric(), "_")))
+            .add_filter(t.filter_all, &["*"])
+            .save_file()
+        else {
+            return;
+        };
+        let job = crate::export::ExportJob {
+            db_path: std::path::PathBuf::from(&path_str),
+            open_mode: self.open_mode,
+            table: table.name.clone(),
+            dup_sort: table.dup_sort,
+            sort_desc: self.sort_desc,
+            key_mode: self.key_mode,
+            val_mode: self.val_mode,
+            endian: self.endian,
+            out_path: out.clone(),
+            format: self.export_format,
+        };
+        self.export_path = out.display().to_string();
+        self.export_count = 0;
+        self.export_rx = Some(crate::export::start(job));
+        self.status = Status::Msg(t.export_started.to_string());
+    }
+
+    /// 每帧轮询导出进度（需在 eframe::App::ui 里调用）。
+    pub fn poll_export(&mut self, ctx: &egui::Context) {
+        let Some(rx) = &self.export_rx else { return };
+        let t = crate::i18n::tr();
+        let mut done = false;
+        // 尽量消费已到达的消息
+        while let Ok(msg) = rx.try_recv() {
+            match msg {
+                crate::export::ExportProgress::Progress(n) => {
+                    self.export_count = n;
+                    self.status = Status::Msg(t.export_progress(n));
+                }
+                crate::export::ExportProgress::Done(n) => {
+                    self.export_count = n;
+                    self.status = Status::Msg(t.export_done(n, &self.export_path));
+                    done = true;
+                }
+                crate::export::ExportProgress::Fail(e) => {
+                    self.status = Status::Msg(t.export_fail(&e));
+                    done = true;
+                }
+            }
+        }
+        if done {
+            self.export_rx = None;
+        } else {
+            // 导出仍在运行，请求下一帧重绘以持续轮询
+            ctx.request_repaint();
+        }
+    }
 }
 
 /// 反转取值方向（供"上一页"等反向操作使用）。
@@ -864,6 +945,7 @@ impl eframe::App for MdbxerApp {
         }
 
         self.update_title(ctx);
+        self.poll_export(ctx);
 
         topbar::show(ui, self);
         if self.db.is_some() {

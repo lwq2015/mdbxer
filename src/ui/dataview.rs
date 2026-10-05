@@ -134,6 +134,28 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             app.page_size = ps;
             app.load_first_page();
         }
+
+        ui.separator();
+        // 导出当前表：CSV/JSON 下拉 + ⭳（导出中禁用防重入）
+        let mut ef = app.export_format;
+        egui::ComboBox::from_id_salt("export_format")
+            .width(60.0)
+            .selected_text(ef.label())
+            .show_ui(ui, |ui| {
+                for f in crate::export::ExportFormat::ALL {
+                    ui.selectable_value(&mut ef, f, f.label());
+                }
+            });
+        if ef != app.export_format {
+            app.export_format = ef;
+        }
+        if ui
+            .add_enabled(app.export_rx.is_none(), egui::Button::new("⭳"))
+            .on_hover_text(t.export_tip)
+            .clicked()
+        {
+            app.start_export();
+        }
     });
 
     ui.separator();

@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 mod config;
 mod db;
+mod export;
 mod fmt;
 mod history;
 mod i18n;

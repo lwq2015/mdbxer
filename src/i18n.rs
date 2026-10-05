@@ -205,6 +205,14 @@ pub struct I18n {
     /// {e}
     pub key_search_bad_t: &'static str,
 
+    // ── 导出 ──
+    pub export_tip: &'static str,
+    pub export_started: &'static str,
+    /// {n}
+    pub export_progress_t: &'static str,
+    /// {n} {path}
+    pub export_done_t: &'static str,
+
     // ── 应用状态消息（模板）──
     /// {mode} {n} {path}
     pub open_ok_t: &'static str,
@@ -491,6 +499,19 @@ impl I18n {
     pub fn key_search_bad(&self, e: &str) -> String {
         fill(self.key_search_bad_t, &[("e", e)])
     }
+
+    /// 导出进行中状态。
+    pub fn export_progress(&self, n: usize) -> String {
+        fill(self.export_progress_t, &[("n", &n.to_string())])
+    }
+
+    /// 导出完成状态（n 条记录到 path）。
+    pub fn export_done(&self, n: usize, path: &str) -> String {
+        fill(
+            self.export_done_t,
+            &[("n", &n.to_string()), ("path", path)],
+        )
+    }
 }
 
 /// 中文（基准语言）。
@@ -595,6 +616,11 @@ const ZH: I18n = I18n {
     filter_active: "已过滤",
     filter_clear_tip: "清除 Key 前缀过滤，恢复显示全表",
     key_search_bad_t: "搜索输入错误：{e}",
+
+    export_tip: "把当前表导出为 CSV/JSON（后台线程，界面可继续操作）",
+    export_started: "导出已开始…",
+    export_progress_t: "导出中：已写出 {n} 条…",
+    export_done_t: "导出完成：{n} 条 → {path}",
 
     open_ok_t: "已打开（{mode}模式，{n} 个表）：{path}",
     open_no_tables_t: "已打开但没有任何数据表：{path}",
@@ -777,6 +803,11 @@ const EN: I18n = I18n {
     filter_clear_tip: "Clear the key prefix filter and show the whole table",
     key_search_bad_t: "Invalid search input: {e}",
 
+    export_tip: "Export the current table as CSV/JSON (background thread; UI stays responsive)",
+    export_started: "Export started…",
+    export_progress_t: "Exporting: {n} records written…",
+    export_done_t: "Export finished: {n} records → {path}",
+
     open_ok_t: "Opened ({mode} mode, {n} tables): {path}",
     open_no_tables_t: "Opened, but it contains no data tables: {path}",
     read_fail_t: "Read failed: {e}",
@@ -958,6 +989,11 @@ const RU: I18n = I18n {
     filter_clear_tip: "Сбросить фильтр по префиксу ключа и показать всю таблицу",
     key_search_bad_t: "Неверный запрос поиска: {e}",
 
+    export_tip: "Экспорт текущей таблицы в CSV/JSON (в фоне; интерфейс остаётся отзывчивым)",
+    export_started: "Экспорт начат…",
+    export_progress_t: "Экспорт: записано {n} записей…",
+    export_done_t: "Экспорт завершён: {n} записей → {path}",
+
     open_ok_t: "Открыто (режим: {mode}, таблиц: {n}): {path}",
     open_no_tables_t: "Открыто, но таблиц данных нет: {path}",
     read_fail_t: "Ошибка чтения: {e}",
@@ -1130,6 +1166,21 @@ mod tests {
             assert!(!table.key_search_bad_t.is_empty());
             assert!(table.key_search_bad_t.contains("{e}"));
             assert!(table.key_search_bad("oops").contains("oops"));
+        }
+    }
+
+    #[test]
+    fn all_tables_have_export_fields() {
+        for table in &TABLES {
+            assert!(!table.export_tip.is_empty());
+            assert!(!table.export_started.is_empty());
+            assert!(table.export_progress_t.contains("{n}"));
+            assert!(table.export_done_t.contains("{n}"));
+            assert!(table.export_done_t.contains("{path}"));
+            assert!(table.export_progress(5).contains("5"));
+            let s = table.export_done(7, "/tmp/a.csv");
+            assert!(s.contains("7"), "got: {s}");
+            assert!(s.contains("/tmp/a.csv"), "got: {s}");
         }
     }
 }
