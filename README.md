@@ -8,7 +8,7 @@
 
 ## 下载
 
-预编译版本见 [Gitee Releases](https://gitee.com/lwq_yu/mdbxer/releases)（主仓库，含 Windows x86_64 / Linux x86_64 / macOS Apple Silicon），[GitHub Releases](https://github.com/lwq2015/mdbxer/releases) 为镜像。macOS 仅提供 ARM 包，Intel Mac 可经 Rosetta 2 运行。
+预编译版本见 [GitHub Releases](https://github.com/lwq2015/mdbxer/releases)（含 Windows x86_64 / Linux x86_64 / macOS Apple Silicon），[Gitee Releases](https://gitee.com/lwq_yu/mdbxer/releases) 为镜像。macOS 仅提供 ARM 包，Intel Mac 可经 Rosetta 2 运行。
 
 ## 功能特性
 
