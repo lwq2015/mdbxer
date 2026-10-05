@@ -136,6 +136,58 @@ impl DecodeMode {
             DecodeMode::Json => "json".to_string(),
         }
     }
+
+    /// 稳定字符串标识（配置持久化用）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DecodeMode::Auto => "auto",
+            DecodeMode::Utf8 => "utf8",
+            DecodeMode::Utf16Le => "utf16le",
+            DecodeMode::Utf16Be => "utf16be",
+            DecodeMode::I8 => "i8",
+            DecodeMode::I16 => "i16",
+            DecodeMode::I32 => "i32",
+            DecodeMode::I64 => "i64",
+            DecodeMode::U8 => "u8",
+            DecodeMode::U16 => "u16",
+            DecodeMode::U32 => "u32",
+            DecodeMode::U64 => "u64",
+            DecodeMode::F32 => "f32",
+            DecodeMode::F64 => "f64",
+            DecodeMode::Hex => "hex",
+            DecodeMode::Dec => "dec",
+            DecodeMode::Binary => "bin",
+            DecodeMode::Base64 => "b64",
+            DecodeMode::Uuid => "uuid",
+            DecodeMode::Json => "json",
+        }
+    }
+
+    /// 从 [`as_str`](Self::as_str) 标识解析；未知值回退 Auto。
+    pub fn from_str(s: &str) -> DecodeMode {
+        match s {
+            "utf8" => DecodeMode::Utf8,
+            "utf16le" => DecodeMode::Utf16Le,
+            "utf16be" => DecodeMode::Utf16Be,
+            "i8" => DecodeMode::I8,
+            "i16" => DecodeMode::I16,
+            "i32" => DecodeMode::I32,
+            "i64" => DecodeMode::I64,
+            "u8" => DecodeMode::U8,
+            "u16" => DecodeMode::U16,
+            "u32" => DecodeMode::U32,
+            "u64" => DecodeMode::U64,
+            "f32" => DecodeMode::F32,
+            "f64" => DecodeMode::F64,
+            "hex" => DecodeMode::Hex,
+            "dec" => DecodeMode::Dec,
+            "bin" => DecodeMode::Binary,
+            "b64" => DecodeMode::Base64,
+            "uuid" => DecodeMode::Uuid,
+            "json" => DecodeMode::Json,
+            _ => DecodeMode::Auto,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -176,6 +228,16 @@ mod tests {
     #[test]
     fn decode_mode_all_has_20() {
         assert_eq!(DecodeMode::ALL.len(), 20);
+    }
+
+    #[test]
+    fn decode_mode_as_str_from_str_round_trip() {
+        for m in DecodeMode::ALL {
+            assert_eq!(DecodeMode::from_str(m.as_str()), m);
+        }
+        // 未知值回退 Auto
+        assert_eq!(DecodeMode::from_str(""), DecodeMode::Auto);
+        assert_eq!(DecodeMode::from_str("???"), DecodeMode::Auto);
     }
 
     #[test]

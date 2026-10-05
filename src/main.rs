@@ -36,6 +36,7 @@ fn main() -> eframe::Result<()> {
         &title,
         options,
         Box::new(move |cc| {
+            ui::apply_theme(&cc.egui_ctx, crate::config::load_theme() == crate::config::Theme::Dark);
             load_cjk_fonts(&cc.egui_ctx);
             let mut app = ui::MdbxerApp::new(app_title);
             // 支持命令行传入路径直接打开（也便于拖文件到 exe）

@@ -368,6 +368,17 @@ fn kv_card(
 
         ui.horizontal(|ui| {
             ui.strong(title);
+            // Key 卡片：收藏 ☆/★（点击切换，立即持久化）
+            if is_key {
+                let star = if app.is_fav_key(key) { "★" } else { "☆" };
+                if ui
+                    .small_button(star)
+                    .on_hover_text(t.fav_key_tip)
+                    .clicked()
+                {
+                    app.toggle_fav_key(key);
+                }
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(t.copy).clicked() {
                     ui.ctx()

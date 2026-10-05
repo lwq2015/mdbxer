@@ -213,6 +213,15 @@ pub struct I18n {
     /// {n} {path}
     pub export_done_t: &'static str,
 
+    // ── 主题 / 收藏 ──
+    pub theme_tip: &'static str,
+    pub favorites_title: &'static str,
+    pub fav_table_tip: &'static str,
+    pub fav_key_tip: &'static str,
+    pub fav_jump_tip: &'static str,
+    pub fav_del_tip: &'static str,
+    pub fav_empty: &'static str,
+
     // ── 应用状态消息（模板）──
     /// {mode} {n} {path}
     pub open_ok_t: &'static str,
@@ -622,6 +631,14 @@ const ZH: I18n = I18n {
     export_progress_t: "导出中：已写出 {n} 条…",
     export_done_t: "导出完成：{n} 条 → {path}",
 
+    theme_tip: "切换深浅色主题",
+    favorites_title: "收藏",
+    fav_table_tip: "收藏 / 取消收藏该表",
+    fav_key_tip: "收藏 / 取消收藏该 Key",
+    fav_jump_tip: "跳转到该 Key",
+    fav_del_tip: "从收藏中删除",
+    fav_empty: "（暂无收藏）",
+
     open_ok_t: "已打开（{mode}模式，{n} 个表）：{path}",
     open_no_tables_t: "已打开但没有任何数据表：{path}",
     read_fail_t: "读取失败：{e}",
@@ -808,6 +825,14 @@ const EN: I18n = I18n {
     export_progress_t: "Exporting: {n} records written…",
     export_done_t: "Export finished: {n} records → {path}",
 
+    theme_tip: "Toggle dark/light theme",
+    favorites_title: "Favorites",
+    fav_table_tip: "Add/remove this table from favorites",
+    fav_key_tip: "Add/remove this key from favorites",
+    fav_jump_tip: "Jump to this key",
+    fav_del_tip: "Remove from favorites",
+    fav_empty: "(no favorites yet)",
+
     open_ok_t: "Opened ({mode} mode, {n} tables): {path}",
     open_no_tables_t: "Opened, but it contains no data tables: {path}",
     read_fail_t: "Read failed: {e}",
@@ -993,6 +1018,14 @@ const RU: I18n = I18n {
     export_started: "Экспорт начат…",
     export_progress_t: "Экспорт: записано {n} записей…",
     export_done_t: "Экспорт завершён: {n} записей → {path}",
+
+    theme_tip: "Переключить тёмную/светлую тему",
+    favorites_title: "Избранное",
+    fav_table_tip: "Добавить/убрать таблицу из избранного",
+    fav_key_tip: "Добавить/убрать ключ из избранного",
+    fav_jump_tip: "Перейти к этому ключу",
+    fav_del_tip: "Удалить из избранного",
+    fav_empty: "(избранное пусто)",
 
     open_ok_t: "Открыто (режим: {mode}, таблиц: {n}): {path}",
     open_no_tables_t: "Открыто, но таблиц данных нет: {path}",
@@ -1181,6 +1214,19 @@ mod tests {
             let s = table.export_done(7, "/tmp/a.csv");
             assert!(s.contains("7"), "got: {s}");
             assert!(s.contains("/tmp/a.csv"), "got: {s}");
+        }
+    }
+
+    #[test]
+    fn all_tables_have_theme_favorites_fields() {
+        for table in &TABLES {
+            assert!(!table.theme_tip.is_empty());
+            assert!(!table.favorites_title.is_empty());
+            assert!(!table.fav_table_tip.is_empty());
+            assert!(!table.fav_key_tip.is_empty());
+            assert!(!table.fav_jump_tip.is_empty());
+            assert!(!table.fav_del_tip.is_empty());
+            assert!(!table.fav_empty.is_empty());
         }
     }
 }

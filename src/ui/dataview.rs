@@ -132,6 +132,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         super::wheel_cycle(ui.ctx(), &page_resp, &PAGE_SIZES, &mut ps);
         if ps != app.page_size {
             app.page_size = ps;
+            app.save_ui_prefs();
             app.load_first_page();
         }
 

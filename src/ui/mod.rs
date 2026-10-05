@@ -310,6 +310,13 @@ pub struct MdbxerApp {
     pub export_path: String,
     /// 导出格式选择
     pub export_format: crate::export::ExportFormat,
+    // ── 主题 / 收藏 ──
+    /// 当前主题（true = 深色）
+    pub dark_theme: bool,
+    /// 当前库的收藏表（None 元素 = 主表），左栏置顶显示
+    pub fav_tables: Vec<Option<String>>,
+    /// 当前库的收藏 Key，左栏底部列表可跳转
+    pub fav_keys: Vec<crate::config::FavKey>,
     // ── 窗口标题 ──
     /// 基础标题（版本+日期，启动时由 main 传入）
     title_base: String,
@@ -318,9 +325,29 @@ pub struct MdbxerApp {
 }
 
 impl MdbxerApp {
-    /// 新建应用状态：加载历史记录，其余字段取默认值。
+    /// 新建应用状态：加载历史记录、主题与 UI 偏好，其余字段取默认值。
     /// `title_base` 为基础窗口标题（版本+日期），打开库后前缀库路径。
     pub fn new(title_base: String) -> Self {
+        let prefs = crate::config::load_ui_prefs();
+        let page_size = prefs
+            .page_size
+            .filter(|p| PAGE_SIZES.contains(p))
+            .unwrap_or(DEFAULT_PAGE_SIZE);
+        let endian = match prefs.endian_le {
+            Some(false) => crate::fmt::Endian::Big,
+            _ => crate::fmt::Endian::Little,
+        };
+        let key_mode = prefs
+            .key_mode
+            .map(|s| DecodeMode::from_str(&s))
+            .unwrap_or_default();
+        let val_mode = prefs
+            .val_mode
+            .map(|s| DecodeMode::from_str(&s))
+            .unwrap_or_default();
+        if let Some(ts) = prefs.thousands_sep {
+            crate::fmt::set_thousands_sep(ts);
+        }
         Self {
             open_mode: OpenMode::Auto,
             history: History::load(),
@@ -334,7 +361,7 @@ impl MdbxerApp {
             selected_table: None,
             sort_desc: false,
             col_sort: None,
-            page_size: DEFAULT_PAGE_SIZE,
+            page_size,
             rows: Vec::new(),
             base_index: None,
             at_start: true,
@@ -344,9 +371,9 @@ impl MdbxerApp {
             key_search_input: String::new(),
             key_filter: None,
             key_filter_mode: false,
-            key_mode: DecodeMode::Auto,
-            val_mode: DecodeMode::Auto,
-            endian: crate::fmt::Endian::Little,
+            key_mode,
+            val_mode,
+            endian,
             cell_max: DEFAULT_CELL_MAX,
             views: Vec::new(),
             views_key: None,
@@ -360,6 +387,9 @@ impl MdbxerApp {
             export_count: 0,
             export_path: String::new(),
             export_format: crate::export::ExportFormat::default(),
+            dark_theme: crate::config::load_theme() == crate::config::Theme::Dark,
+            fav_tables: Vec::new(),
+            fav_keys: Vec::new(),
             title: title_base.clone(),
             title_base,
         }
@@ -452,12 +482,24 @@ impl MdbxerApp {
                 let n = handle.tables.len();
                 let file_mode = handle.no_sub_dir;
                 self.history.add(&path, self.open_mode.as_str());
+                // 每库记录：恢复收藏与最后打开的表（表已被删则回退主表）
+                let rec = crate::config::load_per_db(&path);
+                self.fav_tables = rec.fav_tables.clone();
+                self.fav_keys = rec.fav_keys.clone();
+                self.selected_table = if n > 0 {
+                    rec.last_table
+                        .and_then(|name| {
+                            handle.tables.iter().position(|t| t.name.as_ref() == Some(&name))
+                        })
+                        .or(Some(0))
+                } else {
+                    None
+                };
                 self.db = Some(handle);
                 self.opened_path = Some(path.clone());
                 self.tab = CenterTab::Data;
                 self.stat_cache = None;
                 self.env_cache = None;
-                self.selected_table = if n > 0 { Some(0) } else { None };
                 self.key_search_input.clear();
                 self.key_filter = None;
                 self.status = Status::Opened {
@@ -465,6 +507,8 @@ impl MdbxerApp {
                     n,
                     path: path.clone(),
                 };
+                // 刷新 LRU 的 last_use
+                self.save_per_db();
                 if self.selected_table.is_some() {
                     self.load_first_page();
                 } else {
@@ -483,6 +527,8 @@ impl MdbxerApp {
 
     /// 关闭当前数据库并清空所有相关状态；窗口标题恢复为基础标题。
     pub fn close_db(&mut self) {
+        // 关库前保存最后打开的表与收藏
+        self.save_per_db();
         self.db = None;
         self.opened_path = None;
         self.rows.clear();
@@ -493,6 +539,8 @@ impl MdbxerApp {
         self.env_cache = None;
         self.key_search_input.clear();
         self.key_filter = None;
+        self.fav_tables.clear();
+        self.fav_keys.clear();
         self.detail.clear();
         self.status = Status::Closed;
     }
@@ -566,6 +614,7 @@ impl MdbxerApp {
         self.key_search_input.clear();
         self.key_filter = None;
         self.load_first_page();
+        self.save_per_db();
     }
 
     /// 首页（取值方向最前）。
@@ -852,6 +901,127 @@ impl MdbxerApp {
             ctx.request_repaint();
         }
     }
+
+    // ── 主题 / UI 偏好 / 收藏 ───────────────────────────────────
+
+    /// 切换深浅色主题并持久化。
+    pub fn toggle_theme(&mut self, ctx: &egui::Context) {
+        self.dark_theme = !self.dark_theme;
+        apply_theme(ctx, self.dark_theme);
+        crate::config::save_theme(if self.dark_theme {
+            crate::config::Theme::Dark
+        } else {
+            crate::config::Theme::Light
+        });
+    }
+
+    /// 当前 UI 偏好（页大小/字节序/排版/千位分隔），供持久化。
+    pub fn current_ui_prefs(&self) -> crate::config::UiPrefs {
+        crate::config::UiPrefs {
+            page_size: Some(self.page_size),
+            endian_le: Some(self.endian == crate::fmt::Endian::Little),
+            key_mode: Some(self.key_mode.as_str().to_string()),
+            val_mode: Some(self.val_mode.as_str().to_string()),
+            thousands_sep: Some(crate::fmt::thousands_sep()),
+        }
+    }
+
+    /// 保存当前 UI 偏好（各设置变更点调用）。
+    pub fn save_ui_prefs(&self) {
+        crate::config::save_ui_prefs(&self.current_ui_prefs());
+    }
+
+    /// 保存当前库的每库记录（最后打开的表 + 收藏）。未打开库时无操作。
+    fn save_per_db(&self) {
+        let Some(path) = &self.opened_path else { return };
+        crate::config::save_per_db(&crate::config::PerDbRecord {
+            path: path.clone(),
+            last_table: self.cur_table().and_then(|t| t.name.clone()),
+            fav_tables: self.fav_tables.clone(),
+            fav_keys: self.fav_keys.clone(),
+            ..Default::default()
+        });
+    }
+
+    /// 切换某表的收藏状态（None = 主表）。
+    pub fn toggle_fav_table(&mut self, name: Option<String>) {
+        if let Some(pos) = self.fav_tables.iter().position(|n| *n == name) {
+            self.fav_tables.remove(pos);
+        } else {
+            self.fav_tables.push(name);
+        }
+        self.save_per_db();
+    }
+
+    /// 切换当前表中某 Key 的收藏状态。
+    pub fn toggle_fav_key(&mut self, key: &[u8]) {
+        let Some(table) = self.cur_table() else { return };
+        let table_name = table.name.clone();
+        let key_hex = key_hex(key);
+        if let Some(pos) = self
+            .fav_keys
+            .iter()
+            .position(|f| f.table == table_name && f.key_hex == key_hex)
+        {
+            self.fav_keys.remove(pos);
+        } else {
+            self.fav_keys.push(crate::config::FavKey {
+                table: table_name,
+                key_hex,
+                note: String::new(),
+            });
+        }
+        self.save_per_db();
+    }
+
+    /// 当前表的该 Key 是否已收藏。
+    pub fn is_fav_key(&self, key: &[u8]) -> bool {
+        let Some(table) = self.cur_table() else { return false };
+        let hex = key_hex(key);
+        self.fav_keys
+            .iter()
+            .any(|f| f.table == table.name && f.key_hex == hex)
+    }
+
+    /// 删除收藏 Key 列表中的第 `index` 条。
+    pub fn remove_fav_key(&mut self, index: usize) {
+        if index < self.fav_keys.len() {
+            self.fav_keys.remove(index);
+            self.save_per_db();
+        }
+    }
+
+    /// 跳转到收藏 Key：先切到目标表，再复用 Key 搜索的跳转定位。
+    pub fn jump_to_fav(&mut self, fk: &crate::config::FavKey) {
+        let Some(idx) = self
+            .db
+            .as_ref()
+            .and_then(|dbh| dbh.tables.iter().position(|t| t.name == fk.table))
+        else {
+            // 表已不存在：移除失效收藏
+            self.fav_keys.retain(|f| f != fk);
+            self.save_per_db();
+            return;
+        };
+        self.select_table(idx);
+        self.key_search_input = format!("hex({})", fk.key_hex);
+        self.key_filter_mode = false;
+        self.apply_key_search();
+    }
+}
+
+/// 应用主题到 egui 上下文。
+pub fn apply_theme(ctx: &egui::Context, dark: bool) {
+    ctx.set_visuals(if dark {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    });
+}
+
+/// 字节的大写 hex 串（收藏 Key 的持久化形式）。
+fn key_hex(key: &[u8]) -> String {
+    key.iter().map(|b| format!("{b:02X}")).collect()
 }
 
 /// 反转取值方向（供"上一页"等反向操作使用）。

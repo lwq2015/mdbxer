@@ -3,17 +3,109 @@
 
 //! 应用配置：JSON 持久化到 %APPDATA%\mdbxer\config.json。
 //!
-//! 当前只保存界面语言；首次启动（无配置文件）时按系统区域设置自动选择。
+//! 保存界面语言、深浅色主题、UI 偏好（页大小/字节序/排版/千位分隔），
+//! 以及每个库的独立记录（最后打开的表、收藏表、收藏 Key；LRU 上限 50）。
+//! 所有新字段均带 `#[serde(default)]`：旧版配置（仅 lang）可无缝升级。
+//! 首次启动（无配置文件）时按系统区域设置自动选择语言。
 
 use crate::i18n::Lang;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+/// 每库记录的 LRU 上限。
+pub const MAX_PER_DB: usize = 50;
 
 #[derive(Serialize, Deserialize, Default)]
 struct ConfigFile {
     /// 界面语言代码：zh / en / ru
     #[serde(default)]
     lang: Option<String>,
+    /// 主题：dark / light（缺省 dark）
+    #[serde(default)]
+    theme: Option<String>,
+    /// UI 偏好
+    #[serde(default)]
+    ui: UiPrefs,
+    /// 每库记录（按最近使用排序，LRU 截断）
+    #[serde(default)]
+    per_db: Vec<PerDbRecord>,
+}
+
+/// 深浅色主题。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Theme {
+    /// 深色（默认）
+    #[default]
+    Dark,
+    /// 浅色
+    Light,
+}
+
+impl Theme {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Theme::Dark => "dark",
+            Theme::Light => "light",
+        }
+    }
+
+    /// 从持久化字符串解析；未知值回退 Dark。
+    pub fn from_str(s: &str) -> Theme {
+        match s {
+            "light" => Theme::Light,
+            _ => Theme::Dark,
+        }
+    }
+}
+
+/// UI 偏好（全部可选：旧配置缺字段时回退各自默认值）。
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct UiPrefs {
+    /// 每页条数
+    #[serde(default)]
+    pub page_size: Option<usize>,
+    /// true = 小端
+    #[serde(default)]
+    pub endian_le: Option<bool>,
+    /// Key 排版（DecodeMode::as_str）
+    #[serde(default)]
+    pub key_mode: Option<String>,
+    /// Value 排版（DecodeMode::as_str）
+    #[serde(default)]
+    pub val_mode: Option<String>,
+    /// 整数千位分隔开关
+    #[serde(default)]
+    pub thousands_sep: Option<bool>,
+}
+
+/// 一个库的独立记录。
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct PerDbRecord {
+    pub path: String,
+    /// 最后打开的表名（None = 主表）
+    #[serde(default)]
+    pub last_table: Option<String>,
+    /// 收藏的表（None 元素 = 主表）
+    #[serde(default)]
+    pub fav_tables: Vec<Option<String>>,
+    /// 收藏的 Key
+    #[serde(default)]
+    pub fav_keys: Vec<FavKey>,
+    /// 最近使用时间（unix 秒；LRU 排序依据）
+    #[serde(default)]
+    pub last_use: u64,
+}
+
+/// 一条收藏 Key。
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+pub struct FavKey {
+    /// 表名（None = 主表）
+    pub table: Option<String>,
+    /// Key 字节的大写 hex
+    pub key_hex: String,
+    /// 备注（预留，当前为空串）
+    #[serde(default)]
+    pub note: String,
 }
 
 /// 配置文件路径：优先 `%APPDATA%\mdbxer\config.json`；
@@ -27,32 +119,96 @@ fn config_path() -> Option<PathBuf> {
         .and_then(|p| p.parent().map(|d| d.join("mdbxer-config.json")))
 }
 
-/// 启动时确定界面语言：配置文件优先；无配置则按系统区域设置猜测。
-pub fn startup_lang() -> Lang {
+/// 读整个配置；文件缺失/损坏时返回全默认（静默回退）。
+fn read_config() -> ConfigFile {
     if let Some(path) = config_path() {
         if let Ok(text) = std::fs::read_to_string(path) {
             if let Ok(cfg) = serde_json::from_str::<ConfigFile>(&text) {
-                if let Some(code) = cfg.lang {
-                    return Lang::from_code(&code);
-                }
+                return cfg;
             }
         }
     }
-    system_lang()
+    ConfigFile::default()
 }
 
-/// 保存语言选择；写盘失败静默忽略（本次会话内仍然生效）。
-pub fn save_lang(lang: Lang) {
+/// 统一「读-改-写」：任何单项保存都不会丢其他字段；写盘失败静默忽略。
+fn write_config(f: impl FnOnce(&mut ConfigFile)) {
     let Some(path) = config_path() else { return };
+    let mut cfg = read_config();
+    f(&mut cfg);
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let cfg = ConfigFile {
-        lang: Some(lang.code().to_string()),
-    };
     if let Ok(text) = serde_json::to_string_pretty(&cfg) {
         let _ = std::fs::write(path, text);
     }
+}
+
+/// 启动时确定界面语言：配置文件优先；无配置则按系统区域设置猜测。
+pub fn startup_lang() -> Lang {
+    let code = read_config().lang;
+    match code {
+        Some(code) => Lang::from_code(&code),
+        None => system_lang(),
+    }
+}
+
+/// 保存语言选择（本次会话内立即生效由调用方负责）。
+pub fn save_lang(lang: Lang) {
+    write_config(|c| c.lang = Some(lang.code().to_string()));
+}
+
+/// 读取主题（缺省 Dark）。
+pub fn load_theme() -> Theme {
+    read_config()
+        .theme
+        .map(|s| Theme::from_str(&s))
+        .unwrap_or_default()
+}
+
+/// 保存主题。
+pub fn save_theme(theme: Theme) {
+    write_config(|c| c.theme = Some(theme.as_str().to_string()));
+}
+
+/// 读取 UI 偏好。
+pub fn load_ui_prefs() -> UiPrefs {
+    read_config().ui
+}
+
+/// 保存 UI 偏好。
+pub fn save_ui_prefs(p: &UiPrefs) {
+    write_config(|c| c.ui = p.clone());
+}
+
+/// 读取某库的记录；无记录时返回以该路径初始化的默认记录。
+pub fn load_per_db(path: &str) -> PerDbRecord {
+    read_config()
+        .per_db
+        .into_iter()
+        .find(|r| r.path == path)
+        .unwrap_or_else(|| PerDbRecord {
+            path: path.to_string(),
+            ..Default::default()
+        })
+}
+
+/// 保存（upsert）一库记录：last_use 刷为当前时间，按最近使用排序后截断到上限。
+pub fn save_per_db(rec: &PerDbRecord) {
+    let mut rec = rec.clone();
+    rec.last_use = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    write_config(|c| upsert_per_db(&mut c.per_db, rec));
+}
+
+/// upsert + 按 last_use 降序 + LRU 截断（纯函数，便于测试）。
+fn upsert_per_db(list: &mut Vec<PerDbRecord>, rec: PerDbRecord) {
+    list.retain(|r| r.path != rec.path);
+    list.push(rec);
+    list.sort_by(|a, b| b.last_use.cmp(&a.last_use));
+    list.truncate(MAX_PER_DB);
 }
 
 /// 按系统区域设置猜测语言：zh* → 中文，ru* → 俄语，其余 → 英语。
@@ -90,4 +246,117 @@ fn system_locale_string() -> String {
         }
     }
     String::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_config_with_only_lang_parses() {
+        // 旧版配置（仅 lang）必须能解析，其余字段全默认
+        let cfg: ConfigFile = serde_json::from_str(r#"{"lang":"en"}"#).unwrap();
+        assert_eq!(cfg.lang.as_deref(), Some("en"));
+        assert_eq!(cfg.theme, None);
+        assert!(cfg.ui.page_size.is_none());
+        assert!(cfg.per_db.is_empty());
+    }
+
+    #[test]
+    fn corrupt_or_empty_config_falls_back() {
+        let cfg: ConfigFile = serde_json::from_str("not json").unwrap_or_default();
+        assert!(cfg.lang.is_none());
+        let cfg: ConfigFile = serde_json::from_str("{}").unwrap();
+        assert!(cfg.lang.is_none());
+    }
+
+    #[test]
+    fn ui_prefs_round_trip() {
+        let p = UiPrefs {
+            page_size: Some(500),
+            endian_le: Some(false),
+            key_mode: Some("hex".to_string()),
+            val_mode: Some("auto".to_string()),
+            thousands_sep: Some(false),
+        };
+        let s = serde_json::to_string(&p).unwrap();
+        let back: UiPrefs = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.page_size, Some(500));
+        assert_eq!(back.endian_le, Some(false));
+        assert_eq!(back.key_mode.as_deref(), Some("hex"));
+        assert_eq!(back.val_mode.as_deref(), Some("auto"));
+        assert_eq!(back.thousands_sep, Some(false));
+    }
+
+    #[test]
+    fn ui_prefs_missing_fields_are_none() {
+        let back: UiPrefs = serde_json::from_str("{}").unwrap();
+        assert!(back.page_size.is_none());
+        assert!(back.endian_le.is_none());
+        assert!(back.key_mode.is_none());
+        assert!(back.val_mode.is_none());
+        assert!(back.thousands_sep.is_none());
+    }
+
+    #[test]
+    fn theme_as_str_from_str_round_trip() {
+        for t in [Theme::Dark, Theme::Light] {
+            assert_eq!(Theme::from_str(t.as_str()), t);
+        }
+        assert_eq!(Theme::from_str("blue"), Theme::Dark);
+        assert_eq!(Theme::default(), Theme::Dark);
+    }
+
+    #[test]
+    fn upsert_replaces_same_path_and_orders_by_last_use() {
+        let mut list = Vec::new();
+        let rec = |path: &str, use_: u64| PerDbRecord {
+            path: path.to_string(),
+            last_use: use_,
+            ..Default::default()
+        };
+        upsert_per_db(&mut list, rec("a", 1));
+        upsert_per_db(&mut list, rec("b", 2));
+        upsert_per_db(&mut list, rec("a", 3)); // 更新 a
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].path, "a"); // 最新在前
+        assert_eq!(list[0].last_use, 3);
+        assert_eq!(list[1].path, "b");
+    }
+
+    #[test]
+    fn upsert_truncates_to_max_per_db() {
+        let mut list = Vec::new();
+        for i in 0..(MAX_PER_DB + 10) {
+            upsert_per_db(
+                &mut list,
+                PerDbRecord {
+                    path: format!("db{i}"),
+                    last_use: i as u64,
+                    ..Default::default()
+                },
+            );
+        }
+        assert_eq!(list.len(), MAX_PER_DB);
+        // 保留的是最新的 50 个（db10..db59），最旧在最末
+        assert_eq!(list[0].path, format!("db{}", MAX_PER_DB + 9));
+        assert_eq!(list.last().unwrap().path, "db10");
+    }
+
+    #[test]
+    fn fav_key_serde_round_trip() {
+        let fk = FavKey {
+            table: Some("kv".to_string()),
+            key_hex: "00FF".to_string(),
+            note: String::new(),
+        };
+        let s = serde_json::to_string(&fk).unwrap();
+        let back: FavKey = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, fk);
+        // note 缺省兼容
+        let legacy: FavKey =
+            serde_json::from_str(r#"{"table":null,"key_hex":"00FF"}"#).unwrap();
+        assert_eq!(legacy.table, None);
+        assert_eq!(legacy.note, "");
+    }
 }

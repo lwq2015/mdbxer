@@ -66,23 +66,90 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     idx.sort_by_key(|&i| std::cmp::Reverse(dbh.tables[i].entries))
                 }
             }
+            // 收藏表稳定置顶（保持各自原有的排序结果顺序）
+            idx.sort_by_key(|&i| !app.fav_tables.contains(&dbh.tables[i].name));
 
             let mut clicked = None;
+            let mut fav_toggled = None;
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for i in idx {
                     let tbl = &dbh.tables[i];
                     let selected = app.selected_table == Some(i);
-                    let text = t.table_entry(&tbl.display(), tbl.entries, &tbl.flags_desc());
-                    if ui
-                        .selectable_label(selected, egui::RichText::new(text).monospace())
-                        .clicked()
-                    {
-                        clicked = Some(i);
-                    }
+                    let is_fav = app.fav_tables.contains(&tbl.name);
+                    ui.horizontal(|ui| {
+                        let star = if is_fav { "★" } else { "☆" };
+                        if ui
+                            .small_button(star)
+                            .on_hover_text(t.fav_table_tip)
+                            .clicked()
+                        {
+                            fav_toggled = Some(tbl.name.clone());
+                        }
+                        let text = t.table_entry(&tbl.display(), tbl.entries, &tbl.flags_desc());
+                        if ui
+                            .selectable_label(selected, egui::RichText::new(text).monospace())
+                            .clicked()
+                        {
+                            clicked = Some(i);
+                        }
+                    });
                 }
             });
             if let Some(i) = clicked {
                 app.select_table(i);
+            }
+            if let Some(name) = fav_toggled {
+                app.toggle_fav_table(name);
+            }
+
+            // 收藏 Key 列表（底部折叠区）：→ 跳转，× 删除
+            let mut fav_action: Option<(usize, bool)> = None; // (下标, true=跳转 / false=删除)
+            egui::CollapsingHeader::new(t.favorites_title)
+                .id_salt("fav_keys")
+                .default_open(!app.fav_keys.is_empty())
+                .show(ui, |ui| {
+                    if app.fav_keys.is_empty() {
+                        ui.weak(t.fav_empty);
+                    }
+                    for (i, fk) in app.fav_keys.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .small_button("→")
+                                .on_hover_text(t.fav_jump_tip)
+                                .clicked()
+                            {
+                                fav_action = Some((i, true));
+                            }
+                            if ui
+                                .small_button("×")
+                                .on_hover_text(t.fav_del_tip)
+                                .clicked()
+                            {
+                                fav_action = Some((i, false));
+                            }
+                            let table_name = fk
+                                .table
+                                .as_deref()
+                                .unwrap_or(t.main_table);
+                            let hex = &fk.key_hex;
+                            let short_hex: String = hex.chars().take(16).collect();
+                            let label = if fk.note.is_empty() {
+                                format!("{table_name} · {short_hex}")
+                            } else {
+                                format!("{table_name} · {} · {short_hex}", fk.note)
+                            };
+                            ui.label(egui::RichText::new(label).monospace().small())
+                                .on_hover_text(format!("{table_name} · {hex}"));
+                        });
+                    }
+                });
+            if let Some((i, jump)) = fav_action {
+                if jump {
+                    let fk = app.fav_keys[i].clone();
+                    app.jump_to_fav(&fk);
+                } else {
+                    app.remove_fav_key(i);
+                }
             }
         });
     app.left_panel_w = resp.response.rect.width();

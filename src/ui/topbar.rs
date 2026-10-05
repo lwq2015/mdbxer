@@ -94,7 +94,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     }
                 });
             super::wheel_cycle(ui.ctx(), &ir.response, &Endian::ALL, &mut en);
-            app.endian = en;
+            if app.endian != en {
+                app.endian = en;
+                app.save_ui_prefs();
+            }
 
             // Key 排版（默认自动；编码固定的表可手动指定）
             ui.label("Key");
@@ -109,7 +112,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     }
                 });
             super::wheel_cycle(ui.ctx(), &ir.response, &DecodeMode::ALL, &mut km);
-            app.key_mode = km;
+            if app.key_mode != km {
+                app.key_mode = km;
+                app.save_ui_prefs();
+            }
 
             // Value 排版（默认自动：Value 逐行猜测）
             ui.label("Value");
@@ -124,7 +130,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     }
                 });
             super::wheel_cycle(ui.ctx(), &ir.response, &DecodeMode::ALL, &mut vm);
-            app.val_mode = vm;
+            if app.val_mode != vm {
+                app.val_mode = vm;
+                app.save_ui_prefs();
+            }
 
             let mut cm = app.cell_max;
             let ir = egui::ComboBox::from_id_salt("cell_max")
@@ -142,7 +151,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 &[64usize, 128, 256, 512, 1024, 4096],
                 &mut cm,
             );
-            app.cell_max = cm;
+            if app.cell_max != cm {
+                app.cell_max = cm;
+                app.save_ui_prefs();
+            }
 
             // 整数千位分隔开关（影响所有 decode/guess 输出）
             let mut ts = crate::fmt::thousands_sep();
@@ -152,8 +164,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 .clicked()
             {
                 ts = !ts;
+                crate::fmt::set_thousands_sep(ts);
+                app.save_ui_prefs();
             }
-            crate::fmt::set_thousands_sep(ts);
 
             ui.separator();
 
@@ -188,6 +201,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     // 统计/环境页是打开时缓存的，语言切换后强制重读
                     app.stat_cache = None;
                     app.env_cache = None;
+                }
+                if ui
+                    .button(if app.dark_theme { "🌙" } else { "☀" })
+                    .on_hover_text(t.theme_tip)
+                    .clicked()
+                {
+                    app.toggle_theme(ui.ctx());
                 }
             });
         });
