@@ -79,10 +79,16 @@ pub enum DecodeMode {
     Hex,
     Dec,
     Binary,
+    /// Base64 编码文本（RFC 4648 标准字母表，带填充）
+    Base64,
+    /// UUID（仅 16 字节；其他长度回退 hex）
+    Uuid,
+    /// JSON 美化（非法 JSON 回退 UTF-8 文本）
+    Json,
 }
 
 impl DecodeMode {
-    pub const ALL: [DecodeMode; 17] = [
+    pub const ALL: [DecodeMode; 20] = [
         DecodeMode::Auto,
         DecodeMode::Utf8,
         DecodeMode::Utf16Le,
@@ -100,6 +106,9 @@ impl DecodeMode {
         DecodeMode::Hex,
         DecodeMode::Dec,
         DecodeMode::Binary,
+        DecodeMode::Base64,
+        DecodeMode::Uuid,
+        DecodeMode::Json,
     ];
 
     /// 下拉框显示文本（"自动"随界面语言；类型名为国际通用写法不翻译）。
@@ -122,6 +131,9 @@ impl DecodeMode {
             DecodeMode::Hex => "hex".to_string(),
             DecodeMode::Dec => "dec".to_string(),
             DecodeMode::Binary => "binary".to_string(),
+            DecodeMode::Base64 => "base64".to_string(),
+            DecodeMode::Uuid => "uuid".to_string(),
+            DecodeMode::Json => "json".to_string(),
         }
     }
 }
@@ -162,8 +174,8 @@ mod tests {
     }
 
     #[test]
-    fn decode_mode_all_has_17() {
-        assert_eq!(DecodeMode::ALL.len(), 17);
+    fn decode_mode_all_has_20() {
+        assert_eq!(DecodeMode::ALL.len(), 20);
     }
 
     #[test]

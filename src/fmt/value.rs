@@ -155,6 +155,9 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) 
         DecodeMode::Hex => hex_spaced(bytes),
         DecodeMode::Dec => dec_spaced(bytes),
         DecodeMode::Binary => binary_bits(bytes),
+        DecodeMode::Base64 => base64_text(bytes),
+        DecodeMode::Uuid => uuid_text(bytes),
+        DecodeMode::Json => json_text(bytes),
     };
     truncate_chars(s, max_chars)
 }
@@ -242,6 +245,63 @@ fn truncate_chars(s: String, max_chars: usize) -> String {
     let mut out: String = s.chars().take(max_chars).collect();
     out.push('…');
     out
+}
+
+/// RFC 4648 标准 Base64 编码（含填充）。
+fn base64_text(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let mut buf = [0u8; 3];
+        for (i, &b) in chunk.iter().enumerate() {
+            buf[i] = b;
+        }
+        out.push(TABLE[(buf[0] >> 2) as usize] as char);
+        out.push(TABLE[(((buf[0] & 0x03) << 4) | (buf[1] >> 4)) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[(((buf[1] & 0x0F) << 2) | (buf[2] >> 6)) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[(buf[2] & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// UUID：仅 16 字节时格式化为 8-4-4-4-12 小写 hex；否则回退 hex_spaced。
+fn uuid_text(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    if bytes.len() != 16 {
+        let t = crate::i18n::tr();
+        return format!("{} {}", hex_spaced(bytes), t.uuid_bad_len);
+    }
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11],
+        bytes[12], bytes[13], bytes[14], bytes[15],
+    )
+}
+
+/// JSON 美化：合法 JSON → pretty；非法 → UTF-8 文本。
+fn json_text(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    match serde_json::from_slice::<serde_json::Value>(bytes) {
+        Ok(v) => serde_json::to_string_pretty(&v).unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned()),
+        Err(_) => String::from_utf8_lossy(bytes).into_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -433,5 +493,57 @@ mod tests {
         setup();
         let bytes = [0x00, 0x41, 0x00, 0x42];
         assert_eq!(decode(&bytes, DecodeMode::Utf16Be, Endian::Little, 100), "AB");
+    }
+
+    #[test]
+    fn decode_base64() {
+        setup();
+        assert_eq!(decode(b"hello", DecodeMode::Base64, Endian::Little, 100), "aGVsbG8=");
+        assert_eq!(decode(b"f", DecodeMode::Base64, Endian::Little, 100), "Zg==");
+        assert_eq!(decode(b"fo", DecodeMode::Base64, Endian::Little, 100), "Zm8=");
+        assert_eq!(decode(b"foo", DecodeMode::Base64, Endian::Little, 100), "Zm9v");
+        assert_eq!(decode(&[], DecodeMode::Base64, Endian::Little, 100), "");
+    }
+
+    #[test]
+    fn decode_uuid_16_bytes() {
+        setup();
+        let bytes: [u8; 16] = [
+            0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4,
+            0xa7, 0x16, 0x44, 0x66, 0x55, 0x44, 0x00, 0x00,
+        ];
+        assert_eq!(
+            decode(&bytes, DecodeMode::Uuid, Endian::Little, 100),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+    }
+
+    #[test]
+    fn decode_uuid_wrong_len() {
+        setup();
+        let t = crate::i18n::tr();
+        // 15 字节：回退 hex + 标注
+        let bytes = [0xABu8; 15];
+        let s = decode(&bytes, DecodeMode::Uuid, Endian::Little, 500);
+        assert!(s.contains("AB AB"));
+        assert!(s.contains(t.uuid_bad_len));
+        // 17 字节同样回退
+        let bytes = [0x01u8; 17];
+        assert!(decode(&bytes, DecodeMode::Uuid, Endian::Little, 500).contains(t.uuid_bad_len));
+        // 空输入为空串
+        assert_eq!(decode(&[], DecodeMode::Uuid, Endian::Little, 100), "");
+    }
+
+    #[test]
+    fn decode_json_pretty() {
+        setup();
+        let s = decode(br#"{"a":1,"b":[2,3]}"#, DecodeMode::Json, Endian::Little, 500);
+        assert!(s.contains('\n'), "pretty JSON 应多行: {s}");
+        assert!(s.contains("\"a\": 1"));
+        // 非法 JSON 回退 UTF-8 文本
+        let s = decode(b"not json", DecodeMode::Json, Endian::Little, 100);
+        assert_eq!(s, "not json");
+        // 空输入为空串
+        assert_eq!(decode(&[], DecodeMode::Json, Endian::Little, 100), "");
     }
 }

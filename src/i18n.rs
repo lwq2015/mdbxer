@@ -242,6 +242,8 @@ pub struct I18n {
     // ── fmt 层：解码输出内嵌文案 ──
     pub empty: &'static str,
     pub padded: &'static str,
+    /// uuid 模式输入非 16 字节时的标注
+    pub uuid_bad_len: &'static str,
     pub guess_empty_label: &'static str,
     pub guess_empty_sym: &'static str,
     pub guess_utf8: &'static str,
@@ -603,6 +605,7 @@ const ZH: I18n = I18n {
 
     empty: "（空）",
     padded: "（补零）",
+    uuid_bad_len: "（非 16 字节）",
     guess_empty_label: "空",
     guess_empty_sym: "∅ 空",
     guess_utf8: "UTF-8 文本",
@@ -777,6 +780,7 @@ const EN: I18n = I18n {
 
     empty: "(empty)",
     padded: "(zero-padded)",
+    uuid_bad_len: "(not 16 bytes)",
     guess_empty_label: "Empty",
     guess_empty_sym: "∅ empty",
     guess_utf8: "UTF-8 text",
@@ -951,6 +955,7 @@ const RU: I18n = I18n {
 
     empty: "(пусто)",
     padded: "(доп. нулями)",
+    uuid_bad_len: "(не 16 байт)",
     guess_empty_label: "Пусто",
     guess_empty_sym: "∅ пусто",
     guess_utf8: "Текст UTF-8",
