@@ -88,3 +88,37 @@ pub fn env_info_view(
 
     Ok(rows)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::human_size;
+
+    #[test]
+    fn human_size_bytes() {
+        assert_eq!(human_size(0), "0 B");
+        assert_eq!(human_size(512), "512 B");
+        assert_eq!(human_size(1023), "1023 B");
+    }
+
+    #[test]
+    fn human_size_kb() {
+        let s = human_size(1024);
+        assert!(s.contains("KB"), "got: {s}");
+        assert!(s.contains("1024 B")); // 附带原始字节
+    }
+
+    #[test]
+    fn human_size_mb_gb() {
+        let s = human_size(1024 * 1024 * 5);
+        assert!(s.contains("MB"), "got: {s}");
+        let s = human_size(1024u64 * 1024 * 1024 * 2);
+        assert!(s.contains("GB"), "got: {s}");
+    }
+
+    #[test]
+    fn human_size_tb_caps_at_tb() {
+        let s = human_size(1024u64 * 1024 * 1024 * 1024 * 100);
+        // 超过 TB 仍以 TB 表示（UNIT 数组到 TB 为止）
+        assert!(s.contains("TB"), "got: {s}");
+    }
+}

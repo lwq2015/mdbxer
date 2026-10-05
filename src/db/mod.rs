@@ -52,3 +52,42 @@ impl OpenMode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_mode_as_str_from_str_round_trip() {
+        for m in OpenMode::ALL {
+            assert_eq!(OpenMode::from_str(m.as_str()), m);
+        }
+    }
+
+    #[test]
+    fn open_mode_from_str_unknown_is_auto() {
+        assert_eq!(OpenMode::from_str(""), OpenMode::Auto);
+        assert_eq!(OpenMode::from_str("xyz"), OpenMode::Auto);
+    }
+
+    #[test]
+    fn open_mode_default_is_auto() {
+        assert_eq!(OpenMode::default(), OpenMode::Auto);
+    }
+
+    #[test]
+    fn open_mode_all_has_three() {
+        assert_eq!(OpenMode::ALL.len(), 3);
+    }
+
+    #[test]
+    fn open_mode_label_follows_lang() {
+        let prev = crate::i18n::lang();
+        crate::i18n::set_lang(crate::i18n::Lang::Zh);
+        let t = crate::i18n::tr();
+        assert_eq!(OpenMode::Auto.label(), t.m_auto);
+        assert_eq!(OpenMode::SingleFile.label(), t.m_file);
+        assert_eq!(OpenMode::Directory.label(), t.m_dir);
+        crate::i18n::set_lang(prev);
+    }
+}

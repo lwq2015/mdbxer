@@ -335,3 +335,63 @@ pub fn dup_find(
     }
     Ok(main_hit.or(wrap_hit))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn row_clone_debug() {
+        let row = Row {
+            key: vec![1, 2, 3],
+            value: vec![4, 5],
+            dup_count: Some(10),
+        };
+        let cloned = row.clone();
+        assert_eq!(cloned.key, vec![1, 2, 3]);
+        assert_eq!(cloned.value, vec![4, 5]);
+        assert_eq!(cloned.dup_count, Some(10));
+        // Debug 不 panic
+        let _ = format!("{:?}", row);
+    }
+
+    #[test]
+    fn direction_copy_eq() {
+        let f = Direction::Forward;
+        let b = Direction::Backward;
+        assert_ne!(f, b);
+        assert_eq!(f, Direction::Forward);
+    }
+
+    #[test]
+    fn jump_key_variants() {
+        let k1 = JumpKey::Bytes(vec![0x41, 0x42]);
+        let k2 = JumpKey::Int(42);
+        // 仅验证构造不 panic
+        match k1 {
+            JumpKey::Bytes(b) => assert_eq!(b, vec![0x41, 0x42]),
+            _ => panic!("expected Bytes"),
+        }
+        match k2 {
+            JumpKey::Int(v) => assert_eq!(v, 42),
+            _ => panic!("expected Int"),
+        }
+    }
+
+    #[test]
+    fn page_fields() {
+        let page = Page {
+            rows: vec![Row { key: vec![], value: vec![], dup_count: None }],
+            has_more: true,
+        };
+        assert_eq!(page.rows.len(), 1);
+        assert!(page.has_more);
+    }
+
+    #[test]
+    fn anchor_type() {
+        let anchor: Anchor = (vec![1, 2], Some(vec![3]));
+        assert_eq!(anchor.0, vec![1, 2]);
+        assert_eq!(anchor.1, Some(vec![3]));
+    }
+}

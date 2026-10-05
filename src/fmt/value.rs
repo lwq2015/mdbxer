@@ -243,3 +243,195 @@ fn truncate_chars(s: String, max_chars: usize) -> String {
     out.push('…');
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fmt::{DecodeMode, Endian, set_thousands_sep};
+
+    fn setup() {
+        // 测试统一打开千位分隔，避免全局状态污染断言
+        set_thousands_sep(true);
+    }
+
+    #[test]
+    fn hex_spaced_basic() {
+        assert_eq!(hex_spaced(&[0x2A, 0x2B, 0x2C]), "2A 2B 2C");
+        assert_eq!(hex_spaced(&[]), "");
+        assert_eq!(hex_spaced(&[0x00, 0xFF]), "00 FF");
+    }
+
+    #[test]
+    fn decode_utf8() {
+        setup();
+        let s = decode(b"hello", DecodeMode::Utf8, Endian::Little, 100);
+        assert_eq!(s, "hello");
+        // 非 UTF-8 字节走 lossy
+        let s = decode(&[0xFF, 0xFE], DecodeMode::Utf8, Endian::Little, 100);
+        assert!(s.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn decode_u8() {
+        setup();
+        assert_eq!(decode(&[255], DecodeMode::U8, Endian::Little, 100), "255");
+        assert_eq!(decode(&[128], DecodeMode::I8, Endian::Little, 100), "-128");
+    }
+
+    #[test]
+    fn decode_u16_le_be() {
+        setup();
+        let bytes = [0x34, 0x12]; // LE=0x1234(4660), BE=0x3412(13330)
+        // 4 位数不加千位分隔
+        assert_eq!(decode(&bytes, DecodeMode::U16, Endian::Little, 100), "4660");
+        assert_eq!(decode(&bytes, DecodeMode::U16, Endian::Big, 100), "13,330");
+    }
+
+    #[test]
+    fn decode_u32_le() {
+        setup();
+        let bytes = [0x78, 0x56, 0x34, 0x12]; // 0x12345678
+        assert_eq!(decode(&bytes, DecodeMode::U32, Endian::Little, 100), "305,419,896");
+    }
+
+    #[test]
+    fn decode_u64_le() {
+        setup();
+        let bytes = [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        assert_eq!(decode(&bytes, DecodeMode::U64, Endian::Little, 100), "1");
+    }
+
+    #[test]
+    fn decode_i32_negative() {
+        setup();
+        let bytes = (-1i32).to_le_bytes();
+        assert_eq!(decode(&bytes, DecodeMode::I32, Endian::Little, 100), "-1");
+    }
+
+    #[test]
+    fn decode_short_bytes_zero_extend() {
+        setup();
+        // 1 字节当 u32 解：小端补尾部零 → 数值不变，标注补零
+        let s = decode(&[0x05], DecodeMode::U32, Endian::Little, 100);
+        assert!(s.starts_with("5"));
+        assert!(s.ends_with(crate::i18n::tr().padded));
+        // 大端补头部零 → 同样数值 5
+        let s = decode(&[0x05], DecodeMode::U32, Endian::Big, 100);
+        assert!(s.starts_with("5"));
+    }
+
+    #[test]
+    fn decode_empty() {
+        setup();
+        let t = crate::i18n::tr();
+        use DecodeMode::*;
+        // 整数/浮点模式：空数据返回通用空占位文案
+        let numeric = [I8, U8, I16, U16, I32, U32, I64, U64, F32, F64];
+        for mode in numeric {
+            let s = decode(&[], mode, Endian::Little, 100);
+            assert_eq!(s, t.empty, "mode={:?}", mode);
+        }
+        // 字符串/进制模式：空数据返回空串（无内容可展示）
+        let textual = [Utf8, Utf16Le, Utf16Be, Hex, Dec, Binary];
+        for mode in textual {
+            let s = decode(&[], mode, Endian::Little, 100);
+            assert_eq!(s, "", "mode={:?}", mode);
+        }
+        // Auto 模式：走 guess，返回 guess_empty_sym
+        let s = decode(&[], Auto, Endian::Little, 100);
+        assert_eq!(s, t.guess_empty_sym);
+    }
+
+    #[test]
+    fn decode_hex_mode() {
+        setup();
+        assert_eq!(decode(&[0xAB, 0xCD], DecodeMode::Hex, Endian::Little, 100), "AB CD");
+    }
+
+    #[test]
+    fn decode_dec_mode() {
+        setup();
+        assert_eq!(decode(&[10, 20], DecodeMode::Dec, Endian::Little, 100), "10 20");
+    }
+
+    #[test]
+    fn decode_binary_mode() {
+        setup();
+        assert_eq!(decode(&[0b1010_1010], DecodeMode::Binary, Endian::Little, 100), "10101010");
+    }
+
+    #[test]
+    fn decode_truncate_chars() {
+        setup();
+        let long = "a".repeat(50);
+        let s = decode(long.as_bytes(), DecodeMode::Utf8, Endian::Little, 10);
+        assert_eq!(s.chars().count(), 11); // 10 字符 + 省略号
+        assert!(s.ends_with('…'));
+    }
+
+    #[test]
+    fn with_sep_integer() {
+        set_thousands_sep(true);
+        assert_eq!(with_sep("1625981420".to_string()), "1,625,981,420");
+        assert_eq!(with_sep("-1625981420".to_string()), "-1,625,981,420");
+        // 少于 5 位不加
+        assert_eq!(with_sep("1234".to_string()), "1234");
+        // 关闭开关
+        set_thousands_sep(false);
+        assert_eq!(with_sep("1625981420".to_string()), "1625981420");
+        set_thousands_sep(true);
+    }
+
+    #[test]
+    fn with_sep_float_only_int_part() {
+        set_thousands_sep(true);
+        // 整数部分 < 5 位，原样
+        assert_eq!(with_sep("3.14".to_string()), "3.14");
+        // 指数后缀保留
+        assert_eq!(with_sep("1.5e10".to_string()), "1.5e10");
+    }
+
+    #[test]
+    fn u64_text_timestamp() {
+        setup();
+        // 秒级时间戳：2024-01-01 00:00:00 UTC
+        let v = 1_704_067_200u64;
+        let s = u64_text(v);
+        assert!(s.starts_with("1,704,067,200 → "));
+        assert!(s.contains("2024"));
+        // 非时间戳范围：只显示数字
+        let s = u64_text(42);
+        assert_eq!(s, "42");
+    }
+
+    #[test]
+    fn decode_f32() {
+        setup();
+        let bytes = 1.5f32.to_le_bytes();
+        let s = decode(&bytes, DecodeMode::F32, Endian::Little, 100);
+        assert_eq!(s, "1.5");
+    }
+
+    #[test]
+    fn decode_f64() {
+        setup();
+        let bytes = 2.5f64.to_le_bytes();
+        let s = decode(&bytes, DecodeMode::F64, Endian::Little, 100);
+        assert_eq!(s, "2.5");
+    }
+
+    #[test]
+    fn decode_utf16_le() {
+        setup();
+        // "AB" 的 UTF-16LE
+        let bytes = [0x41, 0x00, 0x42, 0x00];
+        assert_eq!(decode(&bytes, DecodeMode::Utf16Le, Endian::Little, 100), "AB");
+    }
+
+    #[test]
+    fn decode_utf16_be() {
+        setup();
+        let bytes = [0x00, 0x41, 0x00, 0x42];
+        assert_eq!(decode(&bytes, DecodeMode::Utf16Be, Endian::Little, 100), "AB");
+    }
+}

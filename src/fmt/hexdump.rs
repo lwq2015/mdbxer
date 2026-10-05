@@ -68,3 +68,89 @@ pub fn hex_dump(
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_returns_placeholder() {
+        let s = hex_dump(&[], 8, true, true, true, 0);
+        assert_eq!(s, crate::i18n::tr().empty);
+    }
+
+    #[test]
+    fn all_columns_on() {
+        let bytes = [0x48, 0x65, 0x6C, 0x6C, 0x6F]; // "Hello"
+        let s = hex_dump(&bytes, 8, true, true, true, 0);
+        // 地址列
+        assert!(s.starts_with("00000000  "));
+        // HEX 列（宽 8 时第 4 字节后有双空格）
+        assert!(s.contains("48 65 6C 6C  6F"));
+        // ASCII 列
+        assert!(s.trim_end().ends_with("Hello"));
+    }
+
+    #[test]
+    fn addr_only() {
+        let s = hex_dump(&[0x41], 8, true, false, false, 0);
+        assert!(s.starts_with("00000000"));
+        assert!(!s.contains("41")); // 无 HEX 列
+    }
+
+    #[test]
+    fn hex_only_no_addr() {
+        let s = hex_dump(&[0x41, 0x42], 8, false, true, false, 0);
+        assert!(!s.contains("00000000"));
+        assert!(s.contains("41 42"));
+    }
+
+    #[test]
+    fn ascii_replaces_non_graphic() {
+        let s = hex_dump(&[0x41, 0x00, 0x42, 0x07], 8, false, false, true, 0);
+        assert!(s.contains("A.B.")); // 0x00 和 0x07 显示为点
+    }
+
+    #[test]
+    fn width_wraps_lines() {
+        let bytes = [0x01, 0x02, 0x03, 0x04, 0x05];
+        let s = hex_dump(&bytes, 2, true, true, true, 0);
+        let lines: Vec<&str> = s.lines().collect();
+        assert_eq!(lines.len(), 3); // 3 行：2+2+1
+        assert!(lines[0].contains("01 02"));
+        assert!(lines[1].contains("03 04"));
+        assert!(lines[2].contains("05"));
+    }
+
+    #[test]
+    fn base_offset_affects_addr_column() {
+        let s = hex_dump(&[0x41], 8, true, true, true, 0x1000);
+        assert!(s.starts_with("00001000  "));
+    }
+
+    #[test]
+    fn mid_gap_for_width_ge_8() {
+        // 宽 8 时，中间第 4 字节后多一个空格
+        let bytes = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let s = hex_dump(&bytes, 8, false, true, false, 0);
+        // "01 02 03 04  05 06 07 08 " 中间双空格
+        assert!(s.contains("04  05"), "got: {s}");
+    }
+
+    #[test]
+    fn no_mid_gap_for_width_lt_8() {
+        let bytes = [0x01, 0x02, 0x03, 0x04];
+        let s = hex_dump(&bytes, 4, false, true, false, 0);
+        assert!(!s.contains("  ")); // 无双空格
+    }
+
+    #[test]
+    fn last_line_padded_for_ascii_alignment() {
+        // 行宽 4，最后一行只有 1 字节，HEX 列应补齐到 4 字节宽
+        let bytes = [0x41, 0x42, 0x43, 0x44, 0x45];
+        let s = hex_dump(&bytes, 4, true, true, true, 0);
+        let last = s.lines().last().unwrap();
+        // 末行：地址 + "45" + 补齐空格 + ASCII "E"
+        assert!(last.ends_with("E"));
+    }
+}

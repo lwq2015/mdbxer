@@ -125,3 +125,72 @@ impl DecodeMode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn endian_suffix() {
+        assert_eq!(Endian::Little.suffix(), "LE");
+        assert_eq!(Endian::Big.suffix(), "BE");
+    }
+
+    #[test]
+    fn endian_all_contains_two() {
+        assert_eq!(Endian::ALL.len(), 2);
+        assert!(Endian::ALL.contains(&Endian::Little));
+        assert!(Endian::ALL.contains(&Endian::Big));
+    }
+
+    #[test]
+    fn endian_default_is_little() {
+        assert_eq!(Endian::default(), Endian::Little);
+    }
+
+    #[test]
+    fn endian_label_follows_lang() {
+        let prev = crate::i18n::lang();
+        crate::i18n::set_lang(crate::i18n::Lang::En);
+        let t = crate::i18n::tr();
+        assert_eq!(Endian::Little.label(), t.endian_le);
+        assert_eq!(Endian::Big.label(), t.endian_be);
+        crate::i18n::set_lang(crate::i18n::Lang::Zh);
+        let t = crate::i18n::tr();
+        assert_eq!(Endian::Little.label(), t.endian_le);
+        crate::i18n::set_lang(prev);
+    }
+
+    #[test]
+    fn decode_mode_all_has_17() {
+        assert_eq!(DecodeMode::ALL.len(), 17);
+    }
+
+    #[test]
+    fn decode_mode_default_is_auto() {
+        assert_eq!(DecodeMode::default(), DecodeMode::Auto);
+    }
+
+    #[test]
+    fn decode_mode_labels_are_type_names_except_auto() {
+        let prev = crate::i18n::lang();
+        crate::i18n::set_lang(crate::i18n::Lang::Zh);
+        // Auto 随语言翻译
+        assert_eq!(DecodeMode::Auto.label(), crate::i18n::tr().mode_auto);
+        // 其余是固定类型名
+        assert_eq!(DecodeMode::U8.label(), "uint8");
+        assert_eq!(DecodeMode::I32.label(), "int32");
+        assert_eq!(DecodeMode::Hex.label(), "hex");
+        crate::i18n::set_lang(prev);
+    }
+
+    #[test]
+    fn thousands_sep_toggle() {
+        let prev = thousands_sep();
+        set_thousands_sep(false);
+        assert!(!thousands_sep());
+        set_thousands_sep(true);
+        assert!(thousands_sep());
+        set_thousands_sep(prev);
+    }
+}

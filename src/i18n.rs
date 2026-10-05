@@ -1002,3 +1002,86 @@ const RU: I18n = I18n {
 };
 
 static TABLES: [I18n; 3] = [ZH, EN, RU];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lang_code_round_trip() {
+        for l in Lang::ALL {
+            assert_eq!(Lang::from_code(l.code()), l);
+        }
+    }
+
+    #[test]
+    fn lang_from_code_unknown_falls_back_to_zh() {
+        assert_eq!(Lang::from_code("fr"), Lang::Zh);
+        assert_eq!(Lang::from_code(""), Lang::Zh);
+        assert_eq!(Lang::from_code("ZH"), Lang::Zh); // 大小写敏感
+    }
+
+    #[test]
+    fn lang_label_is_self_naming() {
+        assert_eq!(Lang::Zh.label(), "中文");
+        assert_eq!(Lang::En.label(), "English");
+        assert_eq!(Lang::Ru.label(), "Русский");
+    }
+
+    #[test]
+    fn lang_discriminants_stable() {
+        // 与 config 持久化的 u8 对应关系不能变
+        assert_eq!(Lang::Zh as u8, 0);
+        assert_eq!(Lang::En as u8, 1);
+        assert_eq!(Lang::Ru as u8, 2);
+    }
+
+    #[test]
+    fn set_and_get_lang() {
+        let prev = lang();
+        for l in Lang::ALL {
+            set_lang(l);
+            assert_eq!(lang(), l);
+        }
+        set_lang(prev);
+    }
+
+    #[test]
+    fn tr_matches_selected_lang() {
+        let prev = lang();
+        set_lang(Lang::Zh);
+        // 中文表里 btn_file 是"文件"
+        assert_eq!(tr().btn_file, "文件");
+        set_lang(Lang::En);
+        assert_eq!(tr().btn_file, "File");
+        set_lang(Lang::Ru);
+        assert_eq!(tr().btn_file, "Файл");
+        set_lang(prev);
+    }
+
+    #[test]
+    fn fill_substitutes_placeholders() {
+        let prev = lang();
+        set_lang(Lang::En);
+        let t = tr();
+        // open_ok_t 模板含 {mode} {n} {path}
+        let s = t.open_ok("dir", 5, "/tmp/db");
+        assert!(s.contains("dir"), "got: {s}");
+        assert!(s.contains("5"), "got: {s}");
+        assert!(s.contains("/tmp/db"), "got: {s}");
+        set_lang(prev);
+    }
+
+    #[test]
+    fn all_tables_have_non_empty_core_fields() {
+        // 三张表的核心字段都不应为空（防止翻译漏填）
+        for table in &TABLES {
+            assert!(!table.ready.is_empty());
+            assert!(!table.btn_file.is_empty());
+            assert!(!table.btn_close.is_empty());
+            assert!(!table.tables_title.is_empty());
+            assert!(!table.detail_select_hint.is_empty());
+            assert!(!table.dup_tip_first.is_empty());
+        }
+    }
+}
