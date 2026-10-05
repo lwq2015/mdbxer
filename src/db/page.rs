@@ -306,7 +306,113 @@ pub fn dups_of(
     Ok((total, values))
 }
 
-/// 在某个 Key 的值列表中按**字节子串**搜索。
+/// 导出用原始 KV 流的续读锚点：精确到 (key, value)，多值表可落在具体值上。
+pub type RawAnchor = (Vec<u8>, Vec<u8>);
+
+/// 一批原始 KV 记录（多值表逐值展开，不做 Key 分组）。
+pub struct RawBatch {
+    /// 本批记录（已截断到 limit 条），按遍历方向排列
+    pub rows: Vec<(Vec<u8>, Vec<u8>)>,
+    /// 遍历方向上是否还有数据
+    pub has_more: bool,
+}
+
+/// 导出专用：按原始 (key, value) 流取一批（多值表逐值展开）。
+///
+/// MDBX 环境在同一进程内不允许二次 `open`（MDBX_BUSY），因此导出不能在
+/// 工作线程里重开环境；由 UI 线程持有唯一环境句柄，分批读取后交给写盘线程。
+///
+/// - `dup_sort`：多值表用精确 (key, value) 锚点续读（普通表锚点只按 Key）
+/// - `anchor: None` 从表首/表尾开始
+/// - `skip_anchor: true` 跳过锚点记录本身（下一批用）
+/// - 多取 1 条探针判断 `has_more`
+pub fn fetch_raw_batch(
+    db: &Database<NoWriteMap>,
+    table: Option<&str>,
+    dup_sort: bool,
+    dir: Direction,
+    anchor: Option<&RawAnchor>,
+    skip_anchor: bool,
+    limit: usize,
+) -> Result<RawBatch, String> {
+    let txn = db.begin_ro_txn().map_err(|e| e.to_string())?;
+    let table = txn.open_table(table).map_err(|e| e.to_string())?;
+    let mut cursor = txn.cursor(&table).map_err(|e| e.to_string())?;
+
+    // 定位到批首（含锚点）
+    let mut pos: CursorItem = match anchor {
+        None => {
+            if dir == Direction::Forward {
+                cursor.first().map_err(|e| e.to_string())?
+            } else {
+                cursor.last().map_err(|e| e.to_string())?
+            }
+        }
+        Some((k, v)) => {
+            if dir == Direction::Forward {
+                if dup_sort {
+                    // ≥ (k, v) 的第一个值（锚点存在时即锚点本身）
+                    cursor
+                        .get_both_range::<Vec<u8>>(k, v)
+                        .map_err(|e| e.to_string())?
+                        .map(|val| (k.clone(), val))
+                } else {
+                    cursor
+                        .set_lowerbound::<Vec<u8>, Vec<u8>>(k, None)
+                        .map_err(|e| e.to_string())?
+                        .map(|(_, kk, vv)| (kk, vv))
+                }
+            } else if dup_sort {
+                // ≤ (k, v)：先到 ≥v 首值（锚点存在时即锚点本身），跳过再退一格
+                match cursor.get_both_range::<Vec<u8>>(k, v).map_err(|e| e.to_string())? {
+                    Some(val) => Some((k.clone(), val)),
+                    // 锚点已不在（数据被并发删除）：回退到 ≤k 末项
+                    None => cursor
+                        .set_upperbound::<Vec<u8>, Vec<u8>>(k)
+                        .map_err(|e| e.to_string())?,
+                }
+            } else {
+                cursor
+                    .set_upperbound::<Vec<u8>, Vec<u8>>(k)
+                    .map_err(|e| e.to_string())?
+            }
+        }
+    };
+    // 续读跳过锚点记录本身：升序 next；降序多值表 prev_dup（首值跨前一 Key），普通表 prev
+    if skip_anchor && pos.is_some() {
+        pos = if dir == Direction::Forward {
+            cursor.next().map_err(|e| e.to_string())?
+        } else if dup_sort {
+            match cursor.prev_dup().map_err(|e| e.to_string())? {
+                Some(item) => Some(item),
+                None => cursor.prev_nodup().map_err(|e| e.to_string())?,
+            }
+        } else {
+            cursor.prev().map_err(|e| e.to_string())?
+        };
+    }
+
+    let mut rows: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(limit.min(1024));
+    let mut item = pos;
+    // 多取 1 条探针判断 has_more
+    while let Some(pair) = item {
+        rows.push(pair);
+        if rows.len() > limit {
+            break;
+        }
+        item = if dir == Direction::Forward {
+            cursor.next()
+        } else {
+            cursor.prev()
+        }
+        .map_err(|e| e.to_string())?;
+    }
+    let has_more = rows.len() > limit;
+    rows.truncate(limit);
+    Ok(RawBatch { rows, has_more })
+}
+
+/// 在某个 key 的值列表中按**字节子串**搜索。
 ///
 /// - `needle`：搜索子串（字节）
 /// - `from_index`：搜索起始序号；forward 时含，backward 时不含
@@ -420,5 +526,124 @@ mod tests {
         let anchor: Anchor = (vec![1, 2], Some(vec![3]));
         assert_eq!(anchor.0, vec![1, 2]);
         assert_eq!(anchor.1, Some(vec![3]));
+    }
+
+    /// 导出分批在真实测试库上的端到端校验（需先生成 testdata：
+    /// `cargo run --example make_test_db`；无测试库时自动跳过）。
+    #[test]
+    fn raw_batch_pagination_on_real_db() {
+        let db_path = std::path::Path::new("testdata/dir_db");
+        if !db_path.exists() {
+            eprintln!("跳过：testdata/dir_db 不存在（cargo run --example make_test_db 生成）");
+            return;
+        }
+        let handle = crate::db::DbHandle::open(db_path, crate::db::OpenMode::Auto).unwrap();
+
+        // 普通表 kv_basic：小批多分，拼接应等于整体，且无重复无遗漏
+        for dir in [Direction::Forward, Direction::Backward] {
+            let mut all: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+            let mut anchor: Option<RawAnchor> = None;
+            loop {
+                let b = fetch_raw_batch(
+                    &handle.db,
+                    Some("kv_basic"),
+                    false,
+                    dir,
+                    anchor.as_ref(),
+                    anchor.is_some(),
+                    10,
+                )
+                .unwrap();
+                let n = b.rows.len();
+                all.extend(b.rows);
+                if !b.has_more {
+                    break;
+                }
+                anchor = all.last().cloned();
+                assert!(n >= 10, "probe must fill batches until the last");
+            }
+            let total = handle
+                .tables
+                .iter()
+                .find(|t| t.name.as_deref() == Some("kv_basic"))
+                .unwrap()
+                .entries;
+            assert_eq!(all.len(), total, "dir {dir:?} count mismatch");
+            // 无重复键
+            let mut keys: Vec<Vec<u8>> = all.iter().map(|(k, _)| k.clone()).collect();
+            let before = keys.len();
+            keys.dedup();
+            assert_eq!(keys.len(), before, "dup key in dir {dir:?}");
+            // 顺序正确：升序单调不减，降序单调不增
+            for w in keys.windows(2) {
+                if dir == Direction::Forward {
+                    assert!(w[0] <= w[1], "forward order broken");
+                } else {
+                    assert!(w[0] >= w[1], "backward order broken");
+                }
+            }
+        }
+
+        // 多值表 dup_multi：逐值流总数 = entries（值对数），同 Key 连续
+        let mut all: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        let mut anchor: Option<RawAnchor> = None;
+        loop {
+            let b = fetch_raw_batch(
+                &handle.db,
+                Some("dup_multi"),
+                true,
+                Direction::Forward,
+                anchor.as_ref(),
+                anchor.is_some(),
+                100,
+            )
+            .unwrap();
+            all.extend(b.rows);
+            if !b.has_more {
+                break;
+            }
+            anchor = all.last().cloned();
+        }
+        let total = handle
+            .tables
+            .iter()
+            .find(|t| t.name.as_deref() == Some("dup_multi"))
+            .unwrap()
+            .entries;
+        assert_eq!(all.len(), total);
+        // 同 Key 的值必须连续成组
+        let mut seen = std::collections::HashSet::new();
+        let mut prev: Option<&Vec<u8>> = None;
+        for (k, _) in &all {
+            if Some(k) != prev {
+                assert!(seen.insert(k.clone()), "key {k:?} appears in 2 groups");
+                prev = Some(k);
+            }
+        }
+
+        // 多值表降序分批：同样总数一致 + 单调不增
+        let mut all: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        let mut anchor: Option<RawAnchor> = None;
+        loop {
+            let b = fetch_raw_batch(
+                &handle.db,
+                Some("dup_multi"),
+                true,
+                Direction::Backward,
+                anchor.as_ref(),
+                anchor.is_some(),
+                128,
+            )
+            .unwrap();
+            all.extend(b.rows);
+            if !b.has_more {
+                break;
+            }
+            anchor = all.last().cloned();
+        }
+        assert_eq!(all.len(), total);
+        for w in all.windows(2) {
+            assert!(w[0].0 >= w[1].0, "dup backward key order broken");
+        }
     }
 }

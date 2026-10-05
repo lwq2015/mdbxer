@@ -211,6 +211,15 @@ fn upsert_per_db(list: &mut Vec<PerDbRecord>, rec: PerDbRecord) {
     list.truncate(MAX_PER_DB);
 }
 
+/// 最近打开过的库路径（per_db 按 last_use 取最新一条）；无记录返回 None。
+pub fn last_opened_db() -> Option<String> {
+    read_config()
+        .per_db
+        .into_iter()
+        .max_by_key(|r| r.last_use)
+        .map(|r| r.path)
+}
+
 /// 按系统区域设置猜测语言：zh* → 中文，ru* → 俄语，其余 → 英语。
 fn system_lang() -> Lang {
     let loc = system_locale_string().to_lowercase();

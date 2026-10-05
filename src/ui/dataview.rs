@@ -137,7 +137,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         }
 
         ui.separator();
-        // 导出当前表：CSV/JSON 下拉 + ⭳（导出中禁用防重入）
+        // 导出当前表：CSV/JSON 下拉 + ⇩（导出中禁用防重入）
         let mut ef = app.export_format;
         egui::ComboBox::from_id_salt("export_format")
             .width(60.0)
@@ -151,7 +151,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             app.export_format = ef;
         }
         if ui
-            .add_enabled(app.export_rx.is_none(), egui::Button::new("⭳"))
+            .add_enabled(app.export_ev_rx.is_none(), egui::Button::new("⇩"))
             .on_hover_text(t.export_tip)
             .clicked()
         {

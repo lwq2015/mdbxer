@@ -203,7 +203,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     app.env_cache = None;
                 }
                 if ui
-                    .button(if app.dark_theme { "🌙" } else { "☀" })
+                    .button(if app.dark_theme { "●" } else { "○" })
                     .on_hover_text(t.theme_tip)
                     .clicked()
                 {

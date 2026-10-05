@@ -3,15 +3,18 @@
 
 //! 表数据导出：后台线程流式写出 CSV / JSON。
 //!
-//! 只读事务的生命周期绑定 `&Database`，无法跨线程传递，因此导出线程内
-//! 重新以只读 + ACCEDE 方式打开环境（零写锁开销；用户中途关库不影响导出）。
+//! libmdbx 在同一进程内不允许二次打开同一环境（MDBX_BUSY），因此导出线程
+//! 不能自行 open 环境。采用双通道流水线：
+//! - UI 线程持有唯一环境句柄，按 `NeedBatch` 请求分批读取原始 KV（多值表
+//!   逐值展开），经 `ExportBatch` 通道发给 worker；
+//! - worker 线程只负责文件 IO 与 CSV/JSON 编码，`recv` 阻塞等批，不耗 CPU。
+//! 用户中途关库时 UI 端 drop 发送端，worker 自然结束。
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::mpsc;
 
-use crate::db::{DbHandle, OpenMode};
 use crate::fmt::{DecodeMode, Endian, decode};
 
 /// 导出文件格式。
@@ -44,16 +47,10 @@ impl ExportFormat {
     }
 }
 
-/// 一次导出任务的全部参数（全部字段 Send，整体移交后台线程）。
+/// 一次导出任务的全部参数（不碰数据库，全部 Send）。
 pub struct ExportJob {
-    /// 数据库路径（文件或目录，由 open_mode 解释）
-    pub db_path: PathBuf,
-    pub open_mode: OpenMode,
-    /// None = 主表
-    pub table: Option<String>,
+    /// 该表是否多值表（决定 JSON 是否按 Key 分组）
     pub dup_sort: bool,
-    /// true = 降序导出（跟随界面全局遍历方向）
-    pub sort_desc: bool,
     pub key_mode: DecodeMode,
     pub val_mode: DecodeMode,
     pub endian: Endian,
@@ -61,126 +58,155 @@ pub struct ExportJob {
     pub format: ExportFormat,
 }
 
-/// 导出进度（经 mpsc 发回 UI 线程）。
-pub enum ExportProgress {
-    /// 已写出 n 条记录（多值表按值计）
-    Progress(usize),
-    /// 完成：共 n 条
+/// worker → UI：要下一批数据 / 完成 / 失败。
+#[derive(Debug)]
+pub enum ExportEvent {
+    /// 请求下一批原始 KV（首批与续批同消息；UI 自行维护锚点）
+    NeedBatch,
+    /// 完成：共写出 n 条记录（多值表按值计）
     Done(usize),
     /// 失败
     Fail(String),
 }
 
-/// 启动后台导出线程，返回进度接收端。
-pub fn start(job: ExportJob) -> mpsc::Receiver<ExportProgress> {
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let msg = match run(&job, &tx) {
-            Ok(n) => ExportProgress::Done(n),
-            Err(e) => ExportProgress::Fail(e),
-        };
-        let _ = tx.send(msg);
-    });
-    rx
+/// UI → worker：一批原始 KV，或中止信号。
+pub enum ExportBatch {
+    /// 一批记录；`has_more=false` 表示这是最后一批（rows 可为空 = 空表）
+    Rows {
+        /// 本批原始 (key, value) 记录，按遍历方向排列
+        rows: Vec<(Vec<u8>, Vec<u8>)>,
+        /// 是否还有后续批次
+        has_more: bool,
+    },
+    /// 读批失败，中止导出
+    Abort(String),
 }
 
-/// 线程主体：打开环境 → 流式遍历 → 写出。返回写出的记录条数。
-fn run(job: &ExportJob, tx: &mpsc::Sender<ExportProgress>) -> Result<usize, String> {
-    let handle = DbHandle::open(&job.db_path, job.open_mode)?;
-    let txn = handle.db.begin_ro_txn().map_err(|e| e.to_string())?;
-    let table = txn
-        .open_table(job.table.as_deref())
-        .map_err(|e| e.to_string())?;
-    let mut cursor = txn.cursor(&table).map_err(|e| e.to_string())?;
+/// 启动后台写盘线程：返回（批次发送端, 事件接收端）。
+pub fn start(job: ExportJob) -> (mpsc::Sender<ExportBatch>, mpsc::Receiver<ExportEvent>) {
+    let (batch_tx, batch_rx) = mpsc::channel::<ExportBatch>();
+    let (event_tx, event_rx) = mpsc::channel::<ExportEvent>();
+    std::thread::spawn(move || {
+        let msg = match run(&job, &event_tx, &batch_rx) {
+            Ok(n) => ExportEvent::Done(n),
+            Err(e) => ExportEvent::Fail(e),
+        };
+        let _ = event_tx.send(msg);
+    });
+    (batch_tx, event_rx)
+}
 
+/// worker 主体：建文件 → 循环要批、写批 → 收尾。
+fn run(
+    job: &ExportJob,
+    events: &mpsc::Sender<ExportEvent>,
+    batches: &mpsc::Receiver<ExportBatch>,
+) -> Result<usize, String> {
     let file = File::create(&job.out_path).map_err(|e| e.to_string())?;
     let mut w = BufWriter::new(file);
-
-    let dec = |b: &[u8], mode: DecodeMode| decode(b, mode, job.endian, usize::MAX);
-    let mut n = 0usize;
-
-    // 统一升/降序遍历：(key, value) 流（多值表逐值展开）
-    let mut item: Option<(Vec<u8>, Vec<u8>)> = if job.sort_desc {
-        cursor.last()
-    } else {
-        cursor.first()
-    }
-    .map_err(|e| e.to_string())?;
-
     if job.format == ExportFormat::Csv {
         writeln!(w, "key,value").map_err(|e| e.to_string())?;
     } else {
         writeln!(w, "[").map_err(|e| e.to_string())?;
     }
 
-    // JSON 多值表分组状态：当前 Key 原始字节（按字节判等，避免解码文本撞车）
-    let mut json_first_entry = true;
+    let dec = |b: &[u8], mode: DecodeMode| decode(b, mode, job.endian, usize::MAX);
+    let mut n = 0usize;
+    // JSON 跨批分组状态
+    let mut json_started = false; // 是否已写出过第一个条目
     let mut json_cur_key: Option<Vec<u8>> = None;
 
-    while let Some((k, v)) = item {
-        let key_text = dec(&k, job.key_mode);
-        let val_text = dec(&v, job.val_mode);
-        match job.format {
-            ExportFormat::Csv => {
-                writeln!(w, "{},{}", csv_field(&key_text), csv_field(&val_text))
-                    .map_err(|e| e.to_string())?;
-            }
-            ExportFormat::Json => {
-                if job.dup_sort {
-                    // 多值表：{"key": k, "values": [v, ...]}，同 Key 连续分组
-                    if json_cur_key.as_deref() != Some(k.as_slice()) {
-                        if json_cur_key.is_some() {
-                            writeln!(w, "]}},").map_err(|e| e.to_string())?;
-                        }
-                        json_first_entry = false;
-                        write!(
-                            w,
-                            "  {{\"key\": {}, \"values\": [{}",
-                            json_str(&key_text),
-                            json_str(&val_text)
-                        )
-                        .map_err(|e| e.to_string())?;
-                        json_cur_key = Some(k);
-                    } else {
-                        write!(w, ", {}", json_str(&val_text)).map_err(|e| e.to_string())?;
-                    }
-                } else {
-                    if !json_first_entry {
-                        writeln!(w, ",").map_err(|e| e.to_string())?;
-                    }
-                    json_first_entry = false;
-                    write!(
-                        w,
-                        "  {{\"key\": {}, \"value\": {}}}",
-                        json_str(&key_text),
-                        json_str(&val_text)
-                    )
-                    .map_err(|e| e.to_string())?;
+    loop {
+        if events.send(ExportEvent::NeedBatch).is_err() {
+            return Err("UI closed".to_string());
+        }
+        match batches.recv() {
+            Ok(ExportBatch::Rows { rows, has_more }) => {
+                n += write_rows(
+                    &mut w,
+                    job,
+                    &dec,
+                    rows,
+                    &mut json_started,
+                    &mut json_cur_key,
+                )?;
+                if !has_more {
+                    break;
                 }
             }
+            Ok(ExportBatch::Abort(e)) => return Err(e),
+            // UI 端关闭（关库/退出）：静默结束，保留已写出内容
+            Err(_) => return Err("aborted".to_string()),
         }
-        n += 1;
-        if n % 1000 == 0 {
-            let _ = tx.send(ExportProgress::Progress(n));
-        }
-        item = if job.sort_desc {
-            cursor.prev()
-        } else {
-            cursor.next()
-        }
-        .map_err(|e| e.to_string())?;
     }
 
     if job.format == ExportFormat::Json {
         if json_cur_key.is_some() {
             // 收尾最后一个多值分组
             writeln!(w, "]}}").map_err(|e| e.to_string())?;
-        } else if !json_first_entry {
+        } else if json_started {
             writeln!(w).map_err(|e| e.to_string())?;
         }
         writeln!(w, "]").map_err(|e| e.to_string())?;
     }
     w.flush().map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
+/// 写出一批记录（CSV 逐行；JSON 普通表单条 / 多值表按 Key 连续分组，状态跨批延续）。
+/// 返回写出的记录条数。
+#[allow(clippy::too_many_arguments)]
+fn write_rows(
+    w: &mut impl Write,
+    job: &ExportJob,
+    dec: &impl Fn(&[u8], DecodeMode) -> String,
+    rows: Vec<(Vec<u8>, Vec<u8>)>,
+    json_started: &mut bool,
+    json_cur_key: &mut Option<Vec<u8>>,
+) -> Result<usize, String> {
+    let mut n = 0usize;
+    for (k, v) in rows {
+        let key_text = dec(&k, job.key_mode);
+        let val_text = dec(&v, job.val_mode);
+        if job.format == ExportFormat::Csv {
+            writeln!(w, "{},{}", csv_field(&key_text), csv_field(&val_text))
+                .map_err(|e| e.to_string())?;
+        } else {
+            // JSON
+            if job.dup_sort {
+                // 多值表：{"key": k, "values": [v, ...]}，同 Key 连续分组（按原始字节判等）
+                if json_cur_key.as_deref() != Some(k.as_slice()) {
+                    if json_cur_key.is_some() {
+                        writeln!(w, "]}},").map_err(|e| e.to_string())?;
+                    }
+                    *json_started = true;
+                    write!(
+                        w,
+                        "  {{\"key\": {}, \"values\": [{}",
+                        json_str(&key_text),
+                        json_str(&val_text)
+                    )
+                    .map_err(|e| e.to_string())?;
+                    *json_cur_key = Some(k);
+                } else {
+                    write!(w, ", {}", json_str(&val_text)).map_err(|e| e.to_string())?;
+                }
+            } else {
+                if *json_started {
+                    writeln!(w, ",").map_err(|e| e.to_string())?;
+                }
+                *json_started = true;
+                write!(
+                    w,
+                    "  {{\"key\": {}, \"value\": {}}}",
+                    json_str(&key_text),
+                    json_str(&val_text)
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+        n += 1;
+    }
     Ok(n)
 }
 
@@ -201,6 +227,114 @@ fn json_str(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn job_at(path: &std::path::Path, format: ExportFormat, dup_sort: bool) -> ExportJob {
+        ExportJob {
+            dup_sort,
+            key_mode: DecodeMode::Utf8,
+            val_mode: DecodeMode::Utf8,
+            endian: Endian::Little,
+            out_path: path.to_path_buf(),
+            format,
+        }
+    }
+
+    /// 喂两批数据跑完整流水线，返回输出文件内容。
+    fn pipeline(
+        job: ExportJob,
+        batches: Vec<ExportBatch>,
+    ) -> (Result<usize, String>, String) {
+        let (tx, rx) = mpsc::channel::<ExportBatch>();
+        let (etx, erx) = mpsc::channel::<ExportEvent>();
+        let path = job.out_path.clone();
+        let handle = std::thread::spawn(move || run(&job, &etx, &rx));
+        for b in batches {
+            match erx.recv() {
+                Ok(ExportEvent::NeedBatch) => {}
+                other => panic!("unexpected event: {other:?}"),
+            }
+            tx.send(b).unwrap();
+        }
+        let result = handle.join().unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        (result, text)
+    }
+
+    #[test]
+    fn csv_two_batches_stream() {
+        let dir = std::env::temp_dir().join("mdbxer_export_test_csv");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.csv");
+        let _ = std::fs::remove_file(&path);
+        let job = job_at(&path, ExportFormat::Csv, false);
+        let (result, text) = pipeline(
+            job,
+            vec![
+                ExportBatch::Rows {
+                    rows: vec![(b"a".to_vec(), b"1".to_vec())],
+                    has_more: true,
+                },
+                ExportBatch::Rows {
+                    rows: vec![
+                        (b"b".to_vec(), b"2,3".to_vec()),
+                        (b"c".to_vec(), b"x\"y".to_vec()),
+                    ],
+                    has_more: false,
+                },
+            ],
+        );
+        assert_eq!(result.unwrap(), 3);
+        assert_eq!(text, "key,value\na,1\nb,\"2,3\"\nc,\"x\"\"y\"\n");
+    }
+
+    #[test]
+    fn json_grouped_dup_spans_batches() {
+        let dir = std::env::temp_dir().join("mdbxer_export_test_json_dup");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.json");
+        let _ = std::fs::remove_file(&path);
+        let job = job_at(&path, ExportFormat::Json, true);
+        // 同一 Key 的三个值拆在两批，必须合并为一个 values 数组
+        let (result, text) = pipeline(
+            job,
+            vec![
+                ExportBatch::Rows {
+                    rows: vec![
+                        (b"k".to_vec(), b"v1".to_vec()),
+                        (b"k".to_vec(), b"v2".to_vec()),
+                    ],
+                    has_more: true,
+                },
+                ExportBatch::Rows {
+                    rows: vec![(b"k".to_vec(), b"v3".to_vec())],
+                    has_more: false,
+                },
+            ],
+        );
+        assert_eq!(result.unwrap(), 3);
+        assert_eq!(
+            text,
+            "[\n  {\"key\": \"k\", \"values\": [\"v1\", \"v2\", \"v3\"]}\n]\n"
+        );
+    }
+
+    #[test]
+    fn empty_table_produces_empty_json_array() {
+        let dir = std::env::temp_dir().join("mdbxer_export_test_empty");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.json");
+        let _ = std::fs::remove_file(&path);
+        let job = job_at(&path, ExportFormat::Json, false);
+        let (result, text) = pipeline(
+            job,
+            vec![ExportBatch::Rows {
+                rows: vec![],
+                has_more: false,
+            }],
+        );
+        assert_eq!(result.unwrap(), 0);
+        assert_eq!(text, "[\n]\n");
+    }
 
     #[test]
     fn csv_field_plain() {

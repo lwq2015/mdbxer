@@ -1,12 +1,12 @@
 // Copyright 2026 lwq_yu
 // SPDX-License-Identifier: Apache-2.0
 
-//! 左侧表（subDB）列表：过滤、排序、条数显示。
+//! 左侧表（subDB）列表：过滤、排序、条数显示；底部固定收藏区（收藏表 + 收藏 Key）。
 
 use super::{LEFT_PANEL_MAX, LEFT_PANEL_MIN, MIDDLE_MIN_WIDTH, MdbxerApp, TableSort};
 use crate::i18n::tr;
 
-/// 左侧表列表面板：标题 + 排序下拉 + 过滤框 + 可滚动列表。
+/// 左侧表列表面板：标题 + 排序下拉 + 过滤框 + 可滚动列表 + 底部收藏区。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let t = tr();
     // 上限取硬上限与"给右栏+中央表格留足宽度"两者中的较小值
@@ -46,7 +46,91 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
             let Some(dbh) = &app.db else { return };
 
-            // 过滤 + 排序后的索引
+            // ── 底部固定收藏区（先登记面板，剩余空间才全部分给表列表）──
+            // 动作在不可变收集区记录，闭包结束后统一应用（规避借用）
+            let mut fav_table_pick: Option<usize> = None;
+            let mut fav_table_toggle: Option<Option<String>> = None;
+            let mut fav_key_action: Option<(usize, bool)> = None; // (下标, true=跳转)
+            egui::Panel::bottom("fav_panel")
+                .resizable(false)
+                .show(ui, |ui| {
+                    ui.separator();
+                    egui::CollapsingHeader::new(t.favorites_title)
+                        .id_salt("fav_keys")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            if app.fav_tables.is_empty() && app.fav_keys.is_empty() {
+                                ui.weak(t.fav_empty);
+                            }
+                            // ── 收藏的表：★ 取消收藏，点表名直接跳转 ──
+                            for fname in &app.fav_tables {
+                                let display = dbh
+                                    .tables
+                                    .iter()
+                                    .find(|ti| &ti.name == fname)
+                                    .map(|ti| ti.display())
+                                    .unwrap_or_else(|| {
+                                        fname.clone().unwrap_or_else(|| t.main_table.to_string())
+                                    });
+                                let selected = app.cur_table().map(|ti| &ti.name) == Some(fname);
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .small_button("★")
+                                        .on_hover_text(t.fav_table_tip)
+                                        .clicked()
+                                    {
+                                        fav_table_toggle = Some(fname.clone());
+                                    }
+                                    if ui
+                                        .selectable_label(
+                                            selected,
+                                            egui::RichText::new(display).monospace(),
+                                        )
+                                        .clicked()
+                                    {
+                                        if let Some(pos) =
+                                            dbh.tables.iter().position(|ti| ti.name == *fname)
+                                        {
+                                            fav_table_pick = Some(pos);
+                                        }
+                                    }
+                                });
+                            }
+                            // ── 收藏的 Key：→ 跳转，× 删除 ──
+                            for (i, fk) in app.fav_keys.iter().enumerate() {
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .small_button("→")
+                                        .on_hover_text(t.fav_jump_tip)
+                                        .clicked()
+                                    {
+                                        fav_key_action = Some((i, true));
+                                    }
+                                    if ui
+                                        .small_button("×")
+                                        .on_hover_text(t.fav_del_tip)
+                                        .clicked()
+                                    {
+                                        fav_key_action = Some((i, false));
+                                    }
+                                    let table_name = fk
+                                        .table
+                                        .as_deref()
+                                        .unwrap_or(t.main_table);
+                                    let short_hex: String = fk.key_hex.chars().take(16).collect();
+                                    let label = if fk.note.is_empty() {
+                                        format!("{table_name} · {short_hex}")
+                                    } else {
+                                        format!("{table_name} · {} · {short_hex}", fk.note)
+                                    };
+                                    ui.label(egui::RichText::new(label).monospace().small())
+                                        .on_hover_text(format!("{table_name} · {}", fk.key_hex));
+                                });
+                            }
+                        });
+                });
+
+            // ── 表列表（过滤 + 排序 + 收藏表稳定置顶）──
             let filter = app.table_filter.to_lowercase();
             let mut idx: Vec<usize> = (0..dbh.tables.len()).collect();
             idx.retain(|&i| {
@@ -70,7 +154,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             idx.sort_by_key(|&i| !app.fav_tables.contains(&dbh.tables[i].name));
 
             let mut clicked = None;
-            let mut fav_toggled = None;
+            let mut row_fav_toggled = None;
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for i in idx {
                     let tbl = &dbh.tables[i];
@@ -83,7 +167,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             .on_hover_text(t.fav_table_tip)
                             .clicked()
                         {
-                            fav_toggled = Some(tbl.name.clone());
+                            row_fav_toggled = Some(tbl.name.clone());
                         }
                         let text = t.table_entry(&tbl.display(), tbl.entries, &tbl.flags_desc());
                         if ui
@@ -95,55 +179,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     });
                 }
             });
-            if let Some(i) = clicked {
+
+            // ── 统一应用本帧动作（dbh 的不可变借用到此结束）──
+            if let Some(i) = clicked.or(fav_table_pick) {
                 app.select_table(i);
             }
-            if let Some(name) = fav_toggled {
+            if let Some(name) = row_fav_toggled.or(fav_table_toggle) {
                 app.toggle_fav_table(name);
             }
-
-            // 收藏 Key 列表（底部折叠区）：→ 跳转，× 删除
-            let mut fav_action: Option<(usize, bool)> = None; // (下标, true=跳转 / false=删除)
-            egui::CollapsingHeader::new(t.favorites_title)
-                .id_salt("fav_keys")
-                .default_open(!app.fav_keys.is_empty())
-                .show(ui, |ui| {
-                    if app.fav_keys.is_empty() {
-                        ui.weak(t.fav_empty);
-                    }
-                    for (i, fk) in app.fav_keys.iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            if ui
-                                .small_button("→")
-                                .on_hover_text(t.fav_jump_tip)
-                                .clicked()
-                            {
-                                fav_action = Some((i, true));
-                            }
-                            if ui
-                                .small_button("×")
-                                .on_hover_text(t.fav_del_tip)
-                                .clicked()
-                            {
-                                fav_action = Some((i, false));
-                            }
-                            let table_name = fk
-                                .table
-                                .as_deref()
-                                .unwrap_or(t.main_table);
-                            let hex = &fk.key_hex;
-                            let short_hex: String = hex.chars().take(16).collect();
-                            let label = if fk.note.is_empty() {
-                                format!("{table_name} · {short_hex}")
-                            } else {
-                                format!("{table_name} · {} · {short_hex}", fk.note)
-                            };
-                            ui.label(egui::RichText::new(label).monospace().small())
-                                .on_hover_text(format!("{table_name} · {hex}"));
-                        });
-                    }
-                });
-            if let Some((i, jump)) = fav_action {
+            if let Some((i, jump)) = fav_key_action {
                 if jump {
                     let fk = app.fav_keys[i].clone();
                     app.jump_to_fav(&fk);

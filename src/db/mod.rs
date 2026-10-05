@@ -9,7 +9,8 @@ mod stats;
 
 pub use handle::{DbHandle, TableInfo};
 pub use page::{
-    Anchor, Direction, JumpKey, Row, dup_find, dups_of, fetch_page_prefix, jump_to,
+    Anchor, Direction, JumpKey, RawAnchor, RawBatch, Row, dup_find, dups_of, fetch_page_prefix,
+    fetch_raw_batch, jump_to,
 };
 pub use stats::{env_info_view, table_stat_view};
 

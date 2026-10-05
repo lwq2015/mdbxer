@@ -39,9 +39,12 @@ fn main() -> eframe::Result<()> {
             ui::apply_theme(&cc.egui_ctx, crate::config::load_theme() == crate::config::Theme::Dark);
             load_cjk_fonts(&cc.egui_ctx);
             let mut app = ui::MdbxerApp::new(app_title);
-            // 支持命令行传入路径直接打开（也便于拖文件到 exe）
+            // 支持命令行传入路径直接打开（也便于拖文件到 exe）；
+            // 无参数时自动重开上次查看的库（每库记忆 LRU 第一条）
             if let Some(p) = std::env::args().nth(1) {
                 app.open_db(&p);
+            } else {
+                app.reopen_last_db();
             }
             Ok(Box::new(app))
         }),

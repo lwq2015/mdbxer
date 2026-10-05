@@ -18,6 +18,8 @@ use crate::history::History;
 pub const PAGE_SIZES: [usize; 5] = [50, 100, 200, 500, 1000];
 pub const DEFAULT_PAGE_SIZE: usize = 200;
 pub const DEFAULT_CELL_MAX: usize = 256;
+/// 导出时 UI 线程每批读取的原始 KV 条数（一帧一批，兼顾流畅与吞吐）
+pub const EXPORT_BATCH: usize = 2000;
 
 /// 左栏宽度范围（点）
 pub const LEFT_PANEL_MIN: f32 = 180.0;
@@ -302,9 +304,13 @@ pub struct MdbxerApp {
     /// 状态栏消息（持久状态随语言即时渲染）
     pub status: Status,
     // ── 导出 ──
-    /// 导出进度接收端（Some = 导出进行中，也用于禁用导出按钮防重入）
-    pub export_rx: Option<std::sync::mpsc::Receiver<crate::export::ExportProgress>>,
-    /// 导出已写出条数（进度显示）
+    /// worker 事件接收端（Some = 导出进行中，也用于禁用导出按钮防重入）
+    pub export_ev_rx: Option<std::sync::mpsc::Receiver<crate::export::ExportEvent>>,
+    /// 给 worker 发送数据批/中止的发送端
+    export_batch_tx: Option<std::sync::mpsc::Sender<crate::export::ExportBatch>>,
+    /// 导出下一批的续读锚点（None = 首批）
+    export_anchor: Option<db::RawAnchor>,
+    /// 导出已写出条数（进度显示，UI 每发出一批即累加）
     pub export_count: usize,
     /// 导出目标文件路径（完成消息用）
     pub export_path: String,
@@ -383,7 +389,9 @@ impl MdbxerApp {
             stat_cache: None,
             env_cache: None,
             status: Status::Ready,
-            export_rx: None,
+            export_ev_rx: None,
+            export_batch_tx: None,
+            export_anchor: None,
             export_count: 0,
             export_path: String::new(),
             export_format: crate::export::ExportFormat::default(),
@@ -472,6 +480,8 @@ impl MdbxerApp {
     // ── 打开 / 关闭 ─────────────────────────────────────────────
 
     /// 打开 `path` 指向的数据库；成功后加载第一页并把路径写入窗口标题。
+    /// 路径统一规范化为绝对路径（剥掉 Windows `\\?\` 前缀）再用于显示与持久化，
+    /// 保证从任意工作目录启动都能命中每库记忆。
     pub fn open_db(&mut self, path: &str) {
         let path = path.trim().trim_matches('"').to_string();
         if path.is_empty() {
@@ -479,6 +489,8 @@ impl MdbxerApp {
         }
         match DbHandle::open(std::path::Path::new(&path), self.open_mode) {
             Ok(handle) => {
+                // 打开成功后规范化路径（canonicalize 要求路径存在，故放在此处）
+                let path = normalize_path(&path);
                 let n = handle.tables.len();
                 let file_mode = handle.no_sub_dir;
                 self.history.add(&path, self.open_mode.as_str());
@@ -529,6 +541,10 @@ impl MdbxerApp {
     pub fn close_db(&mut self) {
         // 关库前保存最后打开的表与收藏
         self.save_per_db();
+        // 导出流水线依赖本线程持有的环境句柄：断开通道，worker 自然结束
+        self.export_batch_tx = None;
+        self.export_ev_rx = None;
+        self.export_anchor = None;
         self.db = None;
         self.opened_path = None;
         self.rows.clear();
@@ -555,6 +571,19 @@ impl MdbxerApp {
             self.title = want.clone();
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(want));
         }
+    }
+
+    /// 启动时重新打开上次查看的库（按每库记录 LRU 取最近一条）。
+    /// 路径已不存在则静默跳过；无记录时不做任何事。
+    pub fn reopen_last_db(&mut self) {
+        let Some(path) = crate::config::last_opened_db() else {
+            return;
+        };
+        if !std::path::Path::new(&path).exists() {
+            return;
+        }
+        self.open_mode = OpenMode::Auto;
+        self.open_db(&path);
     }
 
     // ── 分页导航 ────────────────────────────────────────────────
@@ -689,9 +718,14 @@ impl MdbxerApp {
 
     // ── 跳转 ────────────────────────────────────────────────────
 
-    /// Key 跳转（跳转型导航，base_index 置 None）。
+    /// Key 跳转（跳转型导航，base_index 置 None）：使用跳转输入框的内容。
     pub fn jump(&mut self) {
         let input = self.jump_input.trim().to_string();
+        self.jump_with(&input);
+    }
+
+    /// 按给定输入执行 Key 跳转（跳转框与 Key 搜索框共用，不修改任何输入框内容）。
+    fn jump_with(&mut self, input: &str) {
         if input.is_empty() {
             return;
         }
@@ -739,9 +773,8 @@ impl MdbxerApp {
             return;
         }
         if !self.key_filter_mode {
-            // 跳转模式：语义与跳转框一致（INTEGER_KEY 表接受十进制）
-            self.jump_input = input;
-            self.jump();
+            // 跳转模式：语义与跳转框一致（INTEGER_KEY 表接受十进制），但不写跳转框
+            self.jump_with(&input);
             return;
         }
         match parse_bytes_input(&input) {
@@ -836,14 +869,14 @@ impl MdbxerApp {
 
     // ── 导出 ────────────────────────────────────────────────────
 
-    /// 启动后台导出线程（防重入：若已有导出在运行则忽略）。
+    /// 启动后台导出（防重入：若已有导出在运行则忽略）。
+    /// worker 只写文件；数据批由本线程（持有唯一环境句柄）按请求供给。
     pub fn start_export(&mut self) {
-        if self.export_rx.is_some() {
+        if self.export_ev_rx.is_some() {
             return;
         }
         let t = crate::i18n::tr();
         let Some(table) = self.cur_table() else { return };
-        let Some(path_str) = self.opened_path.clone() else { return };
         let name = table.display();
         let ext = self.export_format.ext();
         let Some(out) = rfd::FileDialog::new()
@@ -854,49 +887,95 @@ impl MdbxerApp {
             return;
         };
         let job = crate::export::ExportJob {
-            db_path: std::path::PathBuf::from(&path_str),
-            open_mode: self.open_mode,
-            table: table.name.clone(),
             dup_sort: table.dup_sort,
-            sort_desc: self.sort_desc,
             key_mode: self.key_mode,
             val_mode: self.val_mode,
             endian: self.endian,
             out_path: out.clone(),
             format: self.export_format,
         };
-        self.export_path = out.display().to_string();
+        let (batch_tx, event_rx) = crate::export::start(job);
+        self.export_batch_tx = Some(batch_tx);
+        self.export_ev_rx = Some(event_rx);
+        self.export_anchor = None;
         self.export_count = 0;
-        self.export_rx = Some(crate::export::start(job));
+        self.export_path = out.display().to_string();
         self.status = Status::Msg(t.export_started.to_string());
     }
 
-    /// 每帧轮询导出进度（需在 eframe::App::ui 里调用）。
+    /// 从当前表读取导出用的下一批原始 KV（多值表逐值展开）。
+    fn read_export_batch(&self) -> Result<db::RawBatch, String> {
+        let dbh = self.db.as_ref().ok_or("db closed")?;
+        let table = self.cur_table().ok_or("no table")?;
+        db::fetch_raw_batch(
+            &dbh.db,
+            table.name.as_deref(),
+            table.dup_sort,
+            self.sort_dir(),
+            self.export_anchor.as_ref(),
+            self.export_anchor.is_some(),
+            EXPORT_BATCH,
+        )
+    }
+
+    /// 每帧轮询导出事件并按需供给数据批（需在 eframe::App::ui 里调用）。
     pub fn poll_export(&mut self, ctx: &egui::Context) {
-        let Some(rx) = &self.export_rx else { return };
+        let Some(rx) = self.export_ev_rx.take() else {
+            return;
+        };
         let t = crate::i18n::tr();
-        let mut done = false;
-        // 尽量消费已到达的消息
-        while let Ok(msg) = rx.try_recv() {
-            match msg {
-                crate::export::ExportProgress::Progress(n) => {
-                    self.export_count = n;
-                    self.status = Status::Msg(t.export_progress(n));
+        let mut finished = false;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                crate::export::ExportEvent::NeedBatch => {
+                    match self.read_export_batch() {
+                        Ok(batch) => {
+                            let db::RawBatch { rows, has_more } = batch;
+                            self.export_anchor = rows.last().cloned();
+                            self.export_count += rows.len();
+                            let Some(tx) = &self.export_batch_tx else {
+                                finished = true;
+                                break;
+                            };
+                            if tx
+                                .send(crate::export::ExportBatch::Rows { rows, has_more })
+                                .is_err()
+                            {
+                                finished = true;
+                                break;
+                            }
+                            if has_more {
+                                self.status =
+                                    Status::Msg(t.export_progress(self.export_count));
+                            }
+                        }
+                        Err(e) => {
+                            // 读批失败：通知 worker 中止并清理
+                            if let Some(tx) = &self.export_batch_tx {
+                                let _ = tx.send(crate::export::ExportBatch::Abort(e.clone()));
+                            }
+                            self.status = Status::Msg(t.export_fail(&e));
+                            finished = true;
+                            break;
+                        }
+                    }
                 }
-                crate::export::ExportProgress::Done(n) => {
+                crate::export::ExportEvent::Done(n) => {
                     self.export_count = n;
                     self.status = Status::Msg(t.export_done(n, &self.export_path));
-                    done = true;
+                    finished = true;
                 }
-                crate::export::ExportProgress::Fail(e) => {
+                crate::export::ExportEvent::Fail(e) => {
                     self.status = Status::Msg(t.export_fail(&e));
-                    done = true;
+                    finished = true;
                 }
             }
         }
-        if done {
-            self.export_rx = None;
+        if finished {
+            self.export_batch_tx = None;
+            self.export_anchor = None;
         } else {
+            self.export_ev_rx = Some(rx);
             // 导出仍在运行，请求下一帧重绘以持续轮询
             ctx.request_repaint();
         }
@@ -1022,6 +1101,21 @@ pub fn apply_theme(ctx: &egui::Context, dark: bool) {
 /// 字节的大写 hex 串（收藏 Key 的持久化形式）。
 fn key_hex(key: &[u8]) -> String {
     key.iter().map(|b| format!("{b:02X}")).collect()
+}
+
+/// 路径规范化为绝对形式；剥掉 Windows canonicalize 的 verbatim 前缀
+/// （`\\?\C:\…` → `C:\…`、`\\?\UNC\srv\share` → `\\srv\share`），便于显示。
+/// canonicalize 失败时退回原样（相对路径照常用）。
+fn normalize_path(path: &str) -> String {
+    let p = std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s.into_owned()
+    }
 }
 
 /// 反转取值方向（供"上一页"等反向操作使用）。
