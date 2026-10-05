@@ -1,5 +1,5 @@
 # 全平台构建与发布流水线：
-#   tag（v*）推送到 GitHub 后，并行构建 Windows / Linux / macOS(Intel+ARM)，
+#   tag（v*）推送到 GitHub 后，并行构建 Windows / Linux / macOS，
 #   自动发布 GitHub Release，并把全部产物同步到 Gitee Release（主仓库）。
 #
 # 触发方式：
@@ -32,10 +32,7 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             bin: mdbxer
-          - os: macos-13 # Intel
-            target: x86_64-apple-darwin
-            bin: mdbxer
-          - os: macos-14 # Apple Silicon
+          - os: macos-14 # Apple Silicon；GitHub 无 Intel macOS runner，Intel Mac 走 Rosetta 2
             target: aarch64-apple-darwin
             bin: mdbxer
     runs-on: ${{ matrix.os }}
