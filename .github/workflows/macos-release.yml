@@ -1,0 +1,94 @@
+# macOS 构建流水线：tag 推送到 GitHub 后自动构建 Intel/ARM 双架构，
+# 并把产物回传到 Gitee Release（Gitee 为主仓库，正式发布在 Gitee）。
+#
+# 触发方式：
+#   1. tag（v*）被推送到 GitHub（通常由 Gitee 仓库镜像自动同步过来）
+#   2. 手动 workflow_dispatch（只构建，不发布）
+#
+# 前置配置：
+#   - GitHub 仓库 Settings → Secrets → Actions 添加 GITEE_TOKEN（Gitee 私人令牌）
+
+name: macOS 构建与发布
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13 # Intel
+            target: x86_64-apple-darwin
+          - os: macos-14 # Apple Silicon
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建
+        run: cargo build --release --locked
+
+      - name: 打包
+        run: |
+          mkdir -p dist
+          tar -czf "dist/mdbxer-${{ matrix.target }}.tar.gz" -C target/release mdbxer
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: mdbxer-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  gitee-release:
+    # 仅 tag 触发时执行；手动触发只构建不发布
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 创建 Gitee Release
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -e
+          REPO="lwq_yu/mdbxer"
+          # 已存在则复用（按 tag 查列表），不存在则创建
+          ID=$(curl -s "https://gitee.com/api/v5/repos/${REPO}/releases?access_token=${GITEE_TOKEN}&per_page=100" \
+            | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id' | head -n1)
+          if [ -z "$ID" ]; then
+            jq -n \
+              --arg at "$GITEE_TOKEN" \
+              --arg tag "$TAG" \
+              --arg name "$TAG" \
+              --arg body "macOS 构建产物由 GitHub Actions 自动构建：Intel (x86_64) 与 Apple Silicon (aarch64)。" \
+              '{access_token: $at, tag_name: $tag, name: $name, body: $body, target_commitish: "master"}' \
+            | curl -s -X POST -H "Content-Type: application/json" -d @- \
+              "https://gitee.com/api/v5/repos/${REPO}/releases" > /tmp/rel.json
+            ID=$(jq -r .id /tmp/rel.json)
+          fi
+          [ "$ID" != "null" ] && [ -n "$ID" ] || { echo "创建 Release 失败"; cat /tmp/rel.json; exit 1; }
+          echo "GITEE_RELEASE_ID=$ID" >> "$GITHUB_ENV"
+
+      - name: 上传附件到 Gitee Release
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          set -e
+          REPO="lwq_yu/mdbxer"
+          for f in artifacts/*/*.tar.gz; do
+            echo "上传 $f"
+            curl -s -X POST \
+              -F "access_token=${GITEE_TOKEN}" \
+              -F "file=@${f}" \
+              "https://gitee.com/api/v5/repos/${REPO}/releases/${GITEE_RELEASE_ID}/attach_files" > /dev/null
+          done
