@@ -1,13 +1,14 @@
 # 全平台构建与发布流水线：
 #   tag（v*）推送到 GitHub 后，并行构建 Windows / Linux / macOS，
-#   自动发布 GitHub Release，并把全部产物同步到 Gitee Release（主仓库）。
+#   自动发布 GitHub Release。
+#   Gitee Release 作为可选项（因 GitHub Actions runner 访问 Gitee API 可能超时）。
 #
 # 触发方式：
 #   1. tag 被推送到 GitHub（通常由 Gitee 仓库镜像自动同步过来）
 #   2. 手动 workflow_dispatch（只构建，不发布）
 #
 # 前置配置：
-#   - GitHub 仓库 Settings → Secrets → Actions 添加 GITEE_TOKEN（Gitee 私人令牌）
+#   - GitHub 仓库 Settings → Secrets → Actions 添加 GITEE_TOKEN（Gitee 私人令牌，可选）
 
 name: 构建与发布
 
@@ -93,6 +94,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
+    continue-on-error: true # GitHub Actions runner 访问 Gitee API 可能超时，不阻塞整体发布
     steps:
       - uses: actions/download-artifact@v4
         with:
