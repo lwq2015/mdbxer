@@ -120,42 +120,57 @@ fn make_row(
 /// 从 `first` 开始沿 `dir` 方向收集最多 `limit` 条。
 ///
 /// - `first`：起始项；None 表示表已空
+/// - `prefix`：Some 时仅收取以该字节串开头的 Key；遇到首个不匹配前缀的
+///   Key 即结束且 `has_more=false`（前缀区间连续，其后再无匹配项）
 fn collect(
     cursor: &mut libmdbx::Cursor<'_, libmdbx::RO>,
     grouped: bool,
     dir: Direction,
+    prefix: Option<&[u8]>,
     first: CursorItem,
     limit: usize,
 ) -> Result<Page, String> {
     let mut rows: Vec<Row> = Vec::with_capacity(limit.min(1024));
     let mut item = first;
+    let mut prefix_out = false;
     // 多取 1 条用于判断 has_more
     while let Some((key, value)) = item {
+        if let Some(p) = prefix {
+            if !key.starts_with(p) {
+                prefix_out = true;
+                break;
+            }
+        }
         rows.push(make_row(cursor, grouped, dir, key, value));
         if rows.len() > limit {
             break;
         }
         item = step(cursor, grouped, dir)?;
     }
-    let has_more = rows.len() > limit;
+    let has_more = !prefix_out && rows.len() > limit;
     rows.truncate(limit);
     Ok(Page { rows, has_more })
 }
 
-/// 从锚点（含）或表首/尾开始取一页。
+/// 从锚点（含）或表首/尾开始取一页，可附加 Key 前缀约束。
 ///
+/// - `prefix: Some` → 仅返回以该字节串开头的 Key：升序从 `set_lowerbound(prefix)`
+///   起步，降序从 `set_upperbound(prefix ++ 0xFF×64)`（前缀区间末位）起步；
+///   遍历时遇到首个不匹配前缀的 Key 即结束。前缀约束对 INTEGER_KEY 等表
+///   按**字节语义**生效。
 /// - `table`：None = 主表
 /// - `dup_sort`：true 时多值表按 Key 分组；false 逐条遍历
-/// - `anchor: None` → 从表首（Forward）或表尾（Backward）开始；
+/// - `anchor: None` → 从表首（Forward）或表尾（Backward）/前缀区间两端开始；
 /// - `anchor: Some` → 用 set_lowerbound 定位到锚点 Key（多值表落在其第一个值，
 ///   Key 不存在则落在其后第一个 Key）；
 /// - `skip_anchor: true` → 跳过锚点 Key 本身（用于"下一页/上一页"）。
 /// - `limit`：页大小（最多取 limit 条）
-pub fn fetch_page(
+pub fn fetch_page_prefix(
     db: &Database<NoWriteMap>,
     table: Option<&str>,
     dup_sort: bool,
     dir: Direction,
+    prefix: Option<&[u8]>,
     anchor: Option<&Anchor>,
     skip_anchor: bool,
     limit: usize,
@@ -165,9 +180,21 @@ pub fn fetch_page(
     let mut cursor = txn.cursor(&table).map_err(|e| e.to_string())?;
 
     let first: CursorItem = match anchor {
-        None => match dir {
-            Direction::Forward => cursor.first().map_err(|e| e.to_string())?,
-            Direction::Backward => cursor.last().map_err(|e| e.to_string())?,
+        None => match (dir, prefix) {
+            (Direction::Forward, None) => cursor.first().map_err(|e| e.to_string())?,
+            (Direction::Backward, None) => cursor.last().map_err(|e| e.to_string())?,
+            (Direction::Forward, Some(p)) => cursor
+                .set_lowerbound::<Vec<u8>, Vec<u8>>(p, None)
+                .map_err(|e| e.to_string())?
+                .map(|(_, k, v)| (k, v)),
+            (Direction::Backward, Some(p)) => {
+                // 前缀区间末位：≤ prefix ++ 0xFF.. 的最后一项即前缀内末位
+                let mut end = p.to_vec();
+                end.extend_from_slice(&[0xFF; 64]);
+                cursor
+                    .set_upperbound::<Vec<u8>, Vec<u8>>(&end)
+                    .map_err(|e| e.to_string())?
+            }
         },
         // 分组模式锚点只按 Key：多值表 None 表示落在该 Key 的第一个值。
         Some((key, _)) => cursor
@@ -180,7 +207,7 @@ pub fn fetch_page(
     } else {
         first
     };
-    collect(&mut cursor, dup_sort, dir, first, limit)
+    collect(&mut cursor, dup_sort, dir, prefix, first, limit)
 }
 
 /// 按方向定位到 `key`：升序用 set_lowerbound（≥key 首项），降序用 set_upperbound（≤key 末项）。
@@ -228,7 +255,7 @@ pub fn jump_to(
             }
         }
     };
-    collect(&mut cursor, dup_sort, dir, first, limit)
+    collect(&mut cursor, dup_sort, dir, None, first, limit)
 }
 
 /// 读取某个 key 的多值：返回 (值总数, 指定页的值列表)。

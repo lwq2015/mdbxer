@@ -76,6 +76,36 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         }
 
         ui.separator();
+        // Key 搜索：回车生效；→ 跳转定位 / ⊂ 前缀过滤
+        let sresp = ui.add(
+            egui::TextEdit::singleline(&mut app.key_search_input)
+                .desired_width(140.0)
+                .hint_text(t.key_search_hint),
+        );
+        if sresp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            app.apply_key_search();
+        }
+        if ui
+            .button(if app.key_filter_mode { "⊂" } else { "→" })
+            .on_hover_text(t.key_search_mode_tip)
+            .clicked()
+        {
+            app.key_filter_mode = !app.key_filter_mode;
+        }
+        if app.key_filter.is_some() {
+            ui.label(
+                egui::RichText::new(t.filter_active).color(ui.visuals().warn_fg_color),
+            );
+            if ui
+                .button("×")
+                .on_hover_text(t.filter_clear_tip)
+                .clicked()
+            {
+                app.clear_key_search();
+            }
+        }
+
+        ui.separator();
         let resp = ui.add(
             egui::TextEdit::singleline(&mut app.jump_input)
                 .desired_width(88.0)

@@ -268,6 +268,12 @@ pub struct MdbxerApp {
     pub selected_row: Option<usize>,
     /// Key 跳转输入框内容
     pub jump_input: String,
+    /// Key 搜索输入框内容（跳转 / 前缀过滤共用）
+    pub key_search_input: String,
+    /// 当前生效的 Key 前缀过滤（None = 未过滤）
+    pub key_filter: Option<Vec<u8>>,
+    /// Key 搜索模式：false = 跳转定位；true = 前缀过滤
+    pub key_filter_mode: bool,
     /// Key 列解码格式（默认自动；编码固定的表可手动指定）
     pub key_mode: DecodeMode,
     /// Value 列解码格式（默认自动：Value 逐行猜测）
@@ -326,6 +332,9 @@ impl MdbxerApp {
             at_end: true,
             selected_row: None,
             jump_input: String::new(),
+            key_search_input: String::new(),
+            key_filter: None,
+            key_filter_mode: false,
             key_mode: DecodeMode::Auto,
             val_mode: DecodeMode::Auto,
             endian: crate::fmt::Endian::Little,
@@ -436,6 +445,8 @@ impl MdbxerApp {
                 self.stat_cache = None;
                 self.env_cache = None;
                 self.selected_table = if n > 0 { Some(0) } else { None };
+                self.key_search_input.clear();
+                self.key_filter = None;
                 self.status = Status::Opened {
                     file_mode,
                     n,
@@ -467,6 +478,8 @@ impl MdbxerApp {
         self.selected_row = None;
         self.stat_cache = None;
         self.env_cache = None;
+        self.key_search_input.clear();
+        self.key_filter = None;
         self.detail.clear();
         self.status = Status::Closed;
     }
@@ -498,8 +511,17 @@ impl MdbxerApp {
         let name = table.name.clone();
         let dup_sort = table.dup_sort;
         let page_size = self.page_size;
-        match db::fetch_page(&dbh.db, name.as_deref(), dup_sort, dir, anchor, skip_anchor, page_size)
-        {
+        let prefix = self.key_filter.clone();
+        match db::fetch_page_prefix(
+            &dbh.db,
+            name.as_deref(),
+            dup_sort,
+            dir,
+            prefix.as_deref(),
+            anchor,
+            skip_anchor,
+            page_size,
+        ) {
             Ok(page) => {
                 let len = page.rows.len();
                 let has_more = page.has_more;
@@ -528,6 +550,8 @@ impl MdbxerApp {
     pub fn select_table(&mut self, index: usize) {
         self.selected_table = Some(index);
         self.stat_cache = None;
+        self.key_search_input.clear();
+        self.key_filter = None;
         self.load_first_page();
     }
 
@@ -617,6 +641,8 @@ impl MdbxerApp {
                 return;
             }
         };
+        // 跳转是在全表任意定位，与前缀过滤互斥：跳转即清除过滤
+        self.key_filter = None;
         let Some(dbh) = self.db.as_ref() else { return };
         let Some(table) = self.cur_table() else { return };
         let name = table.name.clone();
@@ -641,6 +667,37 @@ impl MdbxerApp {
                 self.status = Status::Msg(crate::i18n::tr().jump_fail(&e));
             }
         }
+    }
+
+    /// Key 搜索：跳转模式复用 [`Self::jump`] 定位；前缀过滤模式只显示以输入
+    /// 开头的 Key（文本或 hex(...)/0x... 输入，按字节语义匹配）。
+    pub fn apply_key_search(&mut self) {
+        let input = self.key_search_input.trim().to_string();
+        if input.is_empty() {
+            return;
+        }
+        if !self.key_filter_mode {
+            // 跳转模式：语义与跳转框一致（INTEGER_KEY 表接受十进制）
+            self.jump_input = input;
+            self.jump();
+            return;
+        }
+        match parse_bytes_input(&input) {
+            Ok(bytes) => {
+                self.key_filter = Some(bytes);
+                self.load_first_page();
+            }
+            Err(e) => {
+                self.status = Status::Msg(crate::i18n::tr().key_search_bad(&e));
+            }
+        }
+    }
+
+    /// 清除 Key 前缀过滤并回到全表首页。
+    pub fn clear_key_search(&mut self) {
+        self.key_filter = None;
+        self.key_search_input.clear();
+        self.load_first_page();
     }
 
     // ── 多值 ────────────────────────────────────────────────────

@@ -197,6 +197,14 @@ pub struct I18n {
     pub seg_range_t: &'static str,
     pub seg_bad: &'static str,
 
+    // ── Key 搜索工具条 ──
+    pub key_search_hint: &'static str,
+    pub key_search_mode_tip: &'static str,
+    pub filter_active: &'static str,
+    pub filter_clear_tip: &'static str,
+    /// {e}
+    pub key_search_bad_t: &'static str,
+
     // ── 应用状态消息（模板）──
     /// {mode} {n} {path}
     pub open_ok_t: &'static str,
@@ -479,6 +487,10 @@ impl I18n {
     pub fn open_env_fail(&self, e: &str) -> String {
         fill(self.open_env_fail_t, &[("e", e)])
     }
+
+    pub fn key_search_bad(&self, e: &str) -> String {
+        fill(self.key_search_bad_t, &[("e", e)])
+    }
 }
 
 /// 中文（基准语言）。
@@ -577,6 +589,12 @@ const ZH: I18n = I18n {
     seg_ok_t: "已跳至偏移 {off}（0x{hex}）",
     seg_range_t: "偏移超出范围：{v}（共 {total} 字节）",
     seg_bad: "请输入十进制偏移，或 0x 开头的十六进制偏移",
+
+    key_search_hint: "搜索 Key：文本或 hex(...)",
+    key_search_mode_tip: "→ 跳转：定位到首个不小于输入的 Key；⊂ 前缀过滤：只显示以输入开头的 Key（回车生效）",
+    filter_active: "已过滤",
+    filter_clear_tip: "清除 Key 前缀过滤，恢复显示全表",
+    key_search_bad_t: "搜索输入错误：{e}",
 
     open_ok_t: "已打开（{mode}模式，{n} 个表）：{path}",
     open_no_tables_t: "已打开但没有任何数据表：{path}",
@@ -753,6 +771,12 @@ const EN: I18n = I18n {
     seg_range_t: "Offset out of range: {v} ({total} bytes)",
     seg_bad: "Enter a decimal offset, or hexadecimal prefixed with 0x",
 
+    key_search_hint: "Search keys: text or hex(...)",
+    key_search_mode_tip: "→ Jump: locate the first key ≥ input; ⊂ Prefix: show only keys starting with the input (Enter to apply)",
+    filter_active: "filtered",
+    filter_clear_tip: "Clear the key prefix filter and show the whole table",
+    key_search_bad_t: "Invalid search input: {e}",
+
     open_ok_t: "Opened ({mode} mode, {n} tables): {path}",
     open_no_tables_t: "Opened, but it contains no data tables: {path}",
     read_fail_t: "Read failed: {e}",
@@ -928,6 +952,12 @@ const RU: I18n = I18n {
     seg_range_t: "Смещение вне диапазона: {v} ({total} байт)",
     seg_bad: "Введите десятичное смещение или шестнадцатеричное с префиксом 0x",
 
+    key_search_hint: "Поиск ключей: текст или hex(...)",
+    key_search_mode_tip: "→ Переход: первый ключ ≥ ввода; ⊂ Префикс: только ключи, начинающиеся с ввода (Enter — применить)",
+    filter_active: "отфильтровано",
+    filter_clear_tip: "Сбросить фильтр по префиксу ключа и показать всю таблицу",
+    key_search_bad_t: "Неверный запрос поиска: {e}",
+
     open_ok_t: "Открыто (режим: {mode}, таблиц: {n}): {path}",
     open_no_tables_t: "Открыто, но таблиц данных нет: {path}",
     read_fail_t: "Ошибка чтения: {e}",
@@ -1087,6 +1117,19 @@ mod tests {
             assert!(!table.tables_title.is_empty());
             assert!(!table.detail_select_hint.is_empty());
             assert!(!table.dup_tip_first.is_empty());
+        }
+    }
+
+    #[test]
+    fn all_tables_have_key_search_fields() {
+        for table in &TABLES {
+            assert!(!table.key_search_hint.is_empty());
+            assert!(!table.key_search_mode_tip.is_empty());
+            assert!(!table.filter_active.is_empty());
+            assert!(!table.filter_clear_tip.is_empty());
+            assert!(!table.key_search_bad_t.is_empty());
+            assert!(table.key_search_bad_t.contains("{e}"));
+            assert!(table.key_search_bad("oops").contains("oops"));
         }
     }
 }
