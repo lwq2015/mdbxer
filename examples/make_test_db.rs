@@ -113,6 +113,28 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
                 .flat_map(|u| u.to_le_bytes())
                 .collect(),
         ),
+        // ── 新格式：base64 / uuid / json ──
+        // 手动切到 Base64 排版时，值应显示为 SGVsbG8sIE1EQlgh
+        (b"base64_hello", b"Hello, MDBX!".to_vec()),
+        // 手动切到 Uuid 排版时，应显示 550e8400-e29b-41d4-a716-446655440000
+        (
+            b"uuid_sample",
+            vec![
+                0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4, 0xa7, 0x16, 0x44, 0x66, 0x55,
+                0x44, 0x00, 0x00,
+            ],
+        ),
+        // 手动切到 Json 排版时，应 pretty-print 为合法 JSON
+        (
+            b"json_object",
+            br#"{"name":"mdbx","version":1,"tags":["fast","embedded"]}"#.to_vec(),
+        ),
+        (
+            b"json_array",
+            br#"[1,2,3,{"nested":true}]"#.to_vec(),
+        ),
+        // 非法 JSON：手动 Json 排版时应原样回退为文本
+        (b"json_invalid", b"not a json string".to_vec()),
     ];
     let entries: Vec<(&[u8], Vec<u8>)> = entries
         .into_iter()
