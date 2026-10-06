@@ -621,7 +621,7 @@ const ZH: I18n = I18n {
     seg_bad: "请输入十进制偏移，或 0x 开头的十六进制偏移",
 
     key_search_hint: "搜索 Key：文本或 hex(...)",
-    key_search_mode_tip: "→ 跳转：定位到首个不小于输入的 Key；⊂ 前缀过滤：只显示以输入开头的 Key（回车生效）",
+    key_search_mode_tip: "→ 跳转：定位到首个不小于输入的 Key；∈ 前缀过滤：只显示以输入开头的 Key（回车生效）",
     filter_active: "已过滤",
     filter_clear_tip: "清除 Key 前缀过滤，恢复显示全表",
     key_search_bad_t: "搜索输入错误：{e}",
@@ -668,7 +668,7 @@ const ZH: I18n = I18n {
     padded: "（补零）",
     uuid_bad_len: "（非 16 字节）",
     guess_empty_label: "空",
-    guess_empty_sym: "∅ 空",
+    guess_empty_sym: "空",
     guess_utf8: "UTF-8 文本",
     guess_binary: "二进制",
 
@@ -815,7 +815,7 @@ const EN: I18n = I18n {
     seg_bad: "Enter a decimal offset, or hexadecimal prefixed with 0x",
 
     key_search_hint: "Search keys: text or hex(...)",
-    key_search_mode_tip: "→ Jump: locate the first key ≥ input; ⊂ Prefix: show only keys starting with the input (Enter to apply)",
+    key_search_mode_tip: "→ Jump: locate the first key ≥ input; ∈ Prefix: show only keys starting with the input (Enter to apply)",
     filter_active: "filtered",
     filter_clear_tip: "Clear the key prefix filter and show the whole table",
     key_search_bad_t: "Invalid search input: {e}",
@@ -862,7 +862,7 @@ const EN: I18n = I18n {
     padded: "(zero-padded)",
     uuid_bad_len: "(not 16 bytes)",
     guess_empty_label: "Empty",
-    guess_empty_sym: "∅ empty",
+    guess_empty_sym: "empty",
     guess_utf8: "UTF-8 text",
     guess_binary: "Binary",
 
@@ -1009,7 +1009,7 @@ const RU: I18n = I18n {
     seg_bad: "Введите десятичное смещение или шестнадцатеричное с префиксом 0x",
 
     key_search_hint: "Поиск ключей: текст или hex(...)",
-    key_search_mode_tip: "→ Переход: первый ключ ≥ ввода; ⊂ Префикс: только ключи, начинающиеся с ввода (Enter — применить)",
+    key_search_mode_tip: "→ Переход: первый ключ ≥ ввода; ∈ Префикс: только ключи, начинающиеся с ввода (Enter — применить)",
     filter_active: "отфильтровано",
     filter_clear_tip: "Сбросить фильтр по префиксу ключа и показать всю таблицу",
     key_search_bad_t: "Неверный запрос поиска: {e}",
@@ -1056,7 +1056,7 @@ const RU: I18n = I18n {
     padded: "(доп. нулями)",
     uuid_bad_len: "(не 16 байт)",
     guess_empty_label: "Пусто",
-    guess_empty_sym: "∅ пусто",
+    guess_empty_sym: "пусто",
     guess_utf8: "Текст UTF-8",
     guess_binary: "Бинарный",
 

@@ -76,7 +76,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         }
 
         ui.separator();
-        // Key 搜索：回车生效；→ 跳转定位 / ⊂ 前缀过滤
+        // Key 搜索：回车生效；→ 跳转定位 / ∈ 前缀过滤
+        // （∈ U+2208 雅黑有字形；⊂ U+2282 仅 Hack 有，Proportional 链不含 Hack 会豆腐块）
         let sresp = ui.add(
             egui::TextEdit::singleline(&mut app.key_search_input)
                 .desired_width(140.0)
@@ -86,7 +87,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             app.apply_key_search();
         }
         if ui
-            .button(if app.key_filter_mode { "⊂" } else { "→" })
+            .button(if app.key_filter_mode { "∈" } else { "→" })
             .on_hover_text(t.key_search_mode_tip)
             .clicked()
         {
