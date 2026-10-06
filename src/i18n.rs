@@ -729,7 +729,7 @@ const ZH: I18n = I18n {
     about_os_arch: "系统 / 架构",
     about_config: "配置文件",
     about_history: "历史记录文件",
-    about_thanks: "特别致谢 Trae（AI 编程助手）——本工具的全部代码、测试与文档均由 Trae 协助完成，功劳归于 Trae。同时致敬 libmdbx 作者 Leonid Yuriev，以及 egui / eframe 项目。",
+    about_thanks: "特别致谢 Trae（AI 编程助手）——本工具的全部代码、测试与文档均由 Trae 协助完成，功劳归于 Trae。同时致敬 libmdbx 作者 Leonid Yuriev、libmdbx-rs（vorot93 的 Rust 绑定），以及 egui / eframe 项目。",
     about_disclaimer: "本软件按“现状”提供，不附带任何明示或暗示的担保。虽然它仅以只读方式打开 MDBX 数据库，作者仍不对因使用本软件导致的任何数据损坏或损失承担责任。打开重要数据库前请自行做好备份。",
     about_open_link_tip: "在浏览器中打开",
 
@@ -953,7 +953,7 @@ const EN: I18n = I18n {
     about_os_arch: "OS / Architecture",
     about_config: "Config file",
     about_history: "History file",
-    about_thanks: "Special thanks to Trae (AI coding assistant) — every line of code, test and documentation in this tool was created with Trae; all the credit goes to Trae. Also tribute to Leonid Yuriev for libmdbx, and to the egui / eframe project.",
+    about_thanks: "Special thanks to Trae (AI coding assistant) — every line of code, test and documentation in this tool was created with Trae; all the credit goes to Trae. Also tribute to Leonid Yuriev for libmdbx, to libmdbx-rs (the Rust binding by vorot93), and to the egui / eframe project.",
     about_disclaimer: "This software is provided \"AS IS\" without any express or implied warranty. Although it opens MDBX databases read-only, the author is not liable for any data corruption or loss caused by using this software. Back up important databases before opening them.",
     about_open_link_tip: "Open in browser",
 
@@ -1177,7 +1177,7 @@ const RU: I18n = I18n {
     about_os_arch: "ОС / Архитектура",
     about_config: "Файл настроек",
     about_history: "Файл истории",
-    about_thanks: "Особая благодарность Trae (ИИ-помощнику для программирования) — весь код, тесты и документация этого инструмента созданы при помощи Trae, вся заслуга принадлежит Trae. Также благодарим Леонида Юрьева за libmdbx и проект egui / eframe.",
+    about_thanks: "Особая благодарность Trae (ИИ-помощнику для программирования) — весь код, тесты и документация этого инструмента созданы при помощи Trae, вся заслуга принадлежит Trae. Также благодарим Леонида Юрьева за libmdbx, привязку libmdbx-rs (Rust-биндинг от vorot93) и проект egui / eframe.",
     about_disclaimer: "Программа поставляется «КА ЕСТЬ», без каких-либо явных или подразумеваемых гарантий. Хотя она открывает базы MDBX только для чтения, автор не несёт ответственности за любое повреждение или потерю данных при использовании программы. Перед открытием важных баз делайте резервные копии.",
     about_open_link_tip: "Открыть в браузере",
 
