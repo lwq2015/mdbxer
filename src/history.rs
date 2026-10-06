@@ -72,6 +72,34 @@ impl History {
         }
     }
 
+    /// 按路径删除匹配条目（打开失败、路径已不存在时自动清理），写盘。
+    /// Windows 下文件路径不区分大小写与斜杠方向，比较时一并归一；
+    /// 不存在的路径无法 canonicalize，调用方应先尽力转为绝对路径。
+    /// 返回是否删除了条目。
+    pub fn remove_path(&mut self, path: &str) -> bool {
+        #[cfg(windows)]
+        fn same(a: &str, b: &str) -> bool {
+            let norm = |s: &str| {
+                s.trim_end_matches(['\\', '/'])
+                    .replace('/', "\\")
+                    .to_ascii_lowercase()
+            };
+            norm(a) == norm(b)
+        }
+        #[cfg(not(windows))]
+        fn same(a: &str, b: &str) -> bool {
+            a == b
+        }
+        let before = self.entries.len();
+        self.entries.retain(|e| !same(&e.path, path));
+        if self.entries.len() != before {
+            self.save();
+            true
+        } else {
+            false
+        }
+    }
+
     /// 写盘失败静默忽略（历史退化为本次会话内存记录）。
     fn save(&self) {
         if let Some(f) = &self.file {
@@ -170,6 +198,28 @@ mod tests {
         assert_eq!(h.entries.len(), 1);
         h.remove(0);
         h.remove(0); // 已空，忽略
+        assert!(h.entries.is_empty());
+    }
+
+    #[test]
+    fn remove_path_deletes_match_and_reports() {
+        let (mut h, _) = temp_history();
+        h.add("/a", "file");
+        h.add("/b", "dir");
+        assert!(h.remove_path("/b"));
+        assert_eq!(h.entries.len(), 1);
+        assert_eq!(h.entries[0].path, "/a");
+        assert!(!h.remove_path("/missing"));
+        assert_eq!(h.entries.len(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn remove_path_case_and_slash_insensitive_on_windows() {
+        let (mut h, _) = temp_history();
+        h.add(r"C:\Data\DB", "file");
+        // 小写盘符 + 正斜杠 + 尾部分隔符，仍应命中
+        assert!(h.remove_path(r"c:/data/DB/"));
         assert!(h.entries.is_empty());
     }
 

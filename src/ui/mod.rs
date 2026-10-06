@@ -617,6 +617,12 @@ impl MdbxerApp {
                 }
             }
             Err(e) => {
+                // 路径已不存在：自动从历史移除（相对路径先尽力绝对化以便匹配）。
+                // 其他失败（占用、格式不符等）可能是暂时的，保留历史。
+                if !std::path::Path::new(&path).exists() {
+                    let abs = absolutize_path(&path);
+                    self.history.remove_path(&abs);
+                }
                 self.status = Status::Msg(e);
             }
         }
@@ -667,6 +673,8 @@ impl MdbxerApp {
             return;
         };
         if !std::path::Path::new(&path).exists() {
+            // 上次的库已不在：顺手清理失效历史项，避免下拉里残留
+            self.history.remove_path(&path);
             return;
         }
         self.open_mode = OpenMode::Auto;
@@ -1440,6 +1448,27 @@ fn key_hex(key: &[u8]) -> String {
 fn normalize_path(path: &str) -> String {
     let p = std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
     let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s.into_owned()
+    }
+}
+
+/// 尽力把路径转为绝对形式（不要求路径存在，故不能用 canonicalize）。
+/// 用于打开失败时与历史记录（均为 canonicalize 绝对路径）匹配。
+fn absolutize_path(path: &str) -> String {
+    let p = std::path::Path::new(path);
+    let abs = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|d| d.join(p))
+            .unwrap_or_else(|_| p.to_path_buf())
+    };
+    let s = abs.to_string_lossy();
     if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")
     } else if let Some(rest) = s.strip_prefix(r"\\?\") {
