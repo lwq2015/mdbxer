@@ -321,10 +321,21 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(t.hex_view);
-                    let mut hex_pref_changed =
-                        ui.checkbox(&mut app.detail.show_addr, t.addr).changed()
-                            | ui.checkbox(&mut app.detail.show_hex, "HEX").changed()
-                            | ui.checkbox(&mut app.detail.show_ascii, "ASCII").changed();
+                    // HEX 与 ASCII 至少保留一项：只剩一项时该项变灰、不可取消；
+                    // 即只有另一项仍勾选时，才允许关掉这一项。
+                    let mut hex_pref_changed = ui.checkbox(&mut app.detail.show_addr, t.addr).changed()
+                        | ui
+                            .add_enabled(
+                                app.detail.show_ascii,
+                                egui::Checkbox::new(&mut app.detail.show_hex, "HEX"),
+                            )
+                            .changed()
+                        | ui
+                            .add_enabled(
+                                app.detail.show_hex,
+                                egui::Checkbox::new(&mut app.detail.show_ascii, "ASCII"),
+                            )
+                            .changed();
                     ui.separator();
                     ui.label(t.width);
                     let mut w = app.detail.hex_width;

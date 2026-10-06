@@ -411,6 +411,10 @@ impl MdbxerApp {
         detail.show_addr = prefs.show_addr.unwrap_or(true);
         detail.show_hex = prefs.show_hex.unwrap_or(true);
         detail.show_ascii = prefs.show_ascii.unwrap_or(true);
+        // 脏配置兜底：HEX/ASCII 至少保留一项（手动改错配置文件时）
+        if !detail.show_hex && !detail.show_ascii {
+            detail.show_hex = true;
+        }
         detail.hex_width = hex_width;
         // 详情卡片排版独立，启动默认 Auto（不跟随表格排版偏好）。
         let table_sort = prefs
