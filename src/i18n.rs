@@ -649,7 +649,7 @@ const ZH: I18n = I18n {
     bytes_t: "{n} 字节",
     section_text: "文本",
     section_hex: "十六进制",
-    hex_hint: "拖拽选择字节（HEX 与 ASCII 联动高亮）；Ctrl+C 按起手列复制——从 HEX 起手复制按行换行的十六进制，从 ASCII 起手复制原文；Esc 清除选区",
+    hex_hint: "拖拽选择字节（HEX 与 ASCII 联动高亮）；Ctrl+C 按起手列复制——从 HEX 起手复制按行换行的十六进制，从 ASCII 起手复制原文；Esc 或右键单击清除选区",
 
     dup_located_t: "已定位到第 {i}/{total} 个值",
     dup_wrap_t: "已回绕定位到第 {i}/{total} 个值",
@@ -874,7 +874,7 @@ const EN: I18n = I18n {
     bytes_t: "{n} bytes",
     section_text: "Text",
     section_hex: "Hex",
-    hex_hint: "Drag to select bytes (HEX and ASCII highlight together); Ctrl+C copies by the drag-start column — start on HEX for line-broken hex, start on ASCII for raw text; Esc clears the selection",
+    hex_hint: "Drag to select bytes (HEX and ASCII highlight together); Ctrl+C copies by the drag-start column — start on HEX for line-broken hex, start on ASCII for raw text; Esc or right-click clears the selection",
 
     dup_located_t: "At value {i}/{total}",
     dup_wrap_t: "Wrapped to value {i}/{total}",
@@ -1099,7 +1099,7 @@ const RU: I18n = I18n {
     bytes_t: "{n} байт",
     section_text: "Текст",
     section_hex: "Hex",
-    hex_hint: "Перетащите для выбора байт (HEX и ASCII подсвечиваются вместе); Ctrl+C копирует по столбцу начала перетаскивания — с HEX: hex с переносами строк, с ASCII: исходный текст; Esc снимает выделение",
+    hex_hint: "Перетащите для выбора байт (HEX и ASCII подсвечиваются вместе); Ctrl+C копирует по столбцу начала перетаскивания — с HEX: hex с переносами строк, с ASCII: исходный текст; Esc или правая кнопка мыши снимают выделение",
 
     dup_located_t: "Значение {i}/{total}",
     dup_wrap_t: "С переходом к значению {i}/{total}",

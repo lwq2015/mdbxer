@@ -274,11 +274,21 @@ pub(crate) fn hex_view(
         }
         ui.ctx().data_mut(|d| d.remove_temp::<Option<Drag>>(id));
     }
+    // 右键一律清除选区（Esc 的兜底：egui begin_pass 会先于帧逻辑清掉焦点）
+    if resp.secondary_clicked() {
+        *sel = None;
+        ui.ctx().data_mut(|d| d.remove_temp::<DragCol>(col_id));
+    }
 
     // ── 键盘：聚焦时 Ctrl+C 按起手列复制（HEX=按显示行换行的十六进制，
     //    ASCII=字节原文连续文本），Esc 清除选区 ──
+    // 注意：egui 在每帧 begin_pass 处理原始事件时，一旦发现无修饰 Esc 会立即
+    // 清空 focused_widget（memory/mod.rs Focus::begin_pass），所以这一帧
+    // focused() 已经是 None。要用 resp.lost_focus()（比较上一帧焦点）+
+    // key_pressed(Escape) 才能识别"焦点在本组件时按下了 Esc"。
+    let escape_pressed = ui.input(|i| i.key_pressed(egui::Key::Escape));
     let focused = ui.ctx().memory(|m| m.focused() == Some(id));
-    if focused {
+    if focused || (escape_pressed && resp.lost_focus()) {
         let copy = ui.input(|i| {
             i.events
                 .iter()
@@ -317,7 +327,7 @@ pub(crate) fn hex_view(
                 ui.ctx().copy_text(text);
             }
         }
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if escape_pressed && resp.lost_focus() {
             *sel = None;
             ui.ctx().data_mut(|d| d.remove_temp::<DragCol>(col_id));
         }
