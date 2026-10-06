@@ -105,10 +105,7 @@ pub struct I18n {
     pub panel_tables: &'static str,
     pub panel_detail: &'static str,
 
-    // ── 打开模式 ──
-    pub m_auto: &'static str,
-    pub m_file: &'static str,
-    pub m_dir: &'static str,
+    // ── 打开模式（状态栏显示用） ──
     pub mode_file: &'static str,
     pub mode_dir: &'static str,
 
@@ -583,9 +580,6 @@ const ZH: I18n = I18n {
     panel_tables: "表",
     panel_detail: "详情",
 
-    m_auto: "自动",
-    m_file: "单文件",
-    m_dir: "目录",
     mode_file: "单文件模式",
     mode_dir: "目录模式",
 
@@ -808,9 +802,6 @@ const EN: I18n = I18n {
     panel_tables: "Tables",
     panel_detail: "Detail",
 
-    m_auto: "Auto",
-    m_file: "File",
-    m_dir: "Folder",
     mode_file: "File mode",
     mode_dir: "Folder mode",
 
@@ -1033,9 +1024,6 @@ const RU: I18n = I18n {
     panel_tables: "Таблицы",
     panel_detail: "Детали",
 
-    m_auto: "Авто",
-    m_file: "Файл",
-    m_dir: "Папка",
     mode_file: "Файловый режим",
     mode_dir: "Режим каталога",
 

@@ -27,18 +27,6 @@ pub enum OpenMode {
 }
 
 impl OpenMode {
-    pub const ALL: [OpenMode; 3] = [OpenMode::Auto, OpenMode::SingleFile, OpenMode::Directory];
-
-    /// 下拉框显示文本（随界面语言）。
-    pub fn label(self) -> String {
-        let t = crate::i18n::tr();
-        match self {
-            OpenMode::Auto => t.m_auto.to_string(),
-            OpenMode::SingleFile => t.m_file.to_string(),
-            OpenMode::Directory => t.m_dir.to_string(),
-        }
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
             OpenMode::Auto => "auto",
@@ -62,7 +50,7 @@ mod tests {
 
     #[test]
     fn open_mode_as_str_from_str_round_trip() {
-        for m in OpenMode::ALL {
+        for m in [OpenMode::Auto, OpenMode::SingleFile, OpenMode::Directory] {
             assert_eq!(OpenMode::from_str(m.as_str()), m);
         }
     }
@@ -76,21 +64,5 @@ mod tests {
     #[test]
     fn open_mode_default_is_auto() {
         assert_eq!(OpenMode::default(), OpenMode::Auto);
-    }
-
-    #[test]
-    fn open_mode_all_has_three() {
-        assert_eq!(OpenMode::ALL.len(), 3);
-    }
-
-    #[test]
-    fn open_mode_label_follows_lang() {
-        let prev = crate::i18n::lang();
-        crate::i18n::set_lang(crate::i18n::Lang::Zh);
-        let t = crate::i18n::tr();
-        assert_eq!(OpenMode::Auto.label(), t.m_auto);
-        assert_eq!(OpenMode::SingleFile.label(), t.m_file);
-        assert_eq!(OpenMode::Directory.label(), t.m_dir);
-        crate::i18n::set_lang(prev);
     }
 }

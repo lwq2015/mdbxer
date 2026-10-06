@@ -10,23 +10,14 @@ use crate::db::OpenMode;
 use crate::fmt::{DecodeMode, Endian};
 use crate::i18n::{self, Lang};
 
-/// 顶栏面板：打开模式/历史 + 文件/目录按钮 + 字节序/排版/单元格 + 表/详情开关 + 语言。
+/// 顶栏面板：文件/目录/关闭 + 历史 + 字节序/排版/单元格 + 表/详情开关 + 语言。
+/// 打开模式不显示选择器：由各打开入口（文件钮=单文件、目录钮=目录、历史=记录值、拖入=自动）自行确定。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let t = i18n::tr().clone();
     egui::Panel::top("top_bar").show(ui, |ui| {
         ui.horizontal(|ui| {
-            let mut mode = app.open_mode;
-            let ir = egui::ComboBox::from_id_salt("open_mode")
-                .width(70.0)
-                .selected_text(mode.label())
-                .show_ui(ui, |ui| {
-                    for m in OpenMode::ALL {
-                        ui.selectable_value(&mut mode, m, m.label());
-                    }
-                });
-            super::wheel_cycle(ui.ctx(), &ir.response, &OpenMode::ALL, &mut mode);
-            app.open_mode = mode;
-
+            // 打开模式不在界面上选择：文件/目录按钮、历史记录、拖入、Ctrl+O
+            // 各入口会自行设置 open_mode（自动/单文件/目录），无需用户手动指定。
             if ui.button(t.btn_file).clicked() {
                 if let Some(p) = rfd::FileDialog::new()
                     .add_filter("MDBX", &["mdbx", "dat", "*"])

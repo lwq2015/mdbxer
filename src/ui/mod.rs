@@ -55,7 +55,7 @@ impl Status {
         match self {
             Status::Ready => t.ready.to_string(),
             Status::Opened { file_mode, n, path } => {
-                let mode = if *file_mode { t.m_file } else { t.m_dir };
+                let mode = if *file_mode { t.mode_file } else { t.mode_dir };
                 t.open_ok(mode, *n, path)
             }
             Status::NoTables(path) => t.open_no_tables(path),
