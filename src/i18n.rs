@@ -156,6 +156,7 @@ pub struct I18n {
     pub addr: &'static str,
     pub width: &'static str,
     pub copy: &'static str,
+    pub copied_row: &'static str,
     pub save_as: &'static str,
     pub save_tip: &'static str,
     pub seg_prev_tip: &'static str,
@@ -239,6 +240,11 @@ pub struct I18n {
     pub jump_bad_t: &'static str,
     pub located: &'static str,
     pub not_found_ge: &'static str,
+    pub searching_value: &'static str,
+    /// {n}
+    pub searching_value_progress_t: &'static str,
+    pub value_found: &'static str,
+    pub value_not_found: &'static str,
     /// {e}
     pub jump_fail_t: &'static str,
     /// {n} {path}
@@ -438,6 +444,10 @@ impl I18n {
         )
     }
 
+    pub fn searching_value_progress(&self, n: usize) -> String {
+        fill(self.searching_value_progress_t, &[("n", &n.to_string())])
+    }
+
     pub fn dup_wrap(&self, i: usize, total: usize) -> String {
         fill(
             self.dup_wrap_t,
@@ -589,6 +599,7 @@ const ZH: I18n = I18n {
     addr: "地址",
     width: "宽度",
     copy: "复制",
+    copied_row: "已复制选中行",
     save_as: "另存…",
     save_tip: "把完整原始字节保存为文件（不做任何截断）",
     seg_prev_tip: "上一段（64 KiB）",
@@ -627,7 +638,7 @@ const ZH: I18n = I18n {
     toolbar_search_hint: "搜索：文本或 hex(...)",
     key_search_mode_tip: "跳转模式：定位到首个不小于输入的 Key；过滤模式：只显示以输入开头的 Key（回车生效）",
     key_search_btn_tip: "搜索 Key（跳转或前缀过滤）",
-    value_search_btn_tip: "搜索 Value（当前页内文本包含，大小写不敏感）",
+    value_search_btn_tip: "搜索 Value：左键=当前页过滤，右键=全表扫描定位",
     filter_active: "已过滤",
     filter_clear_tip: "清除搜索过滤（Key 前缀 + Value 文本），恢复显示全表",
     key_search_bad_t: "搜索输入错误：{e}",
@@ -652,6 +663,10 @@ const ZH: I18n = I18n {
     jump_bad_t: "跳转输入错误：{e}",
     located: "已定位",
     not_found_ge: "未找到不小于该 key 的记录",
+    searching_value: "正在全表搜索 Value…",
+    searching_value_progress_t: "已扫描 {n} 条…",
+    value_found: "已找到匹配项",
+    value_not_found: "未找到匹配项",
     jump_fail_t: "跳转失败：{e}",
     export_ok_t: "已导出 {n} 字节到 {path}",
     export_fail_t: "导出失败：{e}",
@@ -784,6 +799,7 @@ const EN: I18n = I18n {
     addr: "Addr",
     width: "Width",
     copy: "Copy",
+    copied_row: "Row copied",
     save_as: "Save as…",
     save_tip: "Save the complete raw bytes to a file (no truncation)",
     seg_prev_tip: "Previous segment (64 KiB)",
@@ -822,7 +838,7 @@ const EN: I18n = I18n {
     toolbar_search_hint: "Search: text or hex(...)",
     key_search_mode_tip: "Jump mode: locate the first key >= input; Filter mode: show only keys starting with the input (Enter to apply)",
     key_search_btn_tip: "Search keys (jump or prefix filter)",
-    value_search_btn_tip: "Search values (current page, text contains, case-insensitive)",
+    value_search_btn_tip: "Search value: left=filter current page, right=full-table scan",
     filter_active: "filtered",
     filter_clear_tip: "Clear search filters (key prefix + value text), show the whole table",
     key_search_bad_t: "Invalid search input: {e}",
@@ -847,6 +863,10 @@ const EN: I18n = I18n {
     jump_bad_t: "Invalid jump input: {e}",
     located: "Located",
     not_found_ge: "No record found with a key greater than or equal to this one",
+    searching_value: "Searching all values…",
+    searching_value_progress_t: "Scanned {n} entries…",
+    value_found: "Match found",
+    value_not_found: "No match found",
     jump_fail_t: "Jump failed: {e}",
     export_ok_t: "Exported {n} bytes to {path}",
     export_fail_t: "Export failed: {e}",
@@ -979,6 +999,7 @@ const RU: I18n = I18n {
     addr: "Адр.",
     width: "Ширина",
     copy: "Копия",
+    copied_row: "Строка скопирована",
     save_as: "Сохранить…",
     save_tip: "Сохранить все исходные байты в файл (без обрезки)",
     seg_prev_tip: "Предыдущий сегмент (64 КиБ)",
@@ -1017,7 +1038,7 @@ const RU: I18n = I18n {
     toolbar_search_hint: "Поиск: текст или hex(...)",
     key_search_mode_tip: "Режим перехода: первый ключ >= ввода; режим фильтра: только ключи, начинающиеся с ввода (Enter — применить)",
     key_search_btn_tip: "Поиск ключей (переход или фильтр по префиксу)",
-    value_search_btn_tip: "Поиск значений (текущая страница, содержит текст, без учёта регистра)",
+    value_search_btn_tip: "Поиск значения: ЛКМ=фильтр по странице, ПКМ=поиск по всей таблице",
     filter_active: "отфильтровано",
     filter_clear_tip: "Сбросить фильтры поиска (префикс ключа + текст значения), показать всю таблицу",
     key_search_bad_t: "Неверный запрос поиска: {e}",
@@ -1042,6 +1063,10 @@ const RU: I18n = I18n {
     jump_bad_t: "Неверный ввод перехода: {e}",
     located: "Найдено",
     not_found_ge: "Не найдено записи с ключом больше или равным заданному",
+    searching_value: "Поиск по всем значениям…",
+    searching_value_progress_t: "Проверено {n} записей…",
+    value_found: "Совпадение найдено",
+    value_not_found: "Совпадений не найдено",
     jump_fail_t: "Ошибка перехода: {e}",
     export_ok_t: "Экспортировано {n} байт в {path}",
     export_fail_t: "Ошибка экспорта: {e}",

@@ -81,6 +81,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         // 符号取自 egui 内置字体 emoji-icon/NotoEmoji，跨平台不依赖系统字体
         let sresp = ui.add(
             egui::TextEdit::singleline(&mut app.search_input)
+                .id_salt("search_box")
                 .desired_width(160.0)
                 .hint_text(t.toolbar_search_hint),
         );
@@ -100,13 +101,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         if ui.button("K").on_hover_text(t.key_search_btn_tip).clicked() {
             app.apply_key_search();
         }
-        // 搜索 Value（当前页内文本包含过滤）
-        if ui
+        // 搜索 Value（左键：当前页内文本包含过滤；右键：全表扫描并定位）
+        let v_btn = ui
             .button("V")
-            .on_hover_text(t.value_search_btn_tip)
-            .clicked()
-        {
+            .on_hover_text(t.value_search_btn_tip);
+        if v_btn.clicked() {
             app.apply_value_search();
+        }
+        if v_btn.secondary_clicked() {
+            app.start_full_value_search();
         }
         // 过滤状态指示 + 清除
         if app.key_filter.is_some() || app.value_filter.is_some() {

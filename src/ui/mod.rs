@@ -247,6 +247,16 @@ impl TableSort {
     }
 }
 
+/// 全表 Value 搜索的运行状态。
+struct ValueSearchState {
+    /// 搜索词（小写，匹配时也将目标转小写比较）
+    needle: String,
+    /// 下一批续读锚点（None = 从头开始）
+    anchor: Option<db::RawAnchor>,
+    /// 已扫描条数（进度用）
+    checked: usize,
+}
+
 pub struct MdbxerApp {
     // ── 顶栏 ──
     /// 打开模式（自动/单文件/目录）
@@ -336,6 +346,9 @@ pub struct MdbxerApp {
     pub export_path: String,
     /// 导出格式选择
     pub export_format: crate::export::ExportFormat,
+    // ── 全表 Value 搜索 ──
+    /// 全表 Value 搜索状态（Some = 搜索进行中）
+    value_search: Option<ValueSearchState>,
     // ── 主题 / 收藏 ──
     /// 当前主题（true = 深色）
     pub dark_theme: bool,
@@ -444,6 +457,7 @@ impl MdbxerApp {
             export_count: 0,
             export_path: String::new(),
             export_format,
+            value_search: None,
             dark_theme: crate::config::load_theme() == crate::config::Theme::Dark,
             fav_tables: Vec::new(),
             fav_keys: Vec::new(),
@@ -600,6 +614,7 @@ impl MdbxerApp {
         self.export_batch_tx = None;
         self.export_ev_rx = None;
         self.export_anchor = None;
+        self.value_search = None;
         self.db = None;
         self.opened_path = None;
         self.rows.clear();
@@ -683,6 +698,8 @@ impl MdbxerApp {
 
     /// 页面加载完成后：选中首行（或清空选中）并加载右侧多值。
     fn after_load(&mut self) {
+        // rows 可能换了新数据（即使长度相同），强制重建 views 缓存
+        self.views_key = None;
         if self.rows.is_empty() {
             self.selected_row = None;
             self.detail.clear();
@@ -699,6 +716,7 @@ impl MdbxerApp {
         self.search_input.clear();
         self.key_filter = None;
         self.value_filter = None;
+        self.value_search = None;
         self.load_first_page();
         self.save_per_db();
     }
@@ -856,6 +874,189 @@ impl MdbxerApp {
     /// 清除 Value 页内过滤（不清空输入框）。
     pub fn clear_value_search(&mut self) {
         self.value_filter = None;
+    }
+
+    /// 全局快捷键：Ctrl+O 打开、Ctrl+F 聚焦搜索框、Ctrl+C 复制选中行、
+    /// Esc 清除过滤、PgUp/PgDn 翻页。
+    pub fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        let (ctrl, key) = ctx.input(|i| {
+            let ctrl = i.modifiers.command;
+            let mut key = None;
+            for k in [
+                egui::Key::O,
+                egui::Key::F,
+                egui::Key::C,
+                egui::Key::Escape,
+                egui::Key::PageUp,
+                egui::Key::PageDown,
+            ] {
+                if i.key_pressed(k) {
+                    key = Some(k);
+                    break;
+                }
+            }
+            (ctrl, key)
+        });
+        let Some(key) = key else { return };
+
+        match key {
+            egui::Key::O if ctrl => {
+                self.pick_file();
+            }
+            egui::Key::F if ctrl => {
+                ctx.memory_mut(|m| m.request_focus(egui::Id::new("search_box")));
+            }
+            egui::Key::C if ctrl => {
+                // 搜索框等文本编辑聚焦时，让 egui 处理选中文本复制
+                if ctx.memory(|m| m.focused().is_none()) {
+                    self.copy_selected_row(ctx);
+                }
+            }
+            egui::Key::Escape => {
+                self.clear_key_search();
+                self.clear_value_search();
+                self.cancel_value_search();
+            }
+            egui::Key::PageUp if !ctrl => {
+                self.load_prev_page();
+            }
+            egui::Key::PageDown if !ctrl => {
+                self.load_next_page();
+            }
+            _ => {}
+        }
+    }
+
+    /// 复制选中行的 Key 和 Value 到剪贴板（Tab 分隔）。
+    fn copy_selected_row(&mut self, ctx: &egui::Context) {
+        let Some(idx) = self.selected_row else { return };
+        self.refresh_views();
+        let Some(view) = self.views.get(idx) else { return };
+        let text = format!("{}\t{}", view.key_text, view.val_text);
+        ctx.copy_text(text);
+        self.status = Status::Msg(crate::i18n::tr().copied_row.to_string());
+    }
+
+    /// 弹出文件选择对话框打开库（按当前 open_mode 选文件或目录）。
+    fn pick_file(&mut self) {
+        let path = match self.open_mode {
+            OpenMode::SingleFile => rfd::FileDialog::new()
+                .add_filter("MDBX", &["mdbx", "dat", "*"])
+                .pick_file()
+                .map(|p| p.display().to_string()),
+            OpenMode::Directory | OpenMode::Auto => rfd::FileDialog::new()
+                .pick_folder()
+                .map(|p| p.display().to_string()),
+        };
+        if let Some(p) = path {
+            self.open_db(&p);
+        }
+    }
+
+    /// 开始全表 Value 搜索：逐批扫描全表，找到第一个 Value 显示文本包含
+    /// 搜索词的记录并定位到该行。搜索在 UI 线程分批执行，不阻塞界面。
+    pub fn start_full_value_search(&mut self) {
+        let needle = self.search_input.trim().to_string();
+        if needle.is_empty() {
+            return;
+        }
+        self.value_search = Some(ValueSearchState {
+            needle: needle.to_lowercase(),
+            anchor: None,
+            checked: 0,
+        });
+        self.status = Status::Msg(crate::i18n::tr().searching_value.to_string());
+    }
+
+    /// 取消进行中的全表 Value 搜索。
+    pub fn cancel_value_search(&mut self) {
+        self.value_search = None;
+    }
+
+    /// 每帧驱动全表 Value 搜索：读一批、检查匹配、找到则定位。
+    pub fn poll_value_search(&mut self) {
+        let Some(mut state) = self.value_search.take() else { return };
+        let Some(dbh) = self.db.as_ref() else { return };
+        let Some(table) = self.cur_table() else { return };
+        let name = table.name.clone();
+        let dup_sort = table.dup_sort;
+        let dir = self.sort_dir();
+        let needle = state.needle.clone();
+        let anchor = state.anchor.clone();
+        let val_mode = self.val_mode;
+        let endian = self.endian;
+        let page_size = self.page_size;
+
+        const BATCH: usize = 500;
+        let batch = match db::fetch_raw_batch(
+            &dbh.db,
+            name.as_deref(),
+            dup_sort,
+            dir,
+            anchor.as_ref(),
+            anchor.is_some(),
+            BATCH,
+        ) {
+            Ok(b) => b,
+            Err(e) => {
+                self.status = Status::Msg(e);
+                return;
+            }
+        };
+
+        let mut found: Option<(Vec<u8>, Vec<u8>)> = None;
+        for (k, v) in &batch.rows {
+            let text = crate::fmt::decode(v, val_mode, endian, 65536).to_lowercase();
+            if text.contains(&needle) {
+                found = Some((k.clone(), v.clone()));
+                break;
+            }
+        }
+        state.checked += batch.rows.len();
+
+        if let Some((k, v)) = found {
+            // 定位到匹配行：以 (k, v) 为锚点读一页（锚点本身在第一行）
+            let page = db::fetch_raw_batch(
+                &dbh.db,
+                name.as_deref(),
+                dup_sort,
+                dir,
+                Some(&(k.clone(), v.clone())),
+                false,
+                page_size,
+            );
+            match page {
+                Ok(p) => {
+                    self.rows = p
+                        .rows
+                        .into_iter()
+                        .map(|(key, value)| crate::db::Row {
+                            key,
+                            value,
+                            dup_count: None,
+                        })
+                        .collect();
+                    self.at_start = false;
+                    self.at_end = !p.has_more;
+                    self.base_index = None;
+                    self.after_load();
+                    self.status = Status::Msg(crate::i18n::tr().value_found.to_string());
+                }
+                Err(e) => {
+                    self.status = Status::Msg(e);
+                }
+            }
+            return;
+        }
+
+        // 未找到：续读或结束
+        if batch.has_more {
+            state.anchor = batch.rows.last().cloned();
+            self.status = Status::Msg(crate::i18n::tr().searching_value_progress(state.checked));
+            self.value_search = Some(state);
+        } else {
+            self.status = Status::Msg(crate::i18n::tr().value_not_found.to_string());
+        }
     }
 
     // ── 多值 ────────────────────────────────────────────────────
@@ -1282,6 +1483,8 @@ impl eframe::App for MdbxerApp {
 
         self.update_title(ctx);
         self.poll_export(ctx);
+        self.poll_value_search();
+        self.handle_shortcuts(ctx);
 
         topbar::show(ui, self);
         if self.db.is_some() {
