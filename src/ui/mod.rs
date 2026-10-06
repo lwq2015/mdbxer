@@ -412,8 +412,7 @@ impl MdbxerApp {
         detail.show_hex = prefs.show_hex.unwrap_or(true);
         detail.show_ascii = prefs.show_ascii.unwrap_or(true);
         detail.hex_width = hex_width;
-        detail.key_mode = key_mode;
-        detail.val_mode = val_mode;
+        // 详情卡片排版独立，启动默认 Auto（不跟随表格排版偏好）。
         let table_sort = prefs
             .table_sort
             .as_deref()

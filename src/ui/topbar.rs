@@ -104,8 +104,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 });
             super::wheel_cycle(ui.ctx(), &ir.response, &DecodeMode::ALL, &mut km);
             if app.key_mode != km {
+                // 顶栏排版只管表格列；右栏详情卡片有独立排版，不联动。
                 app.key_mode = km;
-                app.detail.key_mode = km;
                 app.save_ui_prefs();
             }
 
@@ -124,7 +124,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             super::wheel_cycle(ui.ctx(), &ir.response, &DecodeMode::ALL, &mut vm);
             if app.val_mode != vm {
                 app.val_mode = vm;
-                app.detail.val_mode = vm;
                 app.save_ui_prefs();
             }
 

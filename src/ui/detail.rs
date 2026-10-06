@@ -84,7 +84,11 @@ pub struct DupCtx<'a> {
 
 impl DetailState {
     /// 清空多值与分段状态（换行/换表/关库时调用）。
+    /// 详情卡片排版是"当前行"的临时查看选择，换行即回到自动；
+    /// 同一 Key 内翻多值走 dup_goto 不调本函数，格式得以保持。
     pub fn clear(&mut self) {
+        self.key_mode = DecodeMode::Auto;
+        self.val_mode = DecodeMode::Auto;
         self.dup_total = 1;
         self.dup_index = 0;
         self.dup_page_start = 0;
@@ -196,7 +200,11 @@ impl DetailState {
             Err(e) => return t.dup_bad_query(&e),
         };
         // 向后从下一个值开始；向前从当前值之前开始
-        let from = if forward { self.dup_index + 1 } else { self.dup_index };
+        let from = if forward {
+            self.dup_index + 1
+        } else {
+            self.dup_index
+        };
         match db::dup_find(ctx.db, ctx.table, ctx.key, &needle, from, forward) {
             Ok(Some((i, _))) => {
                 let wrapped = forward && i < from || !forward && i >= from;
@@ -232,7 +240,11 @@ impl DetailState {
 
     /// Key/Value 卡片当前段偏移（`is_key=true` 取 Key，否则 Value）。
     pub fn seg_off(&self, is_key: bool) -> usize {
-        if is_key { self.key_seg_off } else { self.val_seg_off }
+        if is_key {
+            self.key_seg_off
+        } else {
+            self.val_seg_off
+        }
     }
 
     /// Key/Value 卡片分段状态（偏移 + 跳转输入框）的可变引用。
@@ -259,10 +271,7 @@ impl DetailState {
         let t = tr();
         let (off, input) = self.seg_state_mut(is_key);
         let s = input.trim();
-        let parsed = if let Some(h) = s
-            .strip_prefix("0x")
-            .or_else(|| s.strip_prefix("0X"))
-        {
+        let parsed = if let Some(h) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
             usize::from_str_radix(h, 16)
         } else {
             s.parse::<usize>()
@@ -298,9 +307,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 });
                 return;
             };
-            let Some(row) = app.rows.get(row_idx) else { return };
+            let Some(row) = app.rows.get(row_idx) else {
+                return;
+            };
             let key = row.key.clone();
-            let Some(value) = app.current_value() else { return };
+            let Some(value) = app.current_value() else {
+                return;
+            };
             let key_no = app.base_index.map(|b| b + row_idx + 1);
             let dup_sort = app.cur_table().map(|tbl| tbl.dup_sort).unwrap_or(false);
             let (dup_index, dup_total) = (app.detail.dup_index, app.detail.dup_total);
@@ -378,11 +391,7 @@ fn kv_card(
             // Key 卡片：收藏 ☆/★（点击切换，立即持久化）
             if is_key {
                 let star = if app.is_fav_key(key) { "★" } else { "☆" };
-                if ui
-                    .small_button(star)
-                    .on_hover_text(t.fav_key_tip)
-                    .clicked()
-                {
+                if ui.small_button(star).on_hover_text(t.fav_key_tip).clicked() {
                     app.toggle_fav_key(key);
                 }
             }
@@ -391,11 +400,7 @@ fn kv_card(
                     ui.ctx()
                         .copy_text(text_of(bytes, app.detail.mode_of(is_key), app.endian));
                 }
-                if ui
-                    .button(t.save_as)
-                    .on_hover_text(t.save_tip)
-                    .clicked()
-                {
+                if ui.button(t.save_as).on_hover_text(t.save_tip).clicked() {
                     app.save_bytes(&save_name, bytes);
                 }
                 // 格式下拉
@@ -409,14 +414,9 @@ fn kv_card(
                         }
                     });
                 super::wheel_cycle(ui.ctx(), &ir.response, &DecodeMode::ALL, &mut mode);
+                // 详情卡片排版独立于顶栏表格排版：只改本卡片，不回写全局、不存偏好。
                 if app.detail.mode_of(is_key) != mode {
                     app.detail.set_mode(is_key, mode);
-                    if is_key {
-                        app.key_mode = mode;
-                    } else {
-                        app.val_mode = mode;
-                    }
-                    app.save_ui_prefs();
                 }
             });
         });
@@ -441,10 +441,7 @@ fn kv_card(
                     app.detail.seg_step(is_key, total, -1);
                 }
                 if ui
-                    .add_enabled(
-                        off + fmt::PAGE_BYTES < total,
-                        egui::Button::new("▶"),
-                    )
+                    .add_enabled(off + fmt::PAGE_BYTES < total, egui::Button::new("▶"))
                     .on_hover_text(t.seg_next_tip)
                     .clicked()
                 {
@@ -552,19 +549,10 @@ fn kv_card(
                             .hint_text(t.search_hint),
                     );
                     let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if ui
-                        .button("⬆")
-                        .on_hover_text(t.search_prev_tip)
-                        .clicked()
-                    {
+                    if ui.button("⬆").on_hover_text(t.search_prev_tip).clicked() {
                         app.status = Status::Msg(app.detail.dup_search(&dctx, false));
                     }
-                    if ui
-                        .button("⬇")
-                        .on_hover_text(t.search_next_tip)
-                        .clicked()
-                        || enter
-                    {
+                    if ui.button("⬇").on_hover_text(t.search_next_tip).clicked() || enter {
                         app.status = Status::Msg(app.detail.dup_search(&dctx, true));
                     }
                 });
