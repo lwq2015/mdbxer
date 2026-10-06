@@ -9,9 +9,9 @@ use egui_extras::{Column, TableBuilder};
 
 /// 列头单元格：文字与整列空白都可点击。返回是否被点击。
 fn header_cell(ui: &mut egui::Ui, text: &str, tip: &str) -> bool {
-    let r1 =
-        ui.add(egui::Label::new(egui::RichText::new(text).strong()).sense(egui::Sense::click()))
-            .on_hover_text(tip);
+    let r1 = ui
+        .add(egui::Label::new(egui::RichText::new(text).strong()).sense(egui::Sense::click()))
+        .on_hover_text(tip);
     // 覆盖列内剩余空白区域，使整列都可点击、可悬停看提示
     let r2 = ui
         .allocate_rect(ui.available_rect_before_wrap(), egui::Sense::click())

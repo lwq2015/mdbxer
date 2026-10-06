@@ -484,7 +484,10 @@ mod tests {
             .find(|r| crate::history::path_eq(&r.path, "K:\\Data\\DB"))
             .unwrap();
         // 收藏并集去重保序
-        assert_eq!(merged.fav_tables, vec![Some("a".to_string()), Some("b".to_string())]);
+        assert_eq!(
+            merged.fav_tables,
+            vec![Some("a".to_string()), Some("b".to_string())]
+        );
         // last_table 跟随更新的 last_use
         assert_eq!(merged.last_use, 200);
         assert_eq!(merged.last_table.as_deref(), Some("t2"));

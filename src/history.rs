@@ -123,10 +123,7 @@ impl History {
                                     existing.mode = e.mode;
                                 }
                             }
-                            None => hist.entries.push(HistoryEntry {
-                                path: norm,
-                                ..e
-                            }),
+                            None => hist.entries.push(HistoryEntry { path: norm, ..e }),
                         }
                     }
                     if changed {
