@@ -978,12 +978,22 @@ impl MdbxerApp {
                 self.focus_search = true;
             }
             egui::Key::Escape => {
-                // Esc 统一复位：无条件清 Key/Value 搜索并取消全表搜索；
-                // 焦点在 hex 视图时，hexview 自身会同时清字节选区——两边各清各的，
-                // 不相互截获，一次 Esc 全部复位。
-                self.clear_key_search();
-                self.clear_value_search();
-                self.cancel_value_search();
+                // 按"有什么清什么"复位，避免无内容时的副作用：
+                // clear_key_search 会 load_first_page，没有生效过滤时
+                // 按 Esc 会把浏览位置白白跳回首页、还吞掉输入框草稿。
+                // hex 字节选区由 hexview 在聚焦时自行清除，与此并行不互斥。
+                if self.key_filter.is_some() {
+                    self.clear_key_search();
+                } else if !self.search_input.trim().is_empty() {
+                    // 只有草稿、过滤未生效：仅清空输入，不跳页
+                    self.search_input.clear();
+                }
+                if self.value_filter.is_some() {
+                    self.clear_value_search();
+                }
+                if self.value_search.is_some() {
+                    self.cancel_value_search();
+                }
             }
             egui::Key::PageUp if !ctrl => {
                 self.load_prev_page();
