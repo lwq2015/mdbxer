@@ -35,7 +35,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         }
                     });
                 super::wheel_cycle(ui.ctx(), &ir.response, &TableSort::ALL, &mut sort);
-                app.table_sort = sort;
+                if sort != app.table_sort {
+                    app.table_sort = sort;
+                    app.save_ui_prefs();
+                }
             });
             ui.add(
                 egui::TextEdit::singleline(&mut app.table_filter)

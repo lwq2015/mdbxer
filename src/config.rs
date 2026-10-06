@@ -76,6 +76,33 @@ pub struct UiPrefs {
     /// 整数千位分隔开关
     #[serde(default)]
     pub thousands_sep: Option<bool>,
+    /// 单元格最多显示字符数
+    #[serde(default)]
+    pub cell_max: Option<usize>,
+    /// hex dump：显示地址列
+    #[serde(default)]
+    pub show_addr: Option<bool>,
+    /// hex dump：显示 HEX 列
+    #[serde(default)]
+    pub show_hex: Option<bool>,
+    /// hex dump：显示 ASCII 列
+    #[serde(default)]
+    pub show_ascii: Option<bool>,
+    /// hex dump 每行字节数（4/8/16/32）
+    #[serde(default)]
+    pub hex_width: Option<usize>,
+    /// 左栏（表列表）可见
+    #[serde(default)]
+    pub left_visible: Option<bool>,
+    /// 右栏（详情）可见
+    #[serde(default)]
+    pub detail_visible: Option<bool>,
+    /// 左栏表列表排序（name_asc/name_desc/count_asc/count_desc）
+    #[serde(default)]
+    pub table_sort: Option<String>,
+    /// 导出格式（csv/json）
+    #[serde(default)]
+    pub export_format: Option<String>,
 }
 
 /// 一个库的独立记录。
@@ -287,6 +314,15 @@ mod tests {
             key_mode: Some("hex".to_string()),
             val_mode: Some("auto".to_string()),
             thousands_sep: Some(false),
+            cell_max: Some(256),
+            show_addr: Some(true),
+            show_hex: Some(false),
+            show_ascii: Some(true),
+            hex_width: Some(16),
+            left_visible: Some(false),
+            detail_visible: Some(true),
+            table_sort: Some("count_desc".to_string()),
+            export_format: Some("json".to_string()),
         };
         let s = serde_json::to_string(&p).unwrap();
         let back: UiPrefs = serde_json::from_str(&s).unwrap();
@@ -295,6 +331,13 @@ mod tests {
         assert_eq!(back.key_mode.as_deref(), Some("hex"));
         assert_eq!(back.val_mode.as_deref(), Some("auto"));
         assert_eq!(back.thousands_sep, Some(false));
+        assert_eq!(back.cell_max, Some(256));
+        assert_eq!(back.show_hex, Some(false));
+        assert_eq!(back.hex_width, Some(16));
+        assert_eq!(back.left_visible, Some(false));
+        assert_eq!(back.detail_visible, Some(true));
+        assert_eq!(back.table_sort.as_deref(), Some("count_desc"));
+        assert_eq!(back.export_format.as_deref(), Some("json"));
     }
 
     #[test]
@@ -305,6 +348,15 @@ mod tests {
         assert!(back.key_mode.is_none());
         assert!(back.val_mode.is_none());
         assert!(back.thousands_sep.is_none());
+        assert!(back.cell_max.is_none());
+        assert!(back.show_addr.is_none());
+        assert!(back.show_hex.is_none());
+        assert!(back.show_ascii.is_none());
+        assert!(back.hex_width.is_none());
+        assert!(back.left_visible.is_none());
+        assert!(back.detail_visible.is_none());
+        assert!(back.table_sort.is_none());
+        assert!(back.export_format.is_none());
     }
 
     #[test]

@@ -174,12 +174,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             if ui.selectable_label(lv, t.panel_tables).clicked() {
                 lv = !lv;
             }
-            app.left_visible = lv;
             let mut dv = app.detail_visible;
             if ui.selectable_label(dv, t.panel_detail).clicked() {
                 dv = !dv;
             }
-            app.detail_visible = dv;
+            if lv != app.left_visible || dv != app.detail_visible {
+                app.left_visible = lv;
+                app.detail_visible = dv;
+                app.save_ui_prefs();
+            }
 
             // 语言选择：顶栏最右侧，切换即时生效并持久化
             ui.separator();
@@ -203,7 +206,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     app.env_cache = None;
                 }
                 if ui
-                    .button(if app.dark_theme { "●" } else { "○" })
+                    .button(if app.dark_theme { "🌙" } else { "☀" })
                     .on_hover_text(t.theme_tip)
                     .clicked()
                 {

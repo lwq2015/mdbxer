@@ -308,9 +308,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(t.hex_view);
-                    ui.checkbox(&mut app.detail.show_addr, t.addr);
-                    ui.checkbox(&mut app.detail.show_hex, "HEX");
-                    ui.checkbox(&mut app.detail.show_ascii, "ASCII");
+                    let mut hex_pref_changed =
+                        ui.checkbox(&mut app.detail.show_addr, t.addr).changed()
+                            | ui.checkbox(&mut app.detail.show_hex, "HEX").changed()
+                            | ui.checkbox(&mut app.detail.show_ascii, "ASCII").changed();
                     ui.separator();
                     ui.label(t.width);
                     let mut w = app.detail.hex_width;
@@ -322,7 +323,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             }
                         });
                     super::wheel_cycle(ui.ctx(), &ir.response, &fmt::HEX_WIDTHS, &mut w);
-                    app.detail.hex_width = w;
+                    if w != app.detail.hex_width {
+                        app.detail.hex_width = w;
+                        hex_pref_changed = true;
+                    }
+                    if hex_pref_changed {
+                        app.save_ui_prefs();
+                    }
                 });
                 ui.separator();
 

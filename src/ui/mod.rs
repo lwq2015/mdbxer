@@ -225,6 +225,26 @@ impl TableSort {
             TableSort::CountDesc => t.sort_count_desc.to_string(),
         }
     }
+
+    /// 持久化标识（与语言无关）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TableSort::NameAsc => "name_asc",
+            TableSort::NameDesc => "name_desc",
+            TableSort::CountAsc => "count_asc",
+            TableSort::CountDesc => "count_desc",
+        }
+    }
+
+    /// 从持久化字符串解析；未知值回退名称升序。
+    pub fn from_prefs(s: &str) -> TableSort {
+        match s {
+            "name_desc" => TableSort::NameDesc,
+            "count_asc" => TableSort::CountAsc,
+            "count_desc" => TableSort::CountDesc,
+            _ => TableSort::NameAsc,
+        }
+    }
 }
 
 pub struct MdbxerApp {
@@ -354,14 +374,41 @@ impl MdbxerApp {
         if let Some(ts) = prefs.thousands_sep {
             crate::fmt::set_thousands_sep(ts);
         }
+        let cell_max = prefs
+            .cell_max
+            .filter(|v| [64usize, 128, 256, 512, 1024, 4096].contains(v))
+            .unwrap_or(DEFAULT_CELL_MAX);
+        let hex_width = prefs
+            .hex_width
+            .filter(|w| crate::fmt::HEX_WIDTHS.contains(w))
+            .unwrap_or(crate::fmt::DEFAULT_HEX_WIDTH);
+        let mut detail = DetailState::default();
+        detail.show_addr = prefs.show_addr.unwrap_or(true);
+        detail.show_hex = prefs.show_hex.unwrap_or(true);
+        detail.show_ascii = prefs.show_ascii.unwrap_or(true);
+        detail.hex_width = hex_width;
+        let table_sort = prefs
+            .table_sort
+            .as_deref()
+            .map(TableSort::from_prefs)
+            .unwrap_or(TableSort::NameAsc);
+        let export_format = prefs
+            .export_format
+            .as_deref()
+            .and_then(|s| {
+                crate::export::ExportFormat::ALL
+                    .into_iter()
+                    .find(|f| f.ext() == s)
+            })
+            .unwrap_or_default();
         Self {
             open_mode: OpenMode::Auto,
             history: History::load(),
             db: None,
             opened_path: None,
             table_filter: String::new(),
-            table_sort: TableSort::NameAsc,
-            left_visible: true,
+            table_sort,
+            left_visible: prefs.left_visible.unwrap_or(true),
             left_panel_w: 220.0,
             tab: CenterTab::Data,
             selected_table: None,
@@ -380,11 +427,11 @@ impl MdbxerApp {
             key_mode,
             val_mode,
             endian,
-            cell_max: DEFAULT_CELL_MAX,
+            cell_max,
             views: Vec::new(),
             views_key: None,
-            detail_visible: true,
-            detail: DetailState::default(),
+            detail_visible: prefs.detail_visible.unwrap_or(true),
+            detail,
             detail_panel_w: 360.0,
             stat_cache: None,
             env_cache: None,
@@ -394,7 +441,7 @@ impl MdbxerApp {
             export_anchor: None,
             export_count: 0,
             export_path: String::new(),
-            export_format: crate::export::ExportFormat::default(),
+            export_format,
             dark_theme: crate::config::load_theme() == crate::config::Theme::Dark,
             fav_tables: Vec::new(),
             fav_keys: Vec::new(),
@@ -1002,6 +1049,15 @@ impl MdbxerApp {
             key_mode: Some(self.key_mode.as_str().to_string()),
             val_mode: Some(self.val_mode.as_str().to_string()),
             thousands_sep: Some(crate::fmt::thousands_sep()),
+            cell_max: Some(self.cell_max),
+            show_addr: Some(self.detail.show_addr),
+            show_hex: Some(self.detail.show_hex),
+            show_ascii: Some(self.detail.show_ascii),
+            hex_width: Some(self.detail.hex_width),
+            left_visible: Some(self.left_visible),
+            detail_visible: Some(self.detail_visible),
+            table_sort: Some(self.table_sort.as_str().to_string()),
+            export_format: Some(self.export_format.ext().to_string()),
         }
     }
 
