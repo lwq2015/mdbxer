@@ -1434,13 +1434,25 @@ impl MdbxerApp {
     }
 }
 
-/// 应用主题到 egui 上下文。
+/// 应用主题到 egui 上下文（含原生窗口标题栏）。
+///
+/// egui 0.36 起是 ThemePreference（System/Dark/Light）+ 双 Style 模型：
+/// 必须用 [`egui::Context::set_theme`] 切换偏好——旧写法 `set_visuals`
+/// 只替换"当前主题那份 style"的 visuals，在默认"跟随系统"且系统为浅色时
+/// 首帧会被拉回浅色，表现为主题切换后重启不保存。
 pub fn apply_theme(ctx: &egui::Context, dark: bool) {
-    ctx.set_visuals(if dark {
-        egui::Visuals::dark()
+    let theme = if dark {
+        egui::Theme::Dark
     } else {
-        egui::Visuals::light()
-    });
+        egui::Theme::Light
+    };
+    ctx.set_theme(theme);
+    // 同步原生窗口标题栏（Windows 标题栏默认跟随系统，不设的话内容深、标题栏浅）
+    ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(if dark {
+        egui::SystemTheme::Dark
+    } else {
+        egui::SystemTheme::Light
+    }));
 }
 
 /// 字节的大写 hex 串（收藏 Key 的持久化形式）。
