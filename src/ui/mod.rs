@@ -53,11 +53,7 @@ impl Status {
         let t = crate::i18n::tr();
         match self {
             Status::Ready => t.ready.to_string(),
-            Status::Opened {
-                file_mode,
-                n,
-                path,
-            } => {
+            Status::Opened { file_mode, n, path } => {
                 let mode = if *file_mode { t.m_file } else { t.m_dir };
                 t.open_ok(mode, *n, path)
             }
@@ -87,9 +83,7 @@ pub fn wheel_cycle<T: Copy + PartialEq>(
     }
 
     let mut steps = 0i32;
-    let mut acc = ctx
-        .data(|d| d.get_temp::<f32>(acc_id))
-        .unwrap_or(0.0);
+    let mut acc = ctx.data(|d| d.get_temp::<f32>(acc_id)).unwrap_or(0.0);
     const POINT_THRESHOLD: f32 = 40.0;
 
     ctx.input(|i| {
@@ -499,12 +493,14 @@ impl MdbxerApp {
             let needle = filter.to_lowercase();
             order.retain(|&i| self.views[i].val_text.to_lowercase().contains(&needle));
         }
-        let Some((col, asc)) = self.col_sort else { return order };
+        let Some((col, asc)) = self.col_sort else {
+            return order;
+        };
         match col {
             SortCol::Index => {}
-            SortCol::Type => order.sort_by(|&a, &b| {
-                self.views[a].type_label.cmp(&self.views[b].type_label)
-            }),
+            SortCol::Type => {
+                order.sort_by(|&a, &b| self.views[a].type_label.cmp(&self.views[b].type_label))
+            }
             SortCol::Value => order.sort_by(|&a, &b| {
                 let (va, vb) = (&self.views[a], &self.views[b]);
                 match (va.val_num, vb.val_num) {
@@ -540,7 +536,8 @@ impl MdbxerApp {
             .rows
             .iter()
             .map(|r| {
-                let val_text = crate::fmt::decode(&r.value, self.val_mode, self.endian, self.cell_max);
+                let val_text =
+                    crate::fmt::decode(&r.value, self.val_mode, self.endian, self.cell_max);
                 RowView {
                     key_text: crate::fmt::decode(&r.key, self.key_mode, self.endian, self.cell_max),
                     type_label: crate::fmt::guess(&r.value, self.endian).0,
@@ -585,7 +582,10 @@ impl MdbxerApp {
                 self.selected_table = if n > 0 {
                     rec.last_table
                         .and_then(|name| {
-                            handle.tables.iter().position(|t| t.name.as_ref() == Some(&name))
+                            handle
+                                .tables
+                                .iter()
+                                .position(|t| t.name.as_ref() == Some(&name))
                         })
                         .or(Some(0))
                 } else {
@@ -825,11 +825,20 @@ impl MdbxerApp {
         // 跳转是在全表任意定位，与前缀过滤互斥：跳转即清除过滤
         self.key_filter = None;
         let Some(dbh) = self.db.as_ref() else { return };
-        let Some(table) = self.cur_table() else { return };
+        let Some(table) = self.cur_table() else {
+            return;
+        };
         let name = table.name.clone();
         let dir = self.sort_dir();
         let page_size = self.page_size;
-        match db::jump_to(&dbh.db, name.as_deref(), table.dup_sort, dir, key, page_size) {
+        match db::jump_to(
+            &dbh.db,
+            name.as_deref(),
+            table.dup_sort,
+            dir,
+            key,
+            page_size,
+        ) {
             Ok(page) => {
                 let found = !page.rows.is_empty();
                 let has_more = page.has_more;
@@ -1001,9 +1010,13 @@ impl MdbxerApp {
 
     /// 每帧驱动全表 Value 搜索：读一批、检查匹配、找到则定位。
     pub fn poll_value_search(&mut self) {
-        let Some(mut state) = self.value_search.take() else { return };
+        let Some(mut state) = self.value_search.take() else {
+            return;
+        };
         let Some(dbh) = self.db.as_ref() else { return };
-        let Some(table) = self.cur_table() else { return };
+        let Some(table) = self.cur_table() else {
+            return;
+        };
         let name = table.name.clone();
         let dup_sort = table.dup_sort;
         let dir = self.sort_dir();
@@ -1067,13 +1080,11 @@ impl MdbxerApp {
                     self.at_end = !p.has_more;
                     self.base_index = None;
                     self.after_load();
-                    self.status = Status::Msg(
-                        if located {
-                            crate::i18n::tr().value_found.to_string()
-                        } else {
-                            crate::i18n::tr().value_not_found.to_string()
-                        },
-                    );
+                    self.status = Status::Msg(if located {
+                        crate::i18n::tr().value_found.to_string()
+                    } else {
+                        crate::i18n::tr().value_not_found.to_string()
+                    });
                 }
                 Err(e) => {
                     self.status = Status::Msg(e);
@@ -1132,7 +1143,11 @@ impl MdbxerApp {
             Some(
                 self.detail
                     .dup_values
-                    .get(self.detail.dup_index.saturating_sub(self.detail.dup_page_start))
+                    .get(
+                        self.detail
+                            .dup_index
+                            .saturating_sub(self.detail.dup_page_start),
+                    )
                     .cloned()
                     .unwrap_or_else(|| row.value.clone()),
             )
@@ -1173,11 +1188,16 @@ impl MdbxerApp {
             return;
         }
         let t = crate::i18n::tr();
-        let Some(table) = self.cur_table() else { return };
+        let Some(table) = self.cur_table() else {
+            return;
+        };
         let name = table.display();
         let ext = self.export_format.ext();
         let Some(out) = rfd::FileDialog::new()
-            .set_file_name(format!("{}.{ext}", name.replace(|c: char| !c.is_alphanumeric(), "_")))
+            .set_file_name(format!(
+                "{}.{ext}",
+                name.replace(|c: char| !c.is_alphanumeric(), "_")
+            ))
             .add_filter(t.filter_all, &["*"])
             .save_file()
         else {
@@ -1242,8 +1262,7 @@ impl MdbxerApp {
                                 break;
                             }
                             if has_more {
-                                self.status =
-                                    Status::Msg(t.export_progress(self.export_count));
+                                self.status = Status::Msg(t.export_progress(self.export_count));
                             }
                         }
                         Err(e) => {
@@ -1318,7 +1337,9 @@ impl MdbxerApp {
 
     /// 保存当前库的每库记录（最后打开的表 + 收藏）。未打开库时无操作。
     fn save_per_db(&self) {
-        let Some(path) = &self.opened_path else { return };
+        let Some(path) = &self.opened_path else {
+            return;
+        };
         crate::config::save_per_db(&crate::config::PerDbRecord {
             path: path.clone(),
             last_table: self.cur_table().and_then(|t| t.name.clone()),
@@ -1340,7 +1361,9 @@ impl MdbxerApp {
 
     /// 切换当前表中某 Key 的收藏状态。
     pub fn toggle_fav_key(&mut self, key: &[u8]) {
-        let Some(table) = self.cur_table() else { return };
+        let Some(table) = self.cur_table() else {
+            return;
+        };
         let table_name = table.name.clone();
         let key_hex = key_hex(key);
         if let Some(pos) = self
@@ -1361,7 +1384,9 @@ impl MdbxerApp {
 
     /// 当前表的该 Key 是否已收藏。
     pub fn is_fav_key(&self, key: &[u8]) -> bool {
-        let Some(table) = self.cur_table() else { return false };
+        let Some(table) = self.cur_table() else {
+            return false;
+        };
         let hex = key_hex(key);
         self.fav_keys
             .iter()
@@ -1491,7 +1516,10 @@ pub(crate) fn parse_bytes_input(s: &str) -> Result<Vec<u8>, String> {
 
 /// 解析十六进制文本为字节：忽略空格/下划线/冒号，长度须为偶数。
 fn parse_hex(h: &str) -> Result<Vec<u8>, String> {
-    let cleaned: String = h.chars().filter(|c| !matches!(c, ' ' | '_' | ':')).collect();
+    let cleaned: String = h
+        .chars()
+        .filter(|c| !matches!(c, ' ' | '_' | ':'))
+        .collect();
     if cleaned.is_empty() || cleaned.len() % 2 != 0 {
         return Err(crate::i18n::tr().hex_even.to_string());
     }
@@ -1501,35 +1529,9 @@ fn parse_hex(h: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
-impl eframe::App for MdbxerApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
-        let ctx = &ctx;
-        // 拖拽文件/目录到窗口直接打开
-        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
-        if let Some(file) = dropped.into_iter().next() {
-            if let Some(path) = file.path().to_str() {
-                self.open_mode = OpenMode::Auto;
-                self.open_db(path);
-            }
-        }
-
-        self.update_title(ctx);
-        self.poll_export(ctx);
-        self.poll_value_search();
-        self.handle_shortcuts(ctx);
-
-        topbar::show(ui, self);
-        if self.db.is_some() {
-            if self.left_visible {
-                sidebar::show(ui, self);
-            }
-            if self.detail_visible {
-                detail::show(ui, self);
-            }
-        }
-
-        // 底部状态栏
+impl MdbxerApp {
+    /// 底部状态栏（整行宽度）：表名/范围/条数、打开模式、每页条数、持久状态消息。
+    fn show_status_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("status_bar").show(ui, |ui| {
             let t = crate::i18n::tr();
             ui.horizontal(|ui| {
@@ -1556,7 +1558,11 @@ impl eframe::App for MdbxerApp {
                         };
                         ui.label(format!("{} — {range_desc} / {total_desc}", table.display()));
                         ui.separator();
-                        ui.label(if dbh.no_sub_dir { t.mode_file } else { t.mode_dir });
+                        ui.label(if dbh.no_sub_dir {
+                            t.mode_file
+                        } else {
+                            t.mode_dir
+                        });
                         ui.separator();
                         ui.label(t.window_size(self.page_size));
                     }
@@ -1568,6 +1574,39 @@ impl eframe::App for MdbxerApp {
                 ui.label(self.status.text());
             });
         });
+    }
+}
+
+impl eframe::App for MdbxerApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
+        // 拖拽文件/目录到窗口直接打开
+        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+        if let Some(file) = dropped.into_iter().next() {
+            if let Some(path) = file.path().to_str() {
+                self.open_mode = OpenMode::Auto;
+                self.open_db(path);
+            }
+        }
+
+        self.update_title(ctx);
+        self.poll_export(ctx);
+        self.poll_value_search();
+        self.handle_shortcuts(ctx);
+
+        topbar::show(ui, self);
+        // 底部状态栏先于左右栏声明：egui 面板按声明顺序从可用区域切割，
+        // 先声明的 bottom 占满整行宽度，左右栏随后落在顶栏与状态栏之间。
+        self.show_status_bar(ui);
+        if self.db.is_some() {
+            if self.left_visible {
+                sidebar::show(ui, self);
+            }
+            if self.detail_visible {
+                detail::show(ui, self);
+            }
+        }
 
         // 中央区域
         egui::CentralPanel::default().show(ui, |ui| {
