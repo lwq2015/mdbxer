@@ -9,9 +9,8 @@ use egui_extras::{Column, TableBuilder};
 
 /// 列头单元格：文字与整列空白都可点击。返回是否被点击。
 fn header_cell(ui: &mut egui::Ui, text: &str) -> bool {
-    let r1 = ui.add(
-        egui::Label::new(egui::RichText::new(text).strong()).sense(egui::Sense::click()),
-    );
+    let r1 =
+        ui.add(egui::Label::new(egui::RichText::new(text).strong()).sense(egui::Sense::click()));
     // 覆盖列内剩余空白区域，使整列都可点击
     let r2 = ui.allocate_rect(ui.available_rect_before_wrap(), egui::Sense::click());
     r1.clicked() || r2.clicked()
@@ -94,10 +93,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             }
         }
 
-        // Key 搜索模式开关：➡ 跳转定位 / 🔍 前缀过滤。
+        // Key 搜索模式开关：➡ 跳转定位 / F 前缀过滤（F 与 K/V 按钮风格一致，
+        // 避免放大镜图标被误认成"搜索"）。
         // 放在搜索框前（先选模式再输入），提示与主题切换一样按状态分开。
         if ui
-            .button(if app.key_filter_mode { "🔍" } else { "➡" })
+            .button(if app.key_filter_mode { "F" } else { "➡" })
             .on_hover_text(if app.key_filter_mode {
                 t.key_mode_tip_on
             } else {
@@ -150,14 +150,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         }
         // 过滤状态指示 + 清除
         if app.key_filter.is_some() || app.value_filter.is_some() {
-            ui.label(
-                egui::RichText::new(t.filter_active).color(ui.visuals().warn_fg_color),
-            );
-            if ui
-                .button("×")
-                .on_hover_text(t.filter_clear_tip)
-                .clicked()
-            {
+            ui.label(egui::RichText::new(t.filter_active).color(ui.visuals().warn_fg_color));
+            if ui.button("×").on_hover_text(t.filter_clear_tip).clicked() {
                 app.clear_key_search();
                 app.clear_value_search();
             }
