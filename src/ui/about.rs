@@ -15,6 +15,7 @@ const URL_GITEE: &str = "https://gitee.com/lwq_yu/mdbxer";
 const URL_GITHUB: &str = "https://github.com/lwq2015/mdbxer";
 const URL_LIBMDBX: &str = "https://libmdbx.dqdkfa.ru/";
 const URL_LIBMDBX_RS: &str = "https://github.com/vorot93/libmdbx-rs";
+const URL_TRAE: &str = "https://www.trae.cn/";
 const URL_LICENSE: &str = "https://www.apache.org/licenses/LICENSE-2.0";
 
 /// 正文列最大宽度（超出则随窗口收窄；长段落按此宽度自动换行）。
@@ -99,6 +100,9 @@ pub fn show(ui: &mut egui::Ui, build_date: &str) {
                         .on_hover_text(t.about_open_link_tip);
                     dot(ui);
                     ui.hyperlink_to("libmdbx-rs", URL_LIBMDBX_RS)
+                        .on_hover_text(t.about_open_link_tip);
+                    dot(ui);
+                    ui.hyperlink_to("Trae", URL_TRAE)
                         .on_hover_text(t.about_open_link_tip);
                 });
                 ui.add_space(8.0);
