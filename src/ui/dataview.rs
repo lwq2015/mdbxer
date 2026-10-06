@@ -128,9 +128,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
     // ── 表格 ────────────────────────────────────────────────────
     let text_height = egui::TextStyle::Body.resolve(ui.style()).size + 4.0;
-    let total_rows = app.rows.len();
-    let selected = app.selected_row;
     let order = app.display_order();
+    let total_rows = order.len();
+    let selected = app.selected_row;
     let sort_desc = app.sort_desc;
     let col_sort = app.col_sort;
 
