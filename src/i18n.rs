@@ -199,7 +199,9 @@ pub struct I18n {
 
     // ── 搜索工具条（Key/Value 共享输入框） ──
     pub toolbar_search_hint: &'static str,
-    pub key_search_mode_tip: &'static str,
+    /// Key 搜索模式开关 hover 提示（按当前状态分：提示将切换到哪个模式）
+    pub key_mode_tip_off: &'static str,
+    pub key_mode_tip_on: &'static str,
     /// "K" 按钮 hover 提示
     pub key_search_btn_tip: &'static str,
     /// "V" 按钮 hover 提示（按当前模式分状态）
@@ -642,7 +644,8 @@ const ZH: I18n = I18n {
     seg_bad: "请输入十进制偏移，或 0x 开头的十六进制偏移",
 
     toolbar_search_hint: "搜索：文本或 hex(...)",
-    key_search_mode_tip: "跳转模式：定位到首个不小于输入的 Key；过滤模式：只显示以输入开头的 Key（回车生效）",
+    key_mode_tip_off: "切换到过滤模式：K 键只显示以输入开头的 Key（回车生效）",
+    key_mode_tip_on: "切换到跳转模式：K 键定位到首个不小于输入的 Key",
     key_search_btn_tip: "搜索 Key（跳转或前缀过滤）",
     value_search_tip_off: "搜索 Value：页内过滤（当前页文本包含，大小写不敏感）",
     value_search_tip_on: "搜索 Value：全表扫描（找到首个包含搜索词的记录并定位）",
@@ -847,7 +850,8 @@ const EN: I18n = I18n {
     seg_bad: "Enter a decimal offset, or hexadecimal prefixed with 0x",
 
     toolbar_search_hint: "Search: text or hex(...)",
-    key_search_mode_tip: "Jump mode: locate the first key >= input; Filter mode: show only keys starting with the input (Enter to apply)",
+    key_mode_tip_off: "Switch to filter mode: K shows only keys starting with the input (Enter to apply)",
+    key_mode_tip_on: "Switch to jump mode: K locates the first key >= input",
     key_search_btn_tip: "Search keys (jump or prefix filter)",
     value_search_tip_off: "Search value: filter current page (case-insensitive contains)",
     value_search_tip_on: "Search value: full-table scan (locate the first record containing the term)",
@@ -1052,7 +1056,8 @@ const RU: I18n = I18n {
     seg_bad: "Введите десятичное смещение или шестнадцатеричное с префиксом 0x",
 
     toolbar_search_hint: "Поиск: текст или hex(...)",
-    key_search_mode_tip: "Режим перехода: первый ключ >= ввода; режим фильтра: только ключи, начинающиеся с ввода (Enter — применить)",
+    key_mode_tip_off: "Переключиться в режим фильтра: K показывает только ключи, начинающиеся с ввода (Enter — применить)",
+    key_mode_tip_on: "Переключиться в режим перехода: K переходит к первому ключу >= ввода",
     key_search_btn_tip: "Поиск ключей (переход или фильтр по префиксу)",
     value_search_tip_off: "Поиск значения: фильтр по текущей странице (вхождение без учёта регистра)",
     value_search_tip_on: "Поиск значения: сканирование всей таблицы (переход к первой записи с совпадением)",
@@ -1254,7 +1259,8 @@ mod tests {
             assert!(!table.full_search_toggle.is_empty());
             assert!(!table.full_search_tip_off.is_empty());
             assert!(!table.full_search_tip_on.is_empty());
-            assert!(!table.key_search_mode_tip.is_empty());
+            assert!(!table.key_mode_tip_off.is_empty());
+            assert!(!table.key_mode_tip_on.is_empty());
             assert!(!table.filter_active.is_empty());
             assert!(!table.filter_clear_tip.is_empty());
             assert!(!table.key_search_bad_t.is_empty());

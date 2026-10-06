@@ -94,6 +94,20 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             }
         }
 
+        // Key 搜索模式开关：➡ 跳转定位 / 🔍 前缀过滤。
+        // 放在搜索框前（先选模式再输入），提示与主题切换一样按状态分开。
+        if ui
+            .button(if app.key_filter_mode { "🔍" } else { "➡" })
+            .on_hover_text(if app.key_filter_mode {
+                t.key_mode_tip_on
+            } else {
+                t.key_mode_tip_off
+            })
+            .clicked()
+        {
+            app.key_filter_mode = !app.key_filter_mode;
+        }
+
         // 共享搜索框：Key（跳转/前缀过滤）和 Value（全表/页内文本搜索）共用
         // 符号取自 egui 内置字体 emoji-icon/NotoEmoji，跨平台不依赖系统字体
         let sresp = ui.add(
@@ -109,17 +123,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             app.focus_search = false;
         }
         app.search_box_id = Some(sresp.id);
+        // 搜索框聚焦 = Ctrl+C 归框内文本复制，解除行复制武装
+        if sresp.gained_focus() {
+            app.row_copy_pending = false;
+        }
         // 回车默认执行 Key 搜索（跳转或前缀过滤，取决于模式）
         if sresp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             app.apply_key_search();
-        }
-        // Key 搜索模式切换：➡ 跳转定位 / 🔍 前缀过滤
-        if ui
-            .button(if app.key_filter_mode { "🔍" } else { "➡" })
-            .on_hover_text(t.key_search_mode_tip)
-            .clicked()
-        {
-            app.key_filter_mode = !app.key_filter_mode;
         }
         // 搜索 Key
         if ui.button("K").on_hover_text(t.key_search_btn_tip).clicked() {
@@ -245,6 +255,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         .clicked()
                     {
                         clicked_row = Some(i);
+                        app.row_copy_pending = true;
                     }
                 });
                 row_ui.col(|ui| {
@@ -261,6 +272,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         .clicked()
                     {
                         clicked_row = Some(i);
+                        app.row_copy_pending = true;
                     }
                 });
                 row_ui.col(|ui| {
@@ -277,6 +289,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         .clicked()
                     {
                         clicked_row = Some(i);
+                        app.row_copy_pending = true;
                     }
                 });
                 row_ui.col(|ui| {
@@ -299,6 +312,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         .clicked()
                     {
                         clicked_row = Some(i);
+                        app.row_copy_pending = true;
                     }
                 });
                 if row_ui.response().clicked() {
