@@ -409,7 +409,15 @@ fn kv_card(
                         }
                     });
                 super::wheel_cycle(ui.ctx(), &ir.response, &DecodeMode::ALL, &mut mode);
-                app.detail.set_mode(is_key, mode);
+                if app.detail.mode_of(is_key) != mode {
+                    app.detail.set_mode(is_key, mode);
+                    if is_key {
+                        app.key_mode = mode;
+                    } else {
+                        app.val_mode = mode;
+                    }
+                    app.save_ui_prefs();
+                }
             });
         });
 

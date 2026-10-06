@@ -385,6 +385,8 @@ impl MdbxerApp {
         detail.show_hex = prefs.show_hex.unwrap_or(true);
         detail.show_ascii = prefs.show_ascii.unwrap_or(true);
         detail.hex_width = hex_width;
+        detail.key_mode = key_mode;
+        detail.val_mode = val_mode;
         let table_sort = prefs
             .table_sort
             .as_deref()
