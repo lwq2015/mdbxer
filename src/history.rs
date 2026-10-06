@@ -4,9 +4,73 @@
 //! 打开历史记录：JSON 持久化到 %APPDATA%\mdbxer\history.json。
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 const MAX_ENTRIES: usize = 20;
+
+/// 归一化路径用于存储与比较：
+/// - 相对路径相对当前工作目录转绝对；
+/// - 已存在的路径 canonicalize（解析符号链接、`..`、Windows 盘符大小写）；
+/// - 不存在的路径做词法清理（折叠 `.`/`..`、重复分隔符），不要求路径存在；
+/// - 去掉 Windows canonicalize 产生的 `\\?\` / `\\?\UNC\`  verbatim 前缀。
+pub(crate) fn normalize_path(path: &str) -> String {
+    let p = Path::new(path);
+    let abs = if p.is_relative() {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(p),
+            Err(_) => return path.to_string(),
+        }
+    } else {
+        p.to_path_buf()
+    };
+    let resolved = std::fs::canonicalize(&abs).unwrap_or_else(|_| lexical_normalize(&abs));
+    let mut s = resolved.to_string_lossy().into_owned();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        s = format!(r"\\{rest}");
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        s = rest.to_string();
+    }
+    s
+}
+
+/// 不依赖文件系统存在的词法归一化（折叠 CurDir、回退 ParentDir）。
+fn lexical_normalize(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        p.to_path_buf()
+    } else {
+        out
+    }
+}
+
+/// 归一化后的比较键：Windows 忽略盘符大小写、斜杠方向与尾部分隔符。
+pub(crate) fn path_key(s: &str) -> String {
+    let n = normalize_path(s);
+    #[cfg(windows)]
+    {
+        n.trim_end_matches(['\\', '/'])
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        n
+    }
+}
+
+/// 两个（已或未归一化的）路径是否指向同一目标。
+pub(crate) fn path_eq(a: &str, b: &str) -> bool {
+    path_key(a) == path_key(b)
+}
 
 /// 一条历史记录。
 #[derive(Serialize, Deserialize, Clone)]
@@ -29,12 +93,46 @@ pub struct History {
 
 impl History {
     /// 从磁盘加载；文件缺失或 JSON 损坏时返回空历史。
+    /// 加载时归一化所有路径并合并"同一目标的多写法"重复项（相对/绝对、
+    /// 大小写、斜杠方向、`.`/`..`），有改动则回写一次（迁移旧数据）。
     pub fn load() -> Self {
         let file = storage_path();
         if let Some(f) = &file {
             if let Ok(text) = std::fs::read_to_string(f) {
-                if let Ok(entries) = serde_json::from_str(&text) {
-                    return Self { entries, file };
+                if let Ok(entries) = serde_json::from_str::<Vec<HistoryEntry>>(&text) {
+                    let mut hist = Self {
+                        entries: Vec::with_capacity(entries.len()),
+                        file: file.clone(),
+                    };
+                    let mut changed = false;
+                    // entries 按最近打开在前；重复时保留靠前者（更新的 last_open）。
+                    for e in entries {
+                        let norm = normalize_path(&e.path);
+                        if norm != e.path {
+                            changed = true;
+                        }
+                        match hist
+                            .entries
+                            .iter_mut()
+                            .find(|x| path_key(&x.path) == path_key(&norm))
+                        {
+                            Some(existing) => {
+                                changed = true;
+                                if e.last_open > existing.last_open {
+                                    existing.last_open = e.last_open;
+                                    existing.mode = e.mode;
+                                }
+                            }
+                            None => hist.entries.push(HistoryEntry {
+                                path: norm,
+                                ..e
+                            }),
+                        }
+                    }
+                    if changed {
+                        hist.save();
+                    }
+                    return hist;
                 }
             }
         }
@@ -44,10 +142,11 @@ impl History {
         }
     }
 
-    /// 记录一次打开：同路径去重置顶，最多保留 MAX_ENTRIES 条。
+    /// 记录一次打开：路径归一化后按同一目标去重置顶，最多保留 MAX_ENTRIES 条。
     /// `mode` 取 [`crate::db::OpenMode::as_str`]。
     pub fn add(&mut self, path: &str, mode: &str) {
-        self.entries.retain(|e| e.path != path);
+        let norm = normalize_path(path);
+        self.entries.retain(|e| !path_eq(&e.path, &norm));
         let last_open = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -55,7 +154,7 @@ impl History {
         self.entries.insert(
             0,
             HistoryEntry {
-                path: path.to_string(),
+                path: norm,
                 mode: mode.to_string(),
                 last_open,
             },
@@ -73,25 +172,11 @@ impl History {
     }
 
     /// 按路径删除匹配条目（打开失败、路径已不存在时自动清理），写盘。
-    /// Windows 下文件路径不区分大小写与斜杠方向，比较时一并归一；
-    /// 不存在的路径无法 canonicalize，调用方应先尽力转为绝对路径。
-    /// 返回是否删除了条目。
+    /// 按归一化后的同一目标比较：相对/绝对、Windows 盘符大小写、斜杠方向
+    /// 与尾部分隔符的差异都视为同一路径。返回是否删除了条目。
     pub fn remove_path(&mut self, path: &str) -> bool {
-        #[cfg(windows)]
-        fn same(a: &str, b: &str) -> bool {
-            let norm = |s: &str| {
-                s.trim_end_matches(['\\', '/'])
-                    .replace('/', "\\")
-                    .to_ascii_lowercase()
-            };
-            norm(a) == norm(b)
-        }
-        #[cfg(not(windows))]
-        fn same(a: &str, b: &str) -> bool {
-            a == b
-        }
         let before = self.entries.len();
-        self.entries.retain(|e| !same(&e.path, path));
+        self.entries.retain(|e| !path_eq(&e.path, path));
         if self.entries.len() != before {
             self.save();
             true
@@ -153,8 +238,8 @@ mod tests {
         h.add("/a", "file");
         h.add("/b", "dir");
         assert_eq!(h.entries.len(), 2);
-        assert_eq!(h.entries[0].path, "/b");
-        assert_eq!(h.entries[1].path, "/a");
+        assert_eq!(h.entries[0].path, normalize_path("/b"));
+        assert_eq!(h.entries[1].path, normalize_path("/a"));
     }
 
     #[test]
@@ -164,9 +249,29 @@ mod tests {
         h.add("/b", "dir");
         h.add("/a", "dir"); // 重新打开 /a，mode 也应更新
         assert_eq!(h.entries.len(), 2);
-        assert_eq!(h.entries[0].path, "/a");
+        assert_eq!(h.entries[0].path, normalize_path("/a"));
         assert_eq!(h.entries[0].mode, "dir");
-        assert_eq!(h.entries[1].path, "/b");
+        assert_eq!(h.entries[1].path, normalize_path("/b"));
+    }
+
+    #[test]
+    fn add_dedup_equivalent_path_forms() {
+        let (mut h, _) = temp_history();
+        // 真实存在的目录：含 ./ 的写法与规范写法必须视为同一条
+        let ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("mdbxer_hist_dup_{ns}"));
+        fs::create_dir_all(base.join("sub")).unwrap();
+        let p1 = base.join("sub");
+        let p2 = base.join(".").join("sub");
+        assert_ne!(p1.to_string_lossy(), p2.to_string_lossy());
+        h.add(p1.to_str().unwrap(), "dir");
+        h.add(p2.to_str().unwrap(), "dir");
+        assert_eq!(h.entries.len(), 1);
+        assert_eq!(h.entries[0].path, normalize_path(p1.to_str().unwrap()));
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -177,7 +282,10 @@ mod tests {
         }
         assert_eq!(h.entries.len(), MAX_ENTRIES);
         // 最新的在最前
-        assert_eq!(h.entries[0].path, format!("/p{}", MAX_ENTRIES + 4));
+        assert_eq!(
+            h.entries[0].path,
+            normalize_path(&format!("/p{}", MAX_ENTRIES + 4))
+        );
     }
 
     #[test]
@@ -187,7 +295,7 @@ mod tests {
         h.add("/b", "file");
         h.remove(0);
         assert_eq!(h.entries.len(), 1);
-        assert_eq!(h.entries[0].path, "/a");
+        assert_eq!(h.entries[0].path, normalize_path("/a"));
     }
 
     #[test]
@@ -208,7 +316,7 @@ mod tests {
         h.add("/b", "dir");
         assert!(h.remove_path("/b"));
         assert_eq!(h.entries.len(), 1);
-        assert_eq!(h.entries[0].path, "/a");
+        assert_eq!(h.entries[0].path, normalize_path("/a"));
         assert!(!h.remove_path("/missing"));
         assert_eq!(h.entries.len(), 1);
     }
@@ -232,8 +340,8 @@ mod tests {
         let text = fs::read_to_string(&file).expect("file should be written");
         let loaded: Vec<HistoryEntry> = serde_json::from_str(&text).expect("valid json");
         assert_eq!(loaded.len(), 2);
-        assert_eq!(loaded[0].path, "/b");
-        assert_eq!(loaded[1].path, "/a");
+        assert_eq!(loaded[0].path, normalize_path("/b"));
+        assert_eq!(loaded[1].path, normalize_path("/a"));
     }
 
     #[test]
@@ -245,7 +353,7 @@ mod tests {
         let text = fs::read_to_string(&file).unwrap();
         let loaded: Vec<HistoryEntry> = serde_json::from_str(&text).unwrap();
         assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].path, "/b");
+        assert_eq!(loaded[0].path, normalize_path("/b"));
     }
 
     #[test]

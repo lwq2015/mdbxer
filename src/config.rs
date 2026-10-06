@@ -147,15 +147,57 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 }
 
 /// 读整个配置；文件缺失/损坏时返回全默认（静默回退）。
+/// per_db 的路径会做归一化并合并"同一目标的多写法"重复记录
+/// （相对/绝对路径、大小写、斜杠方向等），下次写盘时自然落盘。
 fn read_config() -> ConfigFile {
     if let Some(path) = config_path() {
         if let Ok(text) = std::fs::read_to_string(path) {
-            if let Ok(cfg) = serde_json::from_str::<ConfigFile>(&text) {
+            if let Ok(mut cfg) = serde_json::from_str::<ConfigFile>(&text) {
+                normalize_per_db(&mut cfg.per_db);
                 return cfg;
             }
         }
     }
     ConfigFile::default()
+}
+
+/// 归一化 per_db 路径并合并重复项：收藏取并集（去重保序），
+/// last_table 跟随更新的 last_use。
+fn normalize_per_db(list: &mut Vec<PerDbRecord>) {
+    let mut merged: Vec<PerDbRecord> = Vec::with_capacity(list.len());
+    for rec in list.drain(..) {
+        let norm = crate::history::normalize_path(&rec.path);
+        match merged
+            .iter_mut()
+            .find(|r| crate::history::path_eq(&r.path, &norm))
+        {
+            Some(ex) => merge_per_db(ex, PerDbRecord { path: norm, ..rec }),
+            None => merged.push(PerDbRecord { path: norm, ..rec }),
+        }
+    }
+    *list = merged;
+}
+
+/// 把 src 合并进 dst：收藏并集去重，last_use/last_table 取更新者。
+fn merge_per_db(dst: &mut PerDbRecord, src: PerDbRecord) {
+    for t in src.fav_tables {
+        if !dst.fav_tables.contains(&t) {
+            dst.fav_tables.push(t);
+        }
+    }
+    for k in src.fav_keys {
+        if !dst
+            .fav_keys
+            .iter()
+            .any(|x| x.table == k.table && x.key_hex == k.key_hex)
+        {
+            dst.fav_keys.push(k);
+        }
+    }
+    if src.last_use > dst.last_use {
+        dst.last_use = src.last_use;
+        dst.last_table = src.last_table;
+    }
 }
 
 /// 统一「读-改-写」：任何单项保存都不会丢其他字段；写盘失败静默忽略。
@@ -208,14 +250,15 @@ pub fn save_ui_prefs(p: &UiPrefs) {
     write_config(|c| c.ui = p.clone());
 }
 
-/// 读取某库的记录；无记录时返回以该路径初始化的默认记录。
+/// 读取某库的记录；无记录时返回以归一化路径初始化的默认记录。
 pub fn load_per_db(path: &str) -> PerDbRecord {
+    let norm = crate::history::normalize_path(path);
     read_config()
         .per_db
         .into_iter()
-        .find(|r| r.path == path)
+        .find(|r| crate::history::path_eq(&r.path, &norm))
         .unwrap_or_else(|| PerDbRecord {
-            path: path.to_string(),
+            path: norm,
             ..Default::default()
         })
 }
@@ -231,8 +274,9 @@ pub fn save_per_db(rec: &PerDbRecord) {
 }
 
 /// upsert + 按 last_use 降序 + LRU 截断（纯函数，便于测试）。
-fn upsert_per_db(list: &mut Vec<PerDbRecord>, rec: PerDbRecord) {
-    list.retain(|r| r.path != rec.path);
+fn upsert_per_db(list: &mut Vec<PerDbRecord>, mut rec: PerDbRecord) {
+    rec.path = crate::history::normalize_path(&rec.path);
+    list.retain(|r| !crate::history::path_eq(&r.path, &rec.path));
     list.push(rec);
     list.sort_by(|a, b| b.last_use.cmp(&a.last_use));
     list.truncate(MAX_PER_DB);
@@ -380,9 +424,9 @@ mod tests {
         upsert_per_db(&mut list, rec("b", 2));
         upsert_per_db(&mut list, rec("a", 3)); // 更新 a
         assert_eq!(list.len(), 2);
-        assert_eq!(list[0].path, "a"); // 最新在前
+        assert_eq!(list[0].path, crate::history::normalize_path("a")); // 最新在前
         assert_eq!(list[0].last_use, 3);
-        assert_eq!(list[1].path, "b");
+        assert_eq!(list[1].path, crate::history::normalize_path("b"));
     }
 
     #[test]
@@ -400,8 +444,50 @@ mod tests {
         }
         assert_eq!(list.len(), MAX_PER_DB);
         // 保留的是最新的 50 个（db10..db59），最旧在最末
-        assert_eq!(list[0].path, format!("db{}", MAX_PER_DB + 9));
-        assert_eq!(list.last().unwrap().path, "db10");
+        assert_eq!(
+            list[0].path,
+            crate::history::normalize_path(&format!("db{}", MAX_PER_DB + 9))
+        );
+        assert_eq!(
+            list.last().unwrap().path,
+            crate::history::normalize_path("db10")
+        );
+    }
+
+    #[test]
+    fn normalize_per_db_merges_equivalent_path_records() {
+        let mut list = vec![
+            PerDbRecord {
+                path: "K:\\Data\\DB".to_string(),
+                last_table: Some("t1".to_string()),
+                fav_tables: vec![Some("a".to_string())],
+                last_use: 100,
+                ..Default::default()
+            },
+            PerDbRecord {
+                path: "k:/data/db/".to_string(), // 同目标，另一种写法（不存在则词法归一）
+                last_table: Some("t2".to_string()),
+                fav_tables: vec![Some("b".to_string()), Some("a".to_string())],
+                last_use: 200,
+                ..Default::default()
+            },
+            PerDbRecord {
+                path: "K:\\Other".to_string(),
+                last_use: 10,
+                ..Default::default()
+            },
+        ];
+        normalize_per_db(&mut list);
+        assert_eq!(list.len(), 2);
+        let merged = list
+            .iter()
+            .find(|r| crate::history::path_eq(&r.path, "K:\\Data\\DB"))
+            .unwrap();
+        // 收藏并集去重保序
+        assert_eq!(merged.fav_tables, vec![Some("a".to_string()), Some("b".to_string())]);
+        // last_table 跟随更新的 last_use
+        assert_eq!(merged.last_use, 200);
+        assert_eq!(merged.last_table.as_deref(), Some("t2"));
     }
 
     #[test]
