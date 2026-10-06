@@ -10,7 +10,8 @@ mod hexdump;
 mod value;
 
 pub use guess::guess;
-pub use hexdump::{DEFAULT_HEX_WIDTH, HEX_WIDTHS, PAGE_BYTES, hex_dump};
+pub(crate) use hexdump::{ADDR_CHARS, hex_line, hex_section_chars, mid_gap_index};
+pub use hexdump::{DEFAULT_HEX_WIDTH, HEX_WIDTHS, PAGE_BYTES};
 pub use value::decode;
 
 /// 整数千位分隔开关（默认开）：1,625,981,420 vs 1625981420。

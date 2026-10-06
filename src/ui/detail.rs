@@ -47,6 +47,14 @@ pub struct DetailState {
     pub key_seg_input: String,
     /// Value 卡片偏移跳转输入框
     pub val_seg_input: String,
+    /// Key 卡片 hex 视图选区的内容指纹（段偏移/长度/行/多值序号），用于换内容时清选区
+    pub hex_key_fp: Option<(usize, usize, Option<usize>, usize)>,
+    /// Key 卡片 hex 视图选区（字节全局序号端点，顺序无关）
+    pub hex_key_sel: Option<(usize, usize)>,
+    /// Value 卡片 hex 视图选区内容指纹
+    pub hex_val_fp: Option<(usize, usize, Option<usize>, usize)>,
+    /// Value 卡片 hex 视图选区
+    pub hex_val_sel: Option<(usize, usize)>,
 }
 
 impl Default for DetailState {
@@ -68,6 +76,10 @@ impl Default for DetailState {
             val_seg_off: 0,
             key_seg_input: String::new(),
             val_seg_input: String::new(),
+            hex_key_fp: None,
+            hex_key_sel: None,
+            hex_val_fp: None,
+            hex_val_sel: None,
         }
     }
 }
@@ -323,15 +335,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     ui.label(t.hex_view);
                     // HEX 与 ASCII 至少保留一项：只剩一项时该项变灰、不可取消；
                     // 即只有另一项仍勾选时，才允许关掉这一项。
-                    let mut hex_pref_changed = ui.checkbox(&mut app.detail.show_addr, t.addr).changed()
-                        | ui
-                            .add_enabled(
+                    let mut hex_pref_changed =
+                        ui.checkbox(&mut app.detail.show_addr, t.addr).changed()
+                            | ui.add_enabled(
                                 app.detail.show_ascii,
                                 egui::Checkbox::new(&mut app.detail.show_hex, "HEX"),
                             )
                             .changed()
-                        | ui
-                            .add_enabled(
+                            | ui.add_enabled(
                                 app.detail.show_hex,
                                 egui::Checkbox::new(&mut app.detail.show_ascii, "ASCII"),
                             )
@@ -608,28 +619,34 @@ fn kv_card(
                 );
             });
 
-        // 十六进制视图：desired_rows 只设最小高度（内容少时撑开），不封顶；
-        // 整段行数多时由外层右栏 ScrollArea 统一滚动。
-        let dump = fmt::hex_dump(
-            window,
-            app.detail.hex_width,
-            app.detail.show_addr,
-            app.detail.show_hex,
-            app.detail.show_ascii,
-            off,
-        );
-        let hex_rows = dump.lines().count().clamp(1, 20);
+        // 十六进制视图：自绘交互组件（悬停整行/单字节联动、拖拽选区 HEX↔ASCII 同步）。
+        // 大段数据组件内部按裁剪区只渲染可见行；高度完全撑开，由外层 ScrollArea 滚动。
         egui::CollapsingHeader::new(t.section_hex)
             .id_salt(("detail_hex", is_key))
             .default_open(true)
             .show(ui, |ui| {
-                let mut dump = dump;
-                ui.add(
-                    egui::TextEdit::multiline(&mut dump)
-                        .font(egui::TextStyle::Monospace)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(hex_rows),
+                // 内容指纹：换行/翻多值/切段后字节变了，选区作废
+                let fp = (off, window.len(), app.selected_row, app.detail.dup_index);
+                let (stored, sel) = if is_key {
+                    (&mut app.detail.hex_key_fp, &mut app.detail.hex_key_sel)
+                } else {
+                    (&mut app.detail.hex_val_fp, &mut app.detail.hex_val_sel)
+                };
+                if *stored != Some(fp) {
+                    *sel = None;
+                }
+                super::hexview::hex_view(
+                    ui,
+                    super::hexview::view_id(is_key),
+                    window,
+                    app.detail.hex_width,
+                    app.detail.show_addr,
+                    app.detail.show_hex,
+                    app.detail.show_ascii,
+                    off,
+                    sel,
                 );
+                *stored = Some(fp);
             });
     });
 }

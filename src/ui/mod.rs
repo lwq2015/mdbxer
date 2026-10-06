@@ -6,6 +6,7 @@
 mod about;
 mod dataview;
 mod detail;
+mod hexview;
 mod sidebar;
 mod statsview;
 mod topbar;
@@ -977,6 +978,9 @@ impl MdbxerApp {
                 self.focus_search = true;
             }
             egui::Key::Escape => {
+                // Esc 统一复位：无条件清 Key/Value 搜索并取消全表搜索；
+                // 焦点在 hex 视图时，hexview 自身会同时清字节选区——两边各清各的，
+                // 不相互截获，一次 Esc 全部复位。
                 self.clear_key_search();
                 self.clear_value_search();
                 self.cancel_value_search();

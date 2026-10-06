@@ -184,6 +184,8 @@ pub struct I18n {
     pub bytes_t: &'static str,
     pub section_text: &'static str,
     pub section_hex: &'static str,
+    /// 交互式 hex 视图操作提示（悬停整个区域时显示）
+    pub hex_hint: &'static str,
 
     // ── 多值/分段状态消息（模板与提示）──
     pub dup_located_t: &'static str,
@@ -647,6 +649,7 @@ const ZH: I18n = I18n {
     bytes_t: "{n} 字节",
     section_text: "文本",
     section_hex: "十六进制",
+    hex_hint: "拖拽选择字节（HEX 与 ASCII 联动高亮）；Ctrl+C 复制所选十六进制，Esc 清除选区",
 
     dup_located_t: "已定位到第 {i}/{total} 个值",
     dup_wrap_t: "已回绕定位到第 {i}/{total} 个值",
@@ -871,6 +874,7 @@ const EN: I18n = I18n {
     bytes_t: "{n} bytes",
     section_text: "Text",
     section_hex: "Hex",
+    hex_hint: "Drag to select bytes (HEX and ASCII highlight together); Ctrl+C copies selected hex, Esc clears the selection",
 
     dup_located_t: "At value {i}/{total}",
     dup_wrap_t: "Wrapped to value {i}/{total}",
@@ -1095,6 +1099,7 @@ const RU: I18n = I18n {
     bytes_t: "{n} байт",
     section_text: "Текст",
     section_hex: "Hex",
+    hex_hint: "Перетащите для выбора байт (HEX и ASCII подсвечиваются вместе); Ctrl+C копирует выбранный hex, Esc снимает выделение",
 
     dup_located_t: "Значение {i}/{total}",
     dup_wrap_t: "С переходом к значению {i}/{total}",
