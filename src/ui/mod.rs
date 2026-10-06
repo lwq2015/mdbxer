@@ -354,6 +354,10 @@ pub struct MdbxerApp {
     focus_search: bool,
     /// 搜索框的真实控件 ID（每帧更新，用于判断 Ctrl+C 是否在复制框内文本）
     search_box_id: Option<egui::Id>,
+    /// 行复制武装标记：点击表格行后置位，搜索框重新聚焦时清除。
+    /// 点击行不会转移 egui 焦点（搜索框可能仍持有焦点），所以用显式
+    /// 标记而不是焦点判断来决定 Ctrl+C 的归属。
+    row_copy_pending: bool,
     /// Value 搜索的全表模式开关（默认关闭：V 键仅过滤当前页；
     /// 开启后 V 键全表扫描并定位）
     pub value_search_full: bool,
@@ -468,6 +472,7 @@ impl MdbxerApp {
             value_search: None,
             focus_search: false,
             search_box_id: None,
+            row_copy_pending: false,
             value_search_full: false,
             dark_theme: crate::config::load_theme() == crate::config::Theme::Dark,
             fav_tables: Vec::new(),
@@ -890,13 +895,30 @@ impl MdbxerApp {
     /// 全局快捷键：Ctrl+O 打开、Ctrl+F 聚焦搜索框、Ctrl+C 复制选中行、
     /// Esc 清除过滤、PgUp/PgDn 翻页。
     pub fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        // Ctrl+C/X/V 在 egui-winit 层被转换为 Event::Copy/Cut/Paste 后直接消费，
+        // 不会再产生 Key::C 按键事件，因此复制只能监听 Event::Copy/Cut。
+        // TextEdit/可选 Label 稍后处理同一事件：有文本选区时会覆盖剪贴板，
+        // 无选区时不动，于是"先复制行、选区后覆盖"的优先级天然正确。
+        let copy_event = ctx.input(|i| {
+            i.events
+                .iter()
+                .any(|e| matches!(e, egui::Event::Copy | egui::Event::Cut))
+        });
+        if copy_event {
+            // 复制选中行，除非搜索框刚被聚焦（此时让 egui 处理框内
+            // 选中文本复制）。点击表格行会重新武装行复制。
+            if self.row_copy_pending || ctx.memory(|m| m.focused().is_none()) {
+                self.copy_selected_row(ctx);
+            }
+            self.row_copy_pending = false;
+        }
+
         let (ctrl, key) = ctx.input(|i| {
             let ctrl = i.modifiers.command;
             let mut key = None;
             for k in [
                 egui::Key::O,
                 egui::Key::F,
-                egui::Key::C,
                 egui::Key::Escape,
                 egui::Key::PageUp,
                 egui::Key::PageDown,
@@ -926,14 +948,6 @@ impl MdbxerApp {
                 // 只设标记，搜索框渲染时再 request_focus：
                 // 直接对猜测的 ID request_focus 会因 ID 不存在触发 accesskit panic
                 self.focus_search = true;
-            }
-            egui::Key::C if ctrl => {
-                // 仅当焦点在搜索框时让 egui 处理选中文本复制，否则复制选中行
-                let in_search = self.search_box_id.is_some()
-                    && ctx.memory(|m| m.focused()) == self.search_box_id;
-                if !in_search {
-                    self.copy_selected_row(ctx);
-                }
             }
             egui::Key::Escape => {
                 self.clear_key_search();
