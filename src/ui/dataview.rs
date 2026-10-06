@@ -77,6 +77,23 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         }
 
         ui.separator();
+        // Value 搜索模式开关：放在搜索框前（先选模式再输入），
+        // 提示与主题切换一样按状态分开（提示将切换到的模式）
+        if ui
+            .checkbox(&mut app.value_search_full, t.full_search_toggle)
+            .on_hover_text(if app.value_search_full {
+                t.full_search_tip_on
+            } else {
+                t.full_search_tip_off
+            })
+            .changed()
+        {
+            // 切到全表模式时清除页内过滤残留，避免干扰
+            if app.value_search_full {
+                app.clear_value_search();
+            }
+        }
+
         // 共享搜索框：Key（跳转/前缀过滤）和 Value（全表/页内文本搜索）共用
         // 符号取自 egui 内置字体 emoji-icon/NotoEmoji，跨平台不依赖系统字体
         let sresp = ui.add(
@@ -108,25 +125,17 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         if ui.button("K").on_hover_text(t.key_search_btn_tip).clicked() {
             app.apply_key_search();
         }
-        // 搜索 Value：行为由"全表"开关决定（开启=全表扫描定位，关闭=当前页过滤）
-        let v_btn = ui
-            .button("V")
-            .on_hover_text(t.value_search_btn_tip);
+        // 搜索 Value：行为由"全表"开关决定，提示按当前模式分状态
+        let v_btn = ui.button("V").on_hover_text(if app.value_search_full {
+            t.value_search_tip_on
+        } else {
+            t.value_search_tip_off
+        });
         if v_btn.clicked() {
             if app.value_search_full {
                 app.start_full_value_search();
             } else {
                 app.apply_value_search();
-            }
-        }
-        if ui
-            .checkbox(&mut app.value_search_full, t.full_search_toggle)
-            .on_hover_text(t.full_search_tip)
-            .changed()
-        {
-            // 切换模式时清除另一模式的残留状态，避免误判
-            if app.value_search_full {
-                app.clear_value_search();
             }
         }
         // 过滤状态指示 + 清除

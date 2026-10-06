@@ -202,10 +202,13 @@ pub struct I18n {
     pub key_search_mode_tip: &'static str,
     /// "K" 按钮 hover 提示
     pub key_search_btn_tip: &'static str,
-    /// "V" 按钮 hover 提示
-    pub value_search_btn_tip: &'static str,
+    /// "V" 按钮 hover 提示（按当前模式分状态）
+    pub value_search_tip_off: &'static str,
+    pub value_search_tip_on: &'static str,
     pub full_search_toggle: &'static str,
-    pub full_search_tip: &'static str,
+    /// "全表"复选框 hover 提示（按当前状态分：提示将切换到哪个模式）
+    pub full_search_tip_off: &'static str,
+    pub full_search_tip_on: &'static str,
     pub search_empty: &'static str,
     pub filter_active: &'static str,
     pub filter_clear_tip: &'static str,
@@ -641,9 +644,11 @@ const ZH: I18n = I18n {
     toolbar_search_hint: "搜索：文本或 hex(...)",
     key_search_mode_tip: "跳转模式：定位到首个不小于输入的 Key；过滤模式：只显示以输入开头的 Key（回车生效）",
     key_search_btn_tip: "搜索 Key（跳转或前缀过滤）",
-    value_search_btn_tip: "搜索 Value：勾选\"全表\"=扫描全表并定位，未勾选=仅过滤当前页",
+    value_search_tip_off: "搜索 Value：页内过滤（当前页文本包含，大小写不敏感）",
+    value_search_tip_on: "搜索 Value：全表扫描（找到首个包含搜索词的记录并定位）",
     full_search_toggle: "全表",
-    full_search_tip: "全表搜索开关：开启后 V 键逐批扫描全表并定位到首个匹配；关闭时 V 键仅过滤当前页",
+    full_search_tip_off: "切换到全表搜索模式：V 键逐批扫描全表并定位到首个匹配",
+    full_search_tip_on: "切换到页内过滤模式：V 键仅过滤当前已加载的行",
     search_empty: "请先输入搜索内容",
     filter_active: "已过滤",
     filter_clear_tip: "清除搜索过滤（Key 前缀 + Value 文本），恢复显示全表",
@@ -844,9 +849,11 @@ const EN: I18n = I18n {
     toolbar_search_hint: "Search: text or hex(...)",
     key_search_mode_tip: "Jump mode: locate the first key >= input; Filter mode: show only keys starting with the input (Enter to apply)",
     key_search_btn_tip: "Search keys (jump or prefix filter)",
-    value_search_btn_tip: "Search value: with \"Full\" checked=scans the whole table, unchecked=filters current page",
+    value_search_tip_off: "Search value: filter current page (case-insensitive contains)",
+    value_search_tip_on: "Search value: full-table scan (locate the first record containing the term)",
     full_search_toggle: "Full",
-    full_search_tip: "Full-table search toggle: when on, V scans the whole table and locates the first match; when off, V filters the current page",
+    full_search_tip_off: "Switch to full-table search: V scans the whole table and locates the first match",
+    full_search_tip_on: "Switch to page filter: V filters the currently loaded rows only",
     search_empty: "Enter a search term first",
     filter_active: "filtered",
     filter_clear_tip: "Clear search filters (key prefix + value text), show the whole table",
@@ -1047,9 +1054,11 @@ const RU: I18n = I18n {
     toolbar_search_hint: "Поиск: текст или hex(...)",
     key_search_mode_tip: "Режим перехода: первый ключ >= ввода; режим фильтра: только ключи, начинающиеся с ввода (Enter — применить)",
     key_search_btn_tip: "Поиск ключей (переход или фильтр по префиксу)",
-    value_search_btn_tip: "Поиск значения: с \"Вся\"=поиск по всей таблице, без=фильтр по странице",
+    value_search_tip_off: "Поиск значения: фильтр по текущей странице (вхождение без учёта регистра)",
+    value_search_tip_on: "Поиск значения: сканирование всей таблицы (переход к первой записи с совпадением)",
     full_search_toggle: "Вся",
-    full_search_tip: "Переключатель полного поиска: вкл — V сканирует всю таблицу и переходит к первому совпадению; выкл — V фильтрует текущую страницу",
+    full_search_tip_off: "Переключиться на поиск по всей таблице: V сканирует её и переходит к первому совпадению",
+    full_search_tip_on: "Переключиться на фильтр по странице: V фильтрует только загруженные строки",
     search_empty: "Сначала введите поисковый запрос",
     filter_active: "отфильтровано",
     filter_clear_tip: "Сбросить фильтры поиска (префикс ключа + текст значения), показать всю таблицу",
@@ -1240,7 +1249,11 @@ mod tests {
         for table in &TABLES {
             assert!(!table.toolbar_search_hint.is_empty());
             assert!(!table.key_search_btn_tip.is_empty());
-            assert!(!table.value_search_btn_tip.is_empty());
+            assert!(!table.value_search_tip_off.is_empty());
+            assert!(!table.value_search_tip_on.is_empty());
+            assert!(!table.full_search_toggle.is_empty());
+            assert!(!table.full_search_tip_off.is_empty());
+            assert!(!table.full_search_tip_on.is_empty());
             assert!(!table.key_search_mode_tip.is_empty());
             assert!(!table.filter_active.is_empty());
             assert!(!table.filter_clear_tip.is_empty());
