@@ -34,7 +34,7 @@ pub fn show(ui: &mut egui::Ui, build_date: &str) {
 
             // ── 应用 ──
             section(ui, t.about_group_app);
-            grid(ui, |ui| {
+            grid(ui, "about_grid_app", |ui| {
                 row(ui, t.about_version, VERSION);
                 row(ui, t.about_build, build_date);
                 row(ui, t.about_stack, "Rust 2024 · egui/eframe 0.36 · libmdbx-rs");
@@ -51,7 +51,7 @@ pub fn show(ui: &mut egui::Ui, build_date: &str) {
             let history_path = crate::history::storage_path()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "—".to_string());
-            grid(ui, |ui| {
+            grid(ui, "about_grid_runtime", |ui| {
                 row(ui, t.about_os_arch, &os_arch);
                 long_row(ui, t.about_config, &config_path);
                 long_row(ui, t.about_history, &history_path);
@@ -92,11 +92,13 @@ fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(2.0);
 }
 
-/// 两列键值表。
-fn grid(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
-    egui::Grid::new("about_grid")
+/// 两列键值表。`id_salt` 必须在同一帧内唯一（同页有多个 Grid）。
+/// 固定首列最小宽度，使多个分组的键列/值列竖向对齐。
+fn grid(ui: &mut egui::Ui, id_salt: &str, body: impl FnOnce(&mut egui::Ui)) {
+    egui::Grid::new(id_salt)
         .num_columns(2)
         .spacing([20.0, 5.0])
+        .min_col_width(90.0)
         .striped(false)
         .show(ui, body);
 }
