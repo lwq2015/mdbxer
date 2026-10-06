@@ -40,13 +40,20 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     app.save_ui_prefs();
                 }
             });
-            // 过滤表名（占剩余宽度）+ 导出当前表（CSV/JSON 下拉 + ⬇）
+            // 过滤表名（弹性占满剩余宽度）+ 导出当前表（CSV/JSON 下拉 + ⬇）
             // ⬇ U+2B07 取自 egui 内置 NotoEmoji/emoji-icon，跨平台一致
             ui.horizontal(|ui| {
+                // 先算出导出控件所需宽度，剩余空间给过滤框，避免过滤框 INFINITY
+                // 把导出挤出可见区
+                let spacing = ui.spacing().item_spacing.x;
+                let export_w = 52.0 // ComboBox 宽度
+                    + 26.0 // ⬇ 按钮宽度
+                    + spacing * 2.0; // 两个控件间距
+                let filter_w = (ui.available_width() - export_w).max(40.0);
                 ui.add(
                     egui::TextEdit::singleline(&mut app.table_filter)
                         .hint_text(t.filter_hint)
-                        .desired_width(f32::INFINITY),
+                        .desired_width(filter_w),
                 );
                 let mut export_clicked = false;
                 let mut ef = app.export_format;
