@@ -7,7 +7,7 @@
 //! - 悬停整行高亮（跨 地址/HEX/ASCII 三列）；
 //! - 悬停单个字节时 HEX 与 ASCII 两侧联动高亮；
 //! - 鼠标拖拽按字节选择，HEX 与 ASCII 选区联动、可跨多行；
-//! - Ctrl+C 复制所选字节的十六进制（空格分隔），Esc 清除选区。
+//! - Ctrl+C 同时复制所选字节的十六进制与 ASCII 原文（按显示行对齐），Esc 清除选区。
 //!
 //! 大段数据（可能数千行）只绘制与命中测试与裁剪区相交的行。
 
@@ -25,20 +25,11 @@ struct GalleyCache {
     rows: HashMap<usize, Arc<egui::Galley>>,
 }
 
-/// 拖拽过程状态（锚点字节序号 + 是否实际移动过 + 起手列）。
+/// 拖拽过程状态（锚点字节序号 + 是否实际移动过）。
 #[derive(Clone, Copy)]
 struct Drag {
     anchor: usize,
     moved: bool,
-    col: DragCol,
-}
-
-/// 拖拽起手列：决定 Ctrl+C 复制十六进制还是 ASCII 原文。
-#[derive(Clone, Copy, Default, PartialEq)]
-enum DragCol {
-    #[default]
-    Hex,
-    Ascii,
 }
 
 /// 渲染几何（点坐标）。
@@ -54,8 +45,8 @@ struct Geom {
 }
 
 impl Geom {
-    /// 命中测试：返回（行号, 行内字节序号, 起手列），落在地址列/空隙/补齐区返回 None。
-    fn hit(&self, p: egui::Pos2, n: usize, chunk_len: usize) -> Option<(usize, usize, DragCol)> {
+    /// 命中测试：返回（行号, 行内字节序号），落在地址列/空隙/补齐区返回 None。
+    fn hit(&self, p: egui::Pos2, n: usize, chunk_len: usize) -> Option<(usize, usize)> {
         if p.x < self.x0 || p.y < self.top {
             return None;
         }
@@ -85,10 +76,10 @@ impl Geom {
             }
             let (bi, frac) = (raw as usize / 3, raw as usize % 3);
             // 每字节只有前两个字符（两个 hex 数字）可点，第 3 个是空格
-            (bi < chunk_len && frac < 2).then_some((row, bi, DragCol::Hex))
+            (bi < chunk_len && frac < 2).then_some((row, bi))
         } else if self.ascii_w > 0.0 && p.x >= self.ascii_x && p.x < self.ascii_x + self.ascii_w {
             let bi = ((p.x - self.ascii_x) / self.cw).floor() as isize;
-            (bi >= 0 && (bi as usize) < chunk_len).then_some((row, bi as usize, DragCol::Ascii))
+            (bi >= 0 && (bi as usize) < chunk_len).then_some((row, bi as usize))
         } else {
             None
         }
@@ -202,8 +193,8 @@ pub(crate) fn hex_view(
     };
     let text_color = ui.visuals().widgets.noninteractive.fg_stroke.color;
 
-    let hit_at = |p: egui::Pos2| -> Option<(usize, usize, DragCol)> {
-        let (r, i, col) = geom.hit(p, n, n)?;
+    let hit_at = |p: egui::Pos2| -> Option<(usize, usize)> {
+        let (r, i) = geom.hit(p, n, n)?;
         if r >= rows {
             return None;
         }
@@ -211,26 +202,23 @@ pub(crate) fn hex_view(
         if i >= chunk_len {
             return None;
         }
-        Some((r, i, col))
+        Some((r, i))
     };
 
     // ── 指针交互：按下定锚点、拖拽更新选区（HEX/ASCII 高亮联动，
-    //    但复制格式由"起手列"决定：HEX 起手复制十六进制，ASCII 起手复制原文）──
-    let col_id = id.with("copy_col");
+    //    复制时 HEX 与 ASCII 同时输出，与起手列无关）──
     let pressed = resp.drag_started();
     if pressed {
         resp.request_focus();
         if let Some(p) = resp.interact_pointer_pos() {
             match hit_at(p) {
-                Some((r, i, col)) => {
+                Some((r, i)) => {
                     ui.ctx().data_mut(|d| {
-                        d.insert_temp(col_id, col);
                         d.insert_temp(
                             id,
                             Some(Drag {
                                 anchor: r * n + i,
                                 moved: false,
-                                col,
                             }),
                         )
                     });
@@ -245,8 +233,31 @@ pub(crate) fn hex_view(
     }
     if resp.dragged() {
         let anchor = ui.ctx().data(|d| d.get_temp::<Option<Drag>>(id)).flatten();
-        if let (Some(drag), Some(p)) = (anchor, resp.interact_pointer_pos()) {
-            if let Some((r, i, _)) = hit_at(p) {
+        if let (Some(drag), Some(mut p)) = (anchor, resp.interact_pointer_pos()) {
+            // 拖到视口上下边缘自动滚动，使选区可以一直延伸到不可见部分。
+            // 速度按指针深入边缘的距离比例递增；内容本身没超出该方向则不滚。
+            let view = ui.clip_rect();
+            let margin = 28.0;
+            let dt = ui.input(|i| i.stable_dt).min(0.05);
+            let max_speed = rh * 14.0; // 点/秒
+            let mut edge = false;
+            if rect.top() < view.top() - 1.0 && p.y < view.top() + margin {
+                // egui 约定 scroll delta 正值 = 向上看
+                let k = (view.top() + margin - p.y) / margin;
+                ui.scroll_with_delta(egui::vec2(0.0, max_speed * k.clamp(0.0, 1.0) * dt));
+                p.y = view.top() + 1.0;
+                edge = true;
+            } else if rect.bottom() > view.bottom() + 1.0 && p.y > view.bottom() - margin {
+                let k = (p.y - (view.bottom() - margin)) / margin;
+                ui.scroll_with_delta(egui::vec2(0.0, -max_speed * k.clamp(0.0, 1.0) * dt));
+                p.y = view.bottom() - 2.0;
+                edge = true;
+            }
+            // 纵向已夹到边缘时，横向也夹回内容区，保证能命中最边缘的字节
+            if edge {
+                p.x = p.x.clamp(rect.left() + 1.0, rect.left() + content_w - 1.0);
+            }
+            if let Some((r, i)) = hit_at(p) {
                 let cur = r * n + i;
                 let moved = drag.moved || cur != drag.anchor;
                 ui.ctx().data_mut(|d| {
@@ -255,7 +266,6 @@ pub(crate) fn hex_view(
                         Some(Drag {
                             anchor: drag.anchor,
                             moved,
-                            col: drag.col,
                         }),
                     )
                 });
@@ -277,11 +287,9 @@ pub(crate) fn hex_view(
     // 右键一律清除选区（Esc 的兜底：egui begin_pass 会先于帧逻辑清掉焦点）
     if resp.secondary_clicked() {
         *sel = None;
-        ui.ctx().data_mut(|d| d.remove_temp::<DragCol>(col_id));
     }
 
-    // ── 键盘：聚焦时 Ctrl+C 按起手列复制（HEX=按显示行换行的十六进制，
-    //    ASCII=字节原文连续文本），Esc 清除选区 ──
+    // ── 键盘：聚焦时 Ctrl+C 复制（HEX 与 ASCII 同行，按显示列对齐），Esc 清除 ──
     // 注意：egui 在每帧 begin_pass 处理原始事件时，一旦发现无修饰 Esc 会立即
     // 清空 focused_widget（memory/mod.rs Focus::begin_pass），所以这一帧
     // focused() 已经是 None。要用 resp.lost_focus()（比较上一帧焦点）+
@@ -297,24 +305,14 @@ pub(crate) fn hex_view(
         if copy {
             if let Some((a, b)) = *sel {
                 let (lo, hi) = (a.min(b), a.max(b).min(bytes.len() - 1));
-                let chunk = &bytes[lo..=hi];
-                let col = ui
-                    .ctx()
-                    .data(|d| d.get_temp::<DragCol>(col_id))
-                    .unwrap_or_default();
-                let text = match col {
-                    DragCol::Hex => crate::fmt::hex_copy_selection(bytes, lo, hi, n),
-                    DragCol::Ascii => {
-                        // 忠实于字节：连续拼接，不凭空插入换行；非 UTF-8 用替换字符
-                        String::from_utf8_lossy(chunk).into_owned()
-                    }
-                };
-                ui.ctx().copy_text(text);
+                // HEX 与 ASCII 同时输出，按显示行/列对齐（见 hexdump::hex_copy_selection）
+                ui.ctx().copy_text(crate::fmt::hex_copy_selection(
+                    bytes, lo, hi, n, show_hex, show_ascii,
+                ));
             }
         }
         if escape_pressed && resp.lost_focus() {
             *sel = None;
-            ui.ctx().data_mut(|d| d.remove_temp::<DragCol>(col_id));
         }
     }
 
@@ -364,7 +362,7 @@ pub(crate) fn hex_view(
         );
 
         // 1) 整行悬停背景
-        if hover.is_some_and(|(hr, _, _)| hr == r) {
+        if hover.is_some_and(|(hr, _)| hr == r) {
             painter.rect_filled(row_rect, 0.0, row_bg);
         }
 
@@ -372,7 +370,7 @@ pub(crate) fn hex_view(
         for i in 0..chunk_len {
             let g = r * n + i;
             let selected = sel_norm.is_some_and(|(lo, hi)| g >= lo && g <= hi);
-            let hovered = hover.is_some_and(|(hr, hi, _)| hr == r && hi == i);
+            let hovered = hover.is_some_and(|(hr, hi)| hr == r && hi == i);
 
             // 2) 选区 / 悬停字节背景（HEX 与 ASCII 联动）
             let v_inset = egui::vec2(0.0, 1.0);

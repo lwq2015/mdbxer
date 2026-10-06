@@ -243,10 +243,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     }
                     // selectable(false)：避免单元格文本选区抢占 Ctrl+C，
                     // 保证 Ctrl+C 始终复制选中行的 KV
+                    // show_tooltip_when_elided(false)：clip 列截断时不弹自动全文
+                    // tooltip——大 binary 全文可达数万字（性能差），且选中行文字为
+                    // 白色、tooltip 底也是白色会"空白"；完整值请在右栏详情查看。
                     if ui
                         .add(
                             egui::Label::new(rt)
                                 .selectable(false)
+                                .show_tooltip_when_elided(false)
                                 .sense(egui::Sense::click()),
                         )
                         .clicked()
@@ -264,6 +268,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         .add(
                             egui::Label::new(rt)
                                 .selectable(false)
+                                .show_tooltip_when_elided(false)
                                 .sense(egui::Sense::click()),
                         )
                         .clicked()
@@ -281,6 +286,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         .add(
                             egui::Label::new(rt)
                                 .selectable(false)
+                                .show_tooltip_when_elided(false)
                                 .sense(egui::Sense::click()),
                         )
                         .clicked()
@@ -303,6 +309,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         .add(
                             egui::Label::new(rt)
                                 .selectable(false)
+                                .show_tooltip_when_elided(false)
                                 .sense(egui::Sense::click()),
                         )
                         .on_hover_text(t.dup_row_tip)
