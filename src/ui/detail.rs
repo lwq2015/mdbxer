@@ -545,14 +545,14 @@ fn kv_card(
                     );
                     let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if ui
-                        .button("↑")
+                        .button("⬆")
                         .on_hover_text(t.search_prev_tip)
                         .clicked()
                     {
                         app.status = Status::Msg(app.detail.dup_search(&dctx, false));
                     }
                     if ui
-                        .button("↓")
+                        .button("⬇")
                         .on_hover_text(t.search_next_tip)
                         .clicked()
                         || enter

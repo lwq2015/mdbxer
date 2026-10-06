@@ -104,7 +104,6 @@ pub struct I18n {
     pub thousands_tip: &'static str,
     pub panel_tables: &'static str,
     pub panel_detail: &'static str,
-    pub language: &'static str,
 
     // ── 打开模式 ──
     pub m_auto: &'static str,
@@ -143,8 +142,8 @@ pub struct I18n {
     pub tip_prev: &'static str,
     pub tip_next: &'static str,
     pub tip_last: &'static str,
-    pub jump_hint: &'static str,
-    pub jump_btn: &'static str,
+    /// 每页条数下拉前的短标签
+    pub page_size_label: &'static str,
     pub page_size_tip: &'static str,
     pub col_type: &'static str,
     /// 多值分组行后缀模板 {n}
@@ -541,7 +540,6 @@ const ZH: I18n = I18n {
     thousands_tip: "整数千位分隔（仅显示，不影响数据）",
     panel_tables: "表",
     panel_detail: "详情",
-    language: "语言",
 
     m_auto: "自动",
     m_file: "单文件",
@@ -553,10 +551,10 @@ const ZH: I18n = I18n {
 
     tables_title: "表 (subDB)",
     filter_hint: "过滤表名",
-    sort_name_asc: "名称 ↑",
-    sort_name_desc: "名称 ↓",
-    sort_count_asc: "条数 ↑",
-    sort_count_desc: "条数 ↓",
+    sort_name_asc: "名称 ⬆",
+    sort_name_desc: "名称 ⬇",
+    sort_count_asc: "条数 ⬆",
+    sort_count_desc: "条数 ⬇",
     table_entry_t: "{name}  ({n} 条{flag})",
     table_flag_sep: "，",
 
@@ -573,8 +571,7 @@ const ZH: I18n = I18n {
     tip_prev: "上一页",
     tip_next: "下一页",
     tip_last: "末页（最后一条）",
-    jump_hint: "hex(...) / 文本",
-    jump_btn: "跳转",
+    page_size_label: "每页",
     page_size_tip: "每页显示条数",
     col_type: "类型",
     dup_n_values_t: "  〔{n} 个值〕",
@@ -621,7 +618,7 @@ const ZH: I18n = I18n {
     seg_bad: "请输入十进制偏移，或 0x 开头的十六进制偏移",
 
     key_search_hint: "搜索 Key：文本或 hex(...)",
-    key_search_mode_tip: "→ 跳转：定位到首个不小于输入的 Key；∈ 前缀过滤：只显示以输入开头的 Key（回车生效）",
+    key_search_mode_tip: "跳转模式：定位到首个不小于输入的 Key；过滤模式：只显示以输入开头的 Key（回车生效）",
     filter_active: "已过滤",
     filter_clear_tip: "清除 Key 前缀过滤，恢复显示全表",
     key_search_bad_t: "搜索输入错误：{e}",
@@ -629,7 +626,7 @@ const ZH: I18n = I18n {
     export_tip: "把当前表导出为 CSV/JSON（后台线程，界面可继续操作）",
     export_started: "导出已开始…",
     export_progress_t: "导出中：已写出 {n} 条…",
-    export_done_t: "导出完成：{n} 条 → {path}",
+    export_done_t: "导出完成：{n} 条，已保存到 {path}",
 
     theme_tip: "切换深浅色主题",
     favorites_title: "收藏",
@@ -735,7 +732,6 @@ const EN: I18n = I18n {
     thousands_tip: "Thousands separators (display only, data unchanged)",
     panel_tables: "Tables",
     panel_detail: "Detail",
-    language: "Language",
 
     m_auto: "Auto",
     m_file: "File",
@@ -747,10 +743,10 @@ const EN: I18n = I18n {
 
     tables_title: "Tables (subDB)",
     filter_hint: "Filter tables",
-    sort_name_asc: "Name ↑",
-    sort_name_desc: "Name ↓",
-    sort_count_asc: "Entries ↑",
-    sort_count_desc: "Entries ↓",
+    sort_name_asc: "Name ⬆",
+    sort_name_desc: "Name ⬇",
+    sort_count_asc: "Entries ⬆",
+    sort_count_desc: "Entries ⬇",
     table_entry_t: "{name}  ({n}{flag})",
     table_flag_sep: ", ",
 
@@ -767,8 +763,7 @@ const EN: I18n = I18n {
     tip_prev: "Previous page",
     tip_next: "Next page",
     tip_last: "Last page",
-    jump_hint: "hex(...) / text",
-    jump_btn: "Jump",
+    page_size_label: "Page",
     page_size_tip: "Rows per page",
     col_type: "Type",
     dup_n_values_t: "  [{n} values]",
@@ -815,7 +810,7 @@ const EN: I18n = I18n {
     seg_bad: "Enter a decimal offset, or hexadecimal prefixed with 0x",
 
     key_search_hint: "Search keys: text or hex(...)",
-    key_search_mode_tip: "→ Jump: locate the first key ≥ input; ∈ Prefix: show only keys starting with the input (Enter to apply)",
+    key_search_mode_tip: "Jump mode: locate the first key >= input; Filter mode: show only keys starting with the input (Enter to apply)",
     filter_active: "filtered",
     filter_clear_tip: "Clear the key prefix filter and show the whole table",
     key_search_bad_t: "Invalid search input: {e}",
@@ -823,7 +818,7 @@ const EN: I18n = I18n {
     export_tip: "Export the current table as CSV/JSON (background thread; UI stays responsive)",
     export_started: "Export started…",
     export_progress_t: "Exporting: {n} records written…",
-    export_done_t: "Export finished: {n} records → {path}",
+    export_done_t: "Export finished: {n} records saved to {path}",
 
     theme_tip: "Toggle dark/light theme",
     favorites_title: "Favorites",
@@ -929,7 +924,6 @@ const RU: I18n = I18n {
     thousands_tip: "Разделители тысяч (только отображение, данные не меняются)",
     panel_tables: "Таблицы",
     panel_detail: "Детали",
-    language: "Язык",
 
     m_auto: "Авто",
     m_file: "Файл",
@@ -941,10 +935,10 @@ const RU: I18n = I18n {
 
     tables_title: "Таблицы (subDB)",
     filter_hint: "Фильтр таблиц",
-    sort_name_asc: "Имя ↑",
-    sort_name_desc: "Имя ↓",
-    sort_count_asc: "Записи ↑",
-    sort_count_desc: "Записи ↓",
+    sort_name_asc: "Имя ⬆",
+    sort_name_desc: "Имя ⬇",
+    sort_count_asc: "Записи ⬆",
+    sort_count_desc: "Записи ⬇",
     table_entry_t: "{name}  ({n}{flag})",
     table_flag_sep: ", ",
 
@@ -961,8 +955,7 @@ const RU: I18n = I18n {
     tip_prev: "Предыдущая страница",
     tip_next: "Следующая страница",
     tip_last: "Последняя страница",
-    jump_hint: "hex(...) / текст",
-    jump_btn: "Перейти",
+    page_size_label: "Стр.",
     page_size_tip: "Строк на странице",
     col_type: "Тип",
     dup_n_values_t: "  [{n} знач.]",
@@ -1009,7 +1002,7 @@ const RU: I18n = I18n {
     seg_bad: "Введите десятичное смещение или шестнадцатеричное с префиксом 0x",
 
     key_search_hint: "Поиск ключей: текст или hex(...)",
-    key_search_mode_tip: "→ Переход: первый ключ ≥ ввода; ∈ Префикс: только ключи, начинающиеся с ввода (Enter — применить)",
+    key_search_mode_tip: "Режим перехода: первый ключ >= ввода; режим фильтра: только ключи, начинающиеся с ввода (Enter — применить)",
     filter_active: "отфильтровано",
     filter_clear_tip: "Сбросить фильтр по префиксу ключа и показать всю таблицу",
     key_search_bad_t: "Неверный запрос поиска: {e}",
@@ -1017,7 +1010,7 @@ const RU: I18n = I18n {
     export_tip: "Экспорт текущей таблицы в CSV/JSON (в фоне; интерфейс остаётся отзывчивым)",
     export_started: "Экспорт начат…",
     export_progress_t: "Экспорт: записано {n} записей…",
-    export_done_t: "Экспорт завершён: {n} записей → {path}",
+    export_done_t: "Экспорт завершён: {n} записей сохранено в {path}",
 
     theme_tip: "Переключить тёмную/светлую тему",
     favorites_title: "Избранное",

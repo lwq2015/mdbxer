@@ -3,7 +3,7 @@
 
 //! 中间 "数据" 页签：工具条 + 表格。
 
-use super::{MdbxerApp, PAGE_SIZES, SortCol};
+use super::{MdbxerApp, SortCol};
 use crate::i18n::tr;
 use egui_extras::{Column, TableBuilder};
 
@@ -26,15 +26,16 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     }
 
     // ── 工具条（单行紧凑：符号按钮 + 悬停说明；范围信息见底部状态栏）──
+    // 每页条数在顶栏；导出当前表在左栏表区域；Key 跳转/过滤统一到搜索框
     ui.horizontal(|ui| {
         // 默认顺序 = 表中读取出来的顺序（正向遍历）
         let sort_text = match app.col_sort {
             Some((col, asc)) => {
-                format!("{} {}", col.label(), if asc { "↑" } else { "↓" })
+                format!("{} {}", col.label(), if asc { "⬆" } else { "⬇" })
             }
             None => {
                 if app.sort_desc {
-                    "Key ↓".to_string()
+                    "Key ⬇".to_string()
                 } else {
                     t.default_order.to_string()
                 }
@@ -76,18 +77,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         }
 
         ui.separator();
-        // Key 搜索：回车生效；→ 跳转定位 / ∈ 前缀过滤
-        // （∈ U+2208 雅黑有字形；⊂ U+2282 仅 Hack 有，Proportional 链不含 Hack 会豆腐块）
+        // Key 搜索：回车生效；➡ 跳转定位 / 🔍 前缀过滤
+        // （符号均取自 egui 内置字体 emoji-icon/NotoEmoji，跨平台不依赖系统字体）
         let sresp = ui.add(
             egui::TextEdit::singleline(&mut app.key_search_input)
-                .desired_width(140.0)
+                .desired_width(160.0)
                 .hint_text(t.key_search_hint),
         );
         if sresp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             app.apply_key_search();
         }
         if ui
-            .button(if app.key_filter_mode { "∈" } else { "→" })
+            .button(if app.key_filter_mode { "🔍" } else { "➡" })
             .on_hover_text(t.key_search_mode_tip)
             .clicked()
         {
@@ -105,61 +106,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 app.clear_key_search();
             }
         }
-
-        ui.separator();
-        let resp = ui.add(
-            egui::TextEdit::singleline(&mut app.jump_input)
-                .desired_width(88.0)
-                .hint_text(t.jump_hint),
-        );
-        if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            app.jump();
-        }
-        if ui.button(t.jump_btn).on_hover_text(t.jump_btn).clicked() {
-            app.jump();
-        }
-
-        ui.separator();
-        let mut ps = app.page_size;
-        let ir = egui::ComboBox::from_id_salt("page_size")
-            .width(60.0)
-            .selected_text(format!("{ps}"))
-            .show_ui(ui, |ui| {
-                for &v in &PAGE_SIZES {
-                    ui.selectable_value(&mut ps, v, v.to_string());
-                }
-            });
-        let page_resp = ir.response.on_hover_text(t.page_size_tip);
-        super::wheel_cycle(ui.ctx(), &page_resp, &PAGE_SIZES, &mut ps);
-        if ps != app.page_size {
-            app.page_size = ps;
-            app.save_ui_prefs();
-            app.load_first_page();
-        }
-
-        ui.separator();
-        // 导出当前表：CSV/JSON 下拉 + ↓（导出中禁用防重入）
-        // 符号用 U+2193（雅黑/egui 内置字体均含）；U+21E9(⇩) 在雅黑中无字形会变豆腐块
-        let mut ef = app.export_format;
-        egui::ComboBox::from_id_salt("export_format")
-            .width(60.0)
-            .selected_text(ef.label())
-            .show_ui(ui, |ui| {
-                for f in crate::export::ExportFormat::ALL {
-                    ui.selectable_value(&mut ef, f, f.label());
-                }
-            });
-        if ef != app.export_format {
-            app.export_format = ef;
-            app.save_ui_prefs();
-        }
-        if ui
-            .add_enabled(app.export_ev_rx.is_none(), egui::Button::new("↓"))
-            .on_hover_text(t.export_tip)
-            .clicked()
-        {
-            app.start_export();
-        }
     });
 
     ui.separator();
@@ -173,10 +119,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let col_sort = app.col_sort;
 
     // 列头标题（带排序指示；默认读取顺序时不显示箭头）
-    let key_title = if sort_desc { "Key ↓" } else { "Key" };
+    let key_title = if sort_desc { "Key ⬇" } else { "Key" };
     let col_title = |col: SortCol, base: &str| match col_sort {
-        Some((c, true)) if c == col => format!("{base} ↑"),
-        Some((c, false)) if c == col => format!("{base} ↓"),
+        Some((c, true)) if c == col => format!("{base} ⬆"),
+        Some((c, false)) if c == col => format!("{base} ⬇"),
         _ => base.to_string(),
     };
     let index_title = col_title(SortCol::Index, "#");

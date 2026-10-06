@@ -156,6 +156,25 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 app.save_ui_prefs();
             }
 
+            // 每页显示条数（原数据页工具条，移入顶栏统一管理）
+            ui.label(t.page_size_label);
+            let mut ps = app.page_size;
+            let ir = egui::ComboBox::from_id_salt("page_size")
+                .width(60.0)
+                .selected_text(format!("{ps}"))
+                .show_ui(ui, |ui| {
+                    for v in super::PAGE_SIZES {
+                        ui.selectable_value(&mut ps, v, v.to_string());
+                    }
+                });
+            let ps_resp = ir.response.on_hover_text(t.page_size_tip);
+            super::wheel_cycle(ui.ctx(), &ps_resp, &super::PAGE_SIZES, &mut ps);
+            if ps != app.page_size {
+                app.page_size = ps;
+                app.save_ui_prefs();
+                app.load_first_page();
+            }
+
             // 整数千位分隔开关（影响所有 decode/guess 输出）
             let mut ts = crate::fmt::thousands_sep();
             if ui
@@ -197,7 +216,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             ui.selectable_value(&mut lang, l, l.label());
                         }
                     });
-                ui.label(t.language);
                 if lang != old_lang {
                     i18n::set_lang(lang);
                     config::save_lang(lang);

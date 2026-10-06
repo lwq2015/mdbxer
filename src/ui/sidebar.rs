@@ -40,11 +40,42 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     app.save_ui_prefs();
                 }
             });
-            ui.add(
-                egui::TextEdit::singleline(&mut app.table_filter)
-                    .hint_text(t.filter_hint)
-                    .desired_width(f32::INFINITY),
-            );
+            // 过滤表名（占剩余宽度）+ 导出当前表（CSV/JSON 下拉 + ⬇）
+            // ⬇ U+2B07 取自 egui 内置 NotoEmoji/emoji-icon，跨平台一致
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.table_filter)
+                        .hint_text(t.filter_hint)
+                        .desired_width(f32::INFINITY),
+                );
+                let mut export_clicked = false;
+                let mut ef = app.export_format;
+                egui::ComboBox::from_id_salt("export_format")
+                    .width(52.0)
+                    .selected_text(ef.label())
+                    .show_ui(ui, |ui| {
+                        for f in crate::export::ExportFormat::ALL {
+                            ui.selectable_value(&mut ef, f, f.label());
+                        }
+                    });
+                if ef != app.export_format {
+                    app.export_format = ef;
+                    app.save_ui_prefs();
+                }
+                if ui
+                    .add_enabled(
+                        app.db.is_some() && app.export_ev_rx.is_none(),
+                        egui::Button::new("⬇"),
+                    )
+                    .on_hover_text(t.export_tip)
+                    .clicked()
+                {
+                    export_clicked = true;
+                }
+                if export_clicked {
+                    app.start_export();
+                }
+            });
             ui.separator();
 
             let Some(dbh) = &app.db else { return };
@@ -103,7 +134,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             for (i, fk) in app.fav_keys.iter().enumerate() {
                                 ui.horizontal(|ui| {
                                     if ui
-                                        .small_button("→")
+                                        .small_button("➡")
                                         .on_hover_text(t.fav_jump_tip)
                                         .clicked()
                                     {

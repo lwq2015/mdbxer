@@ -288,8 +288,6 @@ pub struct MdbxerApp {
     pub at_end: bool,
     /// 选中的行在 self.rows 中的下标
     pub selected_row: Option<usize>,
-    /// Key 跳转输入框内容
-    pub jump_input: String,
     /// Key 搜索输入框内容（跳转 / 前缀过滤共用）
     pub key_search_input: String,
     /// 当前生效的 Key 前缀过滤（None = 未过滤）
@@ -420,7 +418,6 @@ impl MdbxerApp {
             at_start: true,
             at_end: true,
             selected_row: None,
-            jump_input: String::new(),
             key_search_input: String::new(),
             key_filter: None,
             key_filter_mode: false,
@@ -765,13 +762,7 @@ impl MdbxerApp {
 
     // ── 跳转 ────────────────────────────────────────────────────
 
-    /// Key 跳转（跳转型导航，base_index 置 None）：使用跳转输入框的内容。
-    pub fn jump(&mut self) {
-        let input = self.jump_input.trim().to_string();
-        self.jump_with(&input);
-    }
-
-    /// 按给定输入执行 Key 跳转（跳转框与 Key 搜索框共用，不修改任何输入框内容）。
+    /// 按给定输入执行 Key 跳转（Key 搜索框跳转模式调用，不修改输入框内容）。
     fn jump_with(&mut self, input: &str) {
         if input.is_empty() {
             return;
