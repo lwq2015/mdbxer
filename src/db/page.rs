@@ -473,6 +473,14 @@ pub fn dup_find(
 mod tests {
     use super::*;
 
+    /// MDBX 同一进程内不允许并发二次 open（MDBX_BUSY）：
+    /// 打开真实测试库的测试共用这把锁串行执行。
+    static REAL_DB_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_real_db() -> std::sync::MutexGuard<'static, ()> {
+        REAL_DB_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn row_clone_debug() {
         let row = Row {
@@ -532,6 +540,7 @@ mod tests {
     /// `cargo run --example make_test_db`；无测试库时自动跳过）。
     #[test]
     fn raw_batch_pagination_on_real_db() {
+        let _g = lock_real_db();
         let db_path = std::path::Path::new("testdata/dir_db");
         if !db_path.exists() {
             eprintln!("跳过：testdata/dir_db 不存在（cargo run --example make_test_db 生成）");
@@ -645,5 +654,106 @@ mod tests {
         for w in all.windows(2) {
             assert!(w[0].0 >= w[1].0, "dup backward key order broken");
         }
+    }
+
+    /// 全表 Value 搜索的端到端校验：分批扫描 + 文本匹配 + jump_to 定位。
+    /// 需先生成 testdata（`cargo run --example make_test_db`），无则跳过。
+    #[test]
+    fn full_value_search_scan_and_locate() {
+        let _g = lock_real_db();
+        let db_path = std::path::Path::new("testdata/dir_db");
+        if !db_path.exists() {
+            eprintln!("跳过：testdata/dir_db 不存在（cargo run --example make_test_db 生成）");
+            return;
+        }
+        let handle = crate::db::DbHandle::open(db_path, crate::db::OpenMode::Auto).unwrap();
+
+        // 与 UI poll_value_search 相同的扫描逻辑：小批量扫描 kv_basic，
+        // 找 value 显示文本（Auto 解码）包含 "embedded" 的记录
+        let needle = "embedded".to_lowercase();
+        let mut found: Option<(Vec<u8>, Vec<u8>)> = None;
+        let mut anchor: Option<RawAnchor> = None;
+        let mut scanned = 0usize;
+        while found.is_none() {
+            let b = fetch_raw_batch(
+                &handle.db,
+                Some("kv_basic"),
+                false,
+                Direction::Forward,
+                anchor.as_ref(),
+                anchor.is_some(),
+                3,
+            )
+            .unwrap();
+            scanned += b.rows.len();
+            for (k, v) in &b.rows {
+                let text = crate::fmt::decode(
+                    v,
+                    crate::fmt::DecodeMode::Auto,
+                    crate::fmt::Endian::Little,
+                    65536,
+                )
+                .to_lowercase();
+                if text.contains(&needle) {
+                    found = Some((k.clone(), v.clone()));
+                    break;
+                }
+            }
+            if found.is_none() {
+                assert!(b.has_more, "扫完 {scanned} 条仍无匹配");
+                anchor = b.rows.last().cloned();
+            }
+        }
+
+        // 定位：jump_to 必须落在匹配 key 所在页
+        let (k, _) = found.unwrap();
+        let page = jump_to(
+            &handle.db,
+            Some("kv_basic"),
+            false,
+            Direction::Forward,
+            JumpKey::Bytes(k.clone()),
+            10,
+        )
+        .unwrap();
+        assert!(!page.rows.is_empty());
+        assert_eq!(page.rows[0].key, k, "jump_to 应落在匹配 key 上");
+
+        // 多值表：搜索展开后的值（value_0299），定位到所属 key 分组页
+        let mut found: Option<Vec<u8>> = None;
+        let mut anchor: Option<RawAnchor> = None;
+        while found.is_none() {
+            let b = fetch_raw_batch(
+                &handle.db,
+                Some("dup_multi"),
+                true,
+                Direction::Forward,
+                anchor.as_ref(),
+                anchor.is_some(),
+                128,
+            )
+            .unwrap();
+            for (k, v) in &b.rows {
+                if String::from_utf8_lossy(v).contains("value_0299") {
+                    found = Some(k.clone());
+                    break;
+                }
+            }
+            if found.is_none() {
+                assert!(b.has_more, "dup_multi 扫完仍无匹配");
+                anchor = b.rows.last().cloned();
+            }
+        }
+        let page = jump_to(
+            &handle.db,
+            Some("dup_multi"),
+            true,
+            Direction::Forward,
+            JumpKey::Bytes(found.unwrap()),
+            10,
+        )
+        .unwrap();
+        assert!(!page.rows.is_empty());
+        assert_eq!(page.rows[0].dup_count, Some(300), "应落在 fruits 分组行");
     }
 }

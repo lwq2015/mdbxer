@@ -77,7 +77,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         }
 
         ui.separator();
-        // 共享搜索框：Key（跳转/前缀过滤）和 Value（页内文本包含）共用
+        // 共享搜索框：Key（跳转/前缀过滤）和 Value（全表/页内文本搜索）共用
         // 符号取自 egui 内置字体 emoji-icon/NotoEmoji，跨平台不依赖系统字体
         let sresp = ui.add(
             egui::TextEdit::singleline(&mut app.search_input)
@@ -85,6 +85,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 .desired_width(160.0)
                 .hint_text(t.toolbar_search_hint),
         );
+        // Ctrl+F 的延迟聚焦：在实际控件上 request_focus（对猜测的 ID 直接
+        // request_focus 会因 ID 不存在触发 accesskit panic）
+        if app.focus_search {
+            sresp.request_focus();
+            app.focus_search = false;
+        }
+        app.search_box_id = Some(sresp.id);
         // 回车默认执行 Key 搜索（跳转或前缀过滤，取决于模式）
         if sresp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             app.apply_key_search();
@@ -101,15 +108,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         if ui.button("K").on_hover_text(t.key_search_btn_tip).clicked() {
             app.apply_key_search();
         }
-        // 搜索 Value（左键：当前页内文本包含过滤；右键：全表扫描并定位）
+        // 搜索 Value（左键：全表扫描并定位到首个匹配；右键：仅当前页内包含过滤）
         let v_btn = ui
             .button("V")
             .on_hover_text(t.value_search_btn_tip);
         if v_btn.clicked() {
-            app.apply_value_search();
+            app.start_full_value_search();
         }
         if v_btn.secondary_clicked() {
-            app.start_full_value_search();
+            app.apply_value_search();
         }
         // 过滤状态指示 + 清除
         if app.key_filter.is_some() || app.value_filter.is_some() {

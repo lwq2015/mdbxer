@@ -349,6 +349,11 @@ pub struct MdbxerApp {
     // ── 全表 Value 搜索 ──
     /// 全表 Value 搜索状态（Some = 搜索进行中）
     value_search: Option<ValueSearchState>,
+    /// Ctrl+F 请求聚焦搜索框（下一帧渲染到搜索框时消费，避免直接
+    /// request_focus 未知 ID 导致 accesskit panic）
+    focus_search: bool,
+    /// 搜索框的真实控件 ID（每帧更新，用于判断 Ctrl+C 是否在复制框内文本）
+    search_box_id: Option<egui::Id>,
     // ── 主题 / 收藏 ──
     /// 当前主题（true = 深色）
     pub dark_theme: bool,
@@ -458,6 +463,8 @@ impl MdbxerApp {
             export_path: String::new(),
             export_format,
             value_search: None,
+            focus_search: false,
+            search_box_id: None,
             dark_theme: crate::config::load_theme() == crate::config::Theme::Dark,
             fav_tables: Vec::new(),
             fav_keys: Vec::new(),
@@ -901,14 +908,26 @@ impl MdbxerApp {
 
         match key {
             egui::Key::O if ctrl => {
-                self.pick_file();
+                // 与顶栏"文件"按钮一致：弹出文件选择框（目录请用"目录"按钮）
+                let path = rfd::FileDialog::new()
+                    .add_filter("MDBX", &["mdbx", "dat", "*"])
+                    .pick_file()
+                    .map(|p| p.display().to_string());
+                if let Some(p) = path {
+                    self.open_mode = OpenMode::SingleFile;
+                    self.open_db(&p);
+                }
             }
             egui::Key::F if ctrl => {
-                ctx.memory_mut(|m| m.request_focus(egui::Id::new("search_box")));
+                // 只设标记，搜索框渲染时再 request_focus：
+                // 直接对猜测的 ID request_focus 会因 ID 不存在触发 accesskit panic
+                self.focus_search = true;
             }
             egui::Key::C if ctrl => {
-                // 搜索框等文本编辑聚焦时，让 egui 处理选中文本复制
-                if ctx.memory(|m| m.focused().is_none()) {
+                // 仅当焦点在搜索框时让 egui 处理选中文本复制，否则复制选中行
+                let in_search = self.search_box_id.is_some()
+                    && ctx.memory(|m| m.focused()) == self.search_box_id;
+                if !in_search {
                     self.copy_selected_row(ctx);
                 }
             }
@@ -928,29 +947,15 @@ impl MdbxerApp {
     }
 
     /// 复制选中行的 Key 和 Value 到剪贴板（Tab 分隔）。
+    /// 用完整解码（65536 字符上限），不受表格单元格截断影响。
     fn copy_selected_row(&mut self, ctx: &egui::Context) {
-        let Some(idx) = self.selected_row else { return };
-        self.refresh_views();
-        let Some(view) = self.views.get(idx) else { return };
-        let text = format!("{}\t{}", view.key_text, view.val_text);
+        let Some(i) = self.selected_row else { return };
+        let Some(row) = self.rows.get(i) else { return };
+        let key_text = crate::fmt::decode(&row.key, self.key_mode, self.endian, 65536);
+        let val_text = crate::fmt::decode(&row.value, self.val_mode, self.endian, 65536);
+        let text = format!("{}\t{}", key_text, val_text);
         ctx.copy_text(text);
         self.status = Status::Msg(crate::i18n::tr().copied_row.to_string());
-    }
-
-    /// 弹出文件选择对话框打开库（按当前 open_mode 选文件或目录）。
-    fn pick_file(&mut self) {
-        let path = match self.open_mode {
-            OpenMode::SingleFile => rfd::FileDialog::new()
-                .add_filter("MDBX", &["mdbx", "dat", "*"])
-                .pick_file()
-                .map(|p| p.display().to_string()),
-            OpenMode::Directory | OpenMode::Auto => rfd::FileDialog::new()
-                .pick_folder()
-                .map(|p| p.display().to_string()),
-        };
-        if let Some(p) = path {
-            self.open_db(&p);
-        }
     }
 
     /// 开始全表 Value 搜索：逐批扫描全表，找到第一个 Value 显示文本包含
@@ -960,6 +965,8 @@ impl MdbxerApp {
         if needle.is_empty() {
             return;
         }
+        // 全表搜索结果自带定位，旧的页内过滤会干扰显示，一并清除
+        self.value_filter = None;
         self.value_search = Some(ValueSearchState {
             needle: needle.to_lowercase(),
             anchor: None,
@@ -1014,33 +1021,32 @@ impl MdbxerApp {
         }
         state.checked += batch.rows.len();
 
-        if let Some((k, v)) = found {
-            // 定位到匹配行：以 (k, v) 为锚点读一页（锚点本身在第一行）
-            let page = db::fetch_raw_batch(
+        if let Some((k, _v)) = found {
+            // 定位：复用 jump_to（普通表落到匹配 key 的行，多值表落到该 key
+            // 的分组页，保持分组显示不破坏）
+            let page = db::jump_to(
                 &dbh.db,
                 name.as_deref(),
                 dup_sort,
                 dir,
-                Some(&(k.clone(), v.clone())),
-                false,
+                db::JumpKey::Bytes(k),
                 page_size,
             );
             match page {
                 Ok(p) => {
-                    self.rows = p
-                        .rows
-                        .into_iter()
-                        .map(|(key, value)| crate::db::Row {
-                            key,
-                            value,
-                            dup_count: None,
-                        })
-                        .collect();
+                    let located = !p.rows.is_empty();
+                    self.rows = p.rows;
                     self.at_start = false;
                     self.at_end = !p.has_more;
                     self.base_index = None;
                     self.after_load();
-                    self.status = Status::Msg(crate::i18n::tr().value_found.to_string());
+                    self.status = Status::Msg(
+                        if located {
+                            crate::i18n::tr().value_found.to_string()
+                        } else {
+                            crate::i18n::tr().value_not_found.to_string()
+                        },
+                    );
                 }
                 Err(e) => {
                     self.status = Status::Msg(e);
