@@ -64,9 +64,7 @@ fn dup_count_at(cursor: &mut libmdbx::Cursor<'_, libmdbx::RO>) -> Option<usize> 
     }
     let mut n = 0usize;
     // SAFETY: 游标句柄在本事务内有效；count 是有效的可写 usize。
-    let rc = unsafe {
-        mdbx_cursor_count(cursor.cursor().0.cast_const().cast(), &mut n)
-    };
+    let rc = unsafe { mdbx_cursor_count(cursor.cursor().0.cast_const().cast(), &mut n) };
     (rc == 0).then_some(n)
 }
 
@@ -290,10 +288,7 @@ pub fn dups_of(
     let start = page_index * page_size;
     let mut values = Vec::new();
     if exists {
-        for (i, item) in cursor
-            .iter_dup_of::<Vec<u8>, Vec<u8>>(key)
-            .enumerate()
-        {
+        for (i, item) in cursor.iter_dup_of::<Vec<u8>, Vec<u8>>(key).enumerate() {
             if i >= start + page_size {
                 break;
             }
@@ -364,7 +359,10 @@ pub fn fetch_raw_batch(
                 }
             } else if dup_sort {
                 // ≤ (k, v)：先到 ≥v 首值（锚点存在时即锚点本身），跳过再退一格
-                match cursor.get_both_range::<Vec<u8>>(k, v).map_err(|e| e.to_string())? {
+                match cursor
+                    .get_both_range::<Vec<u8>>(k, v)
+                    .map_err(|e| e.to_string())?
+                {
                     Some(val) => Some((k.clone(), val)),
                     // 锚点已不在（数据被并发删除）：回退到 ≤k 末项
                     None => cursor
@@ -444,10 +442,7 @@ pub fn dup_find(
 
     let mut main_hit: Option<(usize, Vec<u8>)> = None;
     let mut wrap_hit: Option<(usize, Vec<u8>)> = None;
-    for (i, item) in cursor
-        .iter_dup_of::<Vec<u8>, Vec<u8>>(key)
-        .enumerate()
-    {
+    for (i, item) in cursor.iter_dup_of::<Vec<u8>, Vec<u8>>(key).enumerate() {
         let (_, v) = item.map_err(|e| e.to_string())?;
         if !hit(&v) {
             continue;
@@ -522,7 +517,11 @@ mod tests {
     #[test]
     fn page_fields() {
         let page = Page {
-            rows: vec![Row { key: vec![], value: vec![], dup_count: None }],
+            rows: vec![Row {
+                key: vec![],
+                value: vec![],
+                dup_count: None,
+            }],
             has_more: true,
         };
         assert_eq!(page.rows.len(), 1);

@@ -38,10 +38,19 @@ pub fn table_stat_view(
     Ok(vec![
         (t.k_entries.to_string(), stat.entries().to_string()),
         (t.k_depth.to_string(), stat.depth().to_string()),
-        (t.k_branch_pages.to_string(), stat.branch_pages().to_string()),
+        (
+            t.k_branch_pages.to_string(),
+            stat.branch_pages().to_string(),
+        ),
         (t.k_leaf_pages.to_string(), stat.leaf_pages().to_string()),
-        (t.k_overflow_pages.to_string(), stat.overflow_pages().to_string()),
-        (t.k_page_size.to_string(), human_size(stat.page_size() as u64)),
+        (
+            t.k_overflow_pages.to_string(),
+            stat.overflow_pages().to_string(),
+        ),
+        (
+            t.k_page_size.to_string(),
+            human_size(stat.page_size() as u64),
+        ),
         (t.k_total_size.to_string(), human_size(stat.total_size())),
         (
             t.k_table_flags.to_string(),
@@ -56,9 +65,7 @@ pub fn table_stat_view(
 }
 
 /// 环境信息页签内容：(分组, 标签, 值)。
-pub fn env_info_view(
-    db: &Database<NoWriteMap>,
-) -> Result<Vec<(String, String, String)>, String> {
+pub fn env_info_view(db: &Database<NoWriteMap>) -> Result<Vec<(String, String, String)>, String> {
     let t = crate::i18n::tr();
     let info = db.info().map_err(|e| e.to_string())?;
     let stat = db.stat().map_err(|e| e.to_string())?;
@@ -70,9 +77,17 @@ pub fn env_info_view(
 
     push(t.g_geometry, t.k_min_size, human_size(geo.min_size()));
     push(t.g_geometry, t.k_max_size, human_size(geo.max_size()));
-    push(t.g_geometry, t.k_current_size, human_size(geo.current_size()));
+    push(
+        t.g_geometry,
+        t.k_current_size,
+        human_size(geo.current_size()),
+    );
     push(t.g_geometry, t.k_growth_step, human_size(geo.growth_step()));
-    push(t.g_geometry, t.k_shrink_threshold, human_size(geo.shrink_threshold()));
+    push(
+        t.g_geometry,
+        t.k_shrink_threshold,
+        human_size(geo.shrink_threshold()),
+    );
     push(t.g_map, t.k_map_size, human_size(info.map_size() as u64));
     push(t.g_map, t.k_pages_used, (info.last_pgno() + 1).to_string());
     push(t.g_map, t.k_free_pages, freelist.to_string());

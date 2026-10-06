@@ -240,10 +240,7 @@ mod tests {
     }
 
     /// 喂两批数据跑完整流水线，返回输出文件内容。
-    fn pipeline(
-        job: ExportJob,
-        batches: Vec<ExportBatch>,
-    ) -> (Result<usize, String>, String) {
+    fn pipeline(job: ExportJob, batches: Vec<ExportBatch>) -> (Result<usize, String>, String) {
         let (tx, rx) = mpsc::channel::<ExportBatch>();
         let (etx, erx) = mpsc::channel::<ExportEvent>();
         let path = job.out_path.clone();

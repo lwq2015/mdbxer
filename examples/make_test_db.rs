@@ -74,7 +74,10 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
         // 2024 不落在时间戳区间，验证普通 u64 不附日期
         (b"u64_2024", 2024u64.to_le_bytes().to_vec()),
         (b"u64_max", u64::MAX.to_le_bytes().to_vec()),
-        (b"i64_9000000000000_neg", (-9_000_000_000_000i64).to_le_bytes().to_vec()),
+        (
+            b"i64_9000000000000_neg",
+            (-9_000_000_000_000i64).to_le_bytes().to_vec(),
+        ),
         (b"i64_min", i64::MIN.to_le_bytes().to_vec()),
         (b"i64_max", i64::MAX.to_le_bytes().to_vec()),
         // 实际值 1，但只有 3 字节：验证按 i64/u64 解释时零扩展（应标"（补零）"）
@@ -88,16 +91,25 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
         // 整数部分 ≥5 位：验证浮点数千位分隔（应显示 123,456.75）
         (b"f32_123456.75", 123456.75f32.to_le_bytes().to_vec()),
         (b"f64_0", 0.0f64.to_le_bytes().to_vec()),
-        (b"f64_1.41421356_neg", (-1.41421356f64).to_le_bytes().to_vec()),
+        (
+            b"f64_1.41421356_neg",
+            (-1.41421356f64).to_le_bytes().to_vec(),
+        ),
         (b"f64_3.14159265", 3.14159265f64.to_le_bytes().to_vec()),
         (b"f64_1e100", 1e100f64.to_le_bytes().to_vec()),
         // 整数部分长：应显示 123,456,789.25 / -9,876,543,210.5
         (b"f64_123456789.25", 123456789.25f64.to_le_bytes().to_vec()),
-        (b"f64_9876543210.5_neg", (-9876543210.5f64).to_le_bytes().to_vec()),
+        (
+            b"f64_9876543210.5_neg",
+            (-9876543210.5f64).to_le_bytes().to_vec(),
+        ),
     ];
     let entries: Vec<(&[u8], Vec<u8>)> = vec![
         (b"hello", b"world".to_vec()),
-        ("中文键".as_bytes(), "中文值：你好，MDBX！".as_bytes().to_vec()),
+        (
+            "中文键".as_bytes(),
+            "中文值：你好，MDBX！".as_bytes().to_vec(),
+        ),
         (b"empty_value", Vec::new()),
         (b"ts_seconds", now_s.to_le_bytes().to_vec()),
         (b"ts_millis", now_ms.to_le_bytes().to_vec()),
@@ -120,8 +132,8 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
         (
             b"uuid_sample",
             vec![
-                0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4, 0xa7, 0x16, 0x44, 0x66, 0x55,
-                0x44, 0x00, 0x00,
+                0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4, 0xa7, 0x16, 0x44, 0x66, 0x55, 0x44,
+                0x00, 0x00,
             ],
         ),
         // 手动切到 Json 排版时，应 pretty-print 为合法 JSON
@@ -129,17 +141,11 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
             b"json_object",
             br#"{"name":"mdbx","version":1,"tags":["fast","embedded"]}"#.to_vec(),
         ),
-        (
-            b"json_array",
-            br#"[1,2,3,{"nested":true}]"#.to_vec(),
-        ),
+        (b"json_array", br#"[1,2,3,{"nested":true}]"#.to_vec()),
         // 非法 JSON：手动 Json 排版时应原样回退为文本
         (b"json_invalid", b"not a json string".to_vec()),
     ];
-    let entries: Vec<(&[u8], Vec<u8>)> = entries
-        .into_iter()
-        .chain(nums)
-        .collect();
+    let entries: Vec<(&[u8], Vec<u8>)> = entries.into_iter().chain(nums).collect();
     for (k, v) in entries {
         txn.put(&t, k, &v, WriteFlags::default())?;
     }

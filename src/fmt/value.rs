@@ -3,7 +3,7 @@
 
 //! 按指定格式把字节解码为显示文本。
 
-use super::{guess, DecodeMode, Endian};
+use super::{DecodeMode, Endian, guess};
 
 /// 空数据占位文案（随界面语言）。
 fn empty_text() -> String {
@@ -224,10 +224,8 @@ fn epoch_to_local(v: u64) -> Option<String> {
         )
     } else if (1_000_000_000_000..10_000_000_000_000).contains(&v) {
         // 毫秒：余数转成纳秒传入，格式串里 %.3f 显示 .xxx
-        let dt = chrono::DateTime::from_timestamp(
-            (v / 1000) as i64,
-            (v % 1000 * 1_000_000) as u32,
-        )?;
+        let dt =
+            chrono::DateTime::from_timestamp((v / 1000) as i64, (v % 1000 * 1_000_000) as u32)?;
         Some(
             dt.with_timezone(&chrono::Local)
                 .format("%Y-%m-%d %H:%M:%S%.3f (%Z%:z)")
@@ -286,10 +284,22 @@ fn uuid_text(bytes: &[u8]) -> String {
     }
     format!(
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        bytes[0], bytes[1], bytes[2], bytes[3],
-        bytes[4], bytes[5], bytes[6], bytes[7],
-        bytes[8], bytes[9], bytes[10], bytes[11],
-        bytes[12], bytes[13], bytes[14], bytes[15],
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15],
     )
 }
 
@@ -299,7 +309,8 @@ fn json_text(bytes: &[u8]) -> String {
         return String::new();
     }
     match serde_json::from_slice::<serde_json::Value>(bytes) {
-        Ok(v) => serde_json::to_string_pretty(&v).unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned()),
+        Ok(v) => serde_json::to_string_pretty(&v)
+            .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned()),
         Err(_) => String::from_utf8_lossy(bytes).into_owned(),
     }
 }
@@ -351,7 +362,10 @@ mod tests {
     fn decode_u32_le() {
         setup();
         let bytes = [0x78, 0x56, 0x34, 0x12]; // 0x12345678
-        assert_eq!(decode(&bytes, DecodeMode::U32, Endian::Little, 100), "305,419,896");
+        assert_eq!(
+            decode(&bytes, DecodeMode::U32, Endian::Little, 100),
+            "305,419,896"
+        );
     }
 
     #[test]
@@ -405,19 +419,28 @@ mod tests {
     #[test]
     fn decode_hex_mode() {
         setup();
-        assert_eq!(decode(&[0xAB, 0xCD], DecodeMode::Hex, Endian::Little, 100), "AB CD");
+        assert_eq!(
+            decode(&[0xAB, 0xCD], DecodeMode::Hex, Endian::Little, 100),
+            "AB CD"
+        );
     }
 
     #[test]
     fn decode_dec_mode() {
         setup();
-        assert_eq!(decode(&[10, 20], DecodeMode::Dec, Endian::Little, 100), "10 20");
+        assert_eq!(
+            decode(&[10, 20], DecodeMode::Dec, Endian::Little, 100),
+            "10 20"
+        );
     }
 
     #[test]
     fn decode_binary_mode() {
         setup();
-        assert_eq!(decode(&[0b1010_1010], DecodeMode::Binary, Endian::Little, 100), "10101010");
+        assert_eq!(
+            decode(&[0b1010_1010], DecodeMode::Binary, Endian::Little, 100),
+            "10101010"
+        );
     }
 
     #[test]
@@ -485,23 +508,41 @@ mod tests {
         setup();
         // "AB" 的 UTF-16LE
         let bytes = [0x41, 0x00, 0x42, 0x00];
-        assert_eq!(decode(&bytes, DecodeMode::Utf16Le, Endian::Little, 100), "AB");
+        assert_eq!(
+            decode(&bytes, DecodeMode::Utf16Le, Endian::Little, 100),
+            "AB"
+        );
     }
 
     #[test]
     fn decode_utf16_be() {
         setup();
         let bytes = [0x00, 0x41, 0x00, 0x42];
-        assert_eq!(decode(&bytes, DecodeMode::Utf16Be, Endian::Little, 100), "AB");
+        assert_eq!(
+            decode(&bytes, DecodeMode::Utf16Be, Endian::Little, 100),
+            "AB"
+        );
     }
 
     #[test]
     fn decode_base64() {
         setup();
-        assert_eq!(decode(b"hello", DecodeMode::Base64, Endian::Little, 100), "aGVsbG8=");
-        assert_eq!(decode(b"f", DecodeMode::Base64, Endian::Little, 100), "Zg==");
-        assert_eq!(decode(b"fo", DecodeMode::Base64, Endian::Little, 100), "Zm8=");
-        assert_eq!(decode(b"foo", DecodeMode::Base64, Endian::Little, 100), "Zm9v");
+        assert_eq!(
+            decode(b"hello", DecodeMode::Base64, Endian::Little, 100),
+            "aGVsbG8="
+        );
+        assert_eq!(
+            decode(b"f", DecodeMode::Base64, Endian::Little, 100),
+            "Zg=="
+        );
+        assert_eq!(
+            decode(b"fo", DecodeMode::Base64, Endian::Little, 100),
+            "Zm8="
+        );
+        assert_eq!(
+            decode(b"foo", DecodeMode::Base64, Endian::Little, 100),
+            "Zm9v"
+        );
         assert_eq!(decode(&[], DecodeMode::Base64, Endian::Little, 100), "");
     }
 
@@ -509,8 +550,8 @@ mod tests {
     fn decode_uuid_16_bytes() {
         setup();
         let bytes: [u8; 16] = [
-            0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4,
-            0xa7, 0x16, 0x44, 0x66, 0x55, 0x44, 0x00, 0x00,
+            0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4, 0xa7, 0x16, 0x44, 0x66, 0x55, 0x44,
+            0x00, 0x00,
         ];
         assert_eq!(
             decode(&bytes, DecodeMode::Uuid, Endian::Little, 100),
@@ -537,7 +578,12 @@ mod tests {
     #[test]
     fn decode_json_pretty() {
         setup();
-        let s = decode(br#"{"a":1,"b":[2,3]}"#, DecodeMode::Json, Endian::Little, 500);
+        let s = decode(
+            br#"{"a":1,"b":[2,3]}"#,
+            DecodeMode::Json,
+            Endian::Little,
+            500,
+        );
         assert!(s.contains('\n'), "pretty JSON 应多行: {s}");
         assert!(s.contains("\"a\": 1"));
         // 非法 JSON 回退 UTF-8 文本

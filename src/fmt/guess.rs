@@ -3,14 +3,17 @@
 
 //! 字节内容的自动类型猜测。
 
-use super::{value, Endian};
+use super::{Endian, value};
 
 /// 猜测字节内容的类型，返回 (类型标签, 显示文本)。
 /// 多字节整数按 endian 解释。标签随当前界面语言。
 pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
     let t = crate::i18n::tr();
     if bytes.is_empty() {
-        return (t.guess_empty_label.to_string(), t.guess_empty_sym.to_string());
+        return (
+            t.guess_empty_label.to_string(),
+            t.guess_empty_sym.to_string(),
+        );
     }
     // 优先可打印 UTF-8 文本（允许 \t \n \r）
     if let Ok(s) = std::str::from_utf8(bytes) {

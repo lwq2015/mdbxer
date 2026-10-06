@@ -113,10 +113,7 @@ impl DbHandle {
     fn list_tables(db: &Database<NoWriteMap>) -> Result<Vec<TableInfo>, String> {
         let txn = db.begin_ro_txn().map_err(|e| e.to_string())?;
         let main = txn.open_table(None).map_err(|e| e.to_string())?;
-        let main_entries = txn
-            .table_stat(&main)
-            .map_err(|e| e.to_string())?
-            .entries();
+        let main_entries = txn.table_stat(&main).map_err(|e| e.to_string())?.entries();
         let main_flags = txn.table_flags(&main).map_err(|e| e.to_string())?;
 
         // 主表始终存在，固定排第一
