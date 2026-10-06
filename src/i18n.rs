@@ -131,6 +131,7 @@ pub struct I18n {
     pub tab_data: &'static str,
     pub tab_stat: &'static str,
     pub tab_env: &'static str,
+    pub tab_about: &'static str,
     pub subtitle: &'static str,
     pub select_table: &'static str,
 
@@ -280,6 +281,25 @@ pub struct I18n {
     // ── 空态中央提示（可拖放）──
     pub no_db_center: &'static str,
 
+    // ── 关于页签 ──
+    pub about_tagline: &'static str,
+    pub about_group_app: &'static str,
+    pub about_group_runtime: &'static str,
+    pub about_group_links: &'static str,
+    pub about_group_thanks: &'static str,
+    pub about_group_disclaimer: &'static str,
+    pub about_version: &'static str,
+    pub about_build: &'static str,
+    pub about_stack: &'static str,
+    pub about_license: &'static str,
+    pub about_copyright: &'static str,
+    pub about_os_arch: &'static str,
+    pub about_config: &'static str,
+    pub about_history: &'static str,
+    pub about_thanks: &'static str,
+    pub about_disclaimer: &'static str,
+    pub about_open_link_tip: &'static str,
+
     // ── 另存对话框过滤器 ──
     pub filter_binary: &'static str,
     pub filter_all: &'static str,
@@ -374,10 +394,7 @@ impl I18n {
     }
 
     pub fn export_ok(&self, n: usize, path: &str) -> String {
-        fill(
-            self.export_ok_t,
-            &[("n", &n.to_string()), ("path", path)],
-        )
+        fill(self.export_ok_t, &[("n", &n.to_string()), ("path", path)])
     }
 
     pub fn export_fail(&self, e: &str) -> String {
@@ -483,7 +500,10 @@ impl I18n {
     }
 
     pub fn seg_ok(&self, off: usize) -> String {
-        fill(self.seg_ok_t, &[("off", &off.to_string()), ("hex", &format!("{off:X}"))])
+        fill(
+            self.seg_ok_t,
+            &[("off", &off.to_string()), ("hex", &format!("{off:X}"))],
+        )
     }
 
     pub fn seg_range_msg(&self, v: usize, total: usize) -> String {
@@ -540,10 +560,7 @@ impl I18n {
 
     /// 导出完成状态（n 条记录到 path）。
     pub fn export_done(&self, n: usize, path: &str) -> String {
-        fill(
-            self.export_done_t,
-            &[("n", &n.to_string()), ("path", path)],
-        )
+        fill(self.export_done_t, &[("n", &n.to_string()), ("path", path)])
     }
 }
 
@@ -586,6 +603,7 @@ const ZH: I18n = I18n {
     tab_data: "数据",
     tab_stat: "表统计",
     tab_env: "环境信息",
+    tab_about: "关于",
     subtitle: "libmdbx 数据库查看工具（只读）",
     select_table: "请选择左侧表",
 
@@ -697,6 +715,24 @@ const ZH: I18n = I18n {
     no_db_status: "未打开数据库 — 点“文件/目录”按钮，或将文件/目录拖入窗口",
     no_db_center: "请在上方打开数据库，或将文件/目录拖入窗口",
 
+    about_tagline: "libmdbx 只读查看器",
+    about_group_app: "应用",
+    about_group_runtime: "运行环境",
+    about_group_links: "链接",
+    about_group_thanks: "致谢",
+    about_group_disclaimer: "免责声明",
+    about_version: "版本",
+    about_build: "构建日期",
+    about_stack: "技术栈",
+    about_license: "许可证",
+    about_copyright: "版权",
+    about_os_arch: "系统 / 架构",
+    about_config: "配置文件",
+    about_history: "历史记录文件",
+    about_thanks: "特别致谢 Trae（AI 编程助手）——本工具的全部代码、测试与文档均由 Trae 协助完成，功劳归于 Trae。同时致敬 libmdbx 作者 Leonid Yuriev，以及 egui / eframe 项目。",
+    about_disclaimer: "本软件按“现状”提供，不附带任何明示或暗示的担保。虽然它仅以只读方式打开 MDBX 数据库，作者仍不对因使用本软件导致的任何数据损坏或损失承担责任。打开重要数据库前请自行做好备份。",
+    about_open_link_tip: "在浏览器中打开",
+
     filter_binary: "二进制",
     filter_all: "所有文件",
 
@@ -792,6 +828,7 @@ const EN: I18n = I18n {
     tab_data: "Data",
     tab_stat: "Table stats",
     tab_env: "Environment",
+    tab_about: "About",
     subtitle: "libmdbx database viewer (read-only)",
     select_table: "Select a table on the left",
 
@@ -903,6 +940,24 @@ const EN: I18n = I18n {
     no_db_status: "No database open — use File/Folder, or drop a file/folder into the window",
     no_db_center: "Open a database above, or drop a file/folder into the window",
 
+    about_tagline: "A read-only viewer for libmdbx databases",
+    about_group_app: "Application",
+    about_group_runtime: "Runtime",
+    about_group_links: "Links",
+    about_group_thanks: "Acknowledgments",
+    about_group_disclaimer: "Disclaimer",
+    about_version: "Version",
+    about_build: "Build date",
+    about_stack: "Built with",
+    about_license: "License",
+    about_copyright: "Copyright",
+    about_os_arch: "OS / Architecture",
+    about_config: "Config file",
+    about_history: "History file",
+    about_thanks: "Special thanks to Trae (AI coding assistant) — every line of code, test and documentation in this tool was created with Trae; all the credit goes to Trae. Also tribute to Leonid Yuriev for libmdbx, and to the egui / eframe project.",
+    about_disclaimer: "This software is provided \"AS IS\" without any express or implied warranty. Although it opens MDBX databases read-only, the author is not liable for any data corruption or loss caused by using this software. Back up important databases before opening them.",
+    about_open_link_tip: "Open in browser",
+
     filter_binary: "Binary",
     filter_all: "All files",
 
@@ -998,6 +1053,7 @@ const RU: I18n = I18n {
     tab_data: "Данные",
     tab_stat: "Статистика",
     tab_env: "Окружение",
+    tab_about: "О программе",
     subtitle: "Просмотр баз данных libmdbx (только чтение)",
     select_table: "Выберите таблицу слева",
 
@@ -1108,6 +1164,24 @@ const RU: I18n = I18n {
     window_size_t: "Размер страницы {n}",
     no_db_status: "База не открыта — нажмите «Файл/Папка» или перетащите файл/папку в окно",
     no_db_center: "Откройте базу выше или перетащите файл/папку в окно",
+
+    about_tagline: "Просмотрщик баз libmdbx только для чтения",
+    about_group_app: "Приложение",
+    about_group_runtime: "Среда",
+    about_group_links: "Ссылки",
+    about_group_thanks: "Благодарности",
+    about_group_disclaimer: "Отказ от ответственности",
+    about_version: "Версия",
+    about_build: "Дата сборки",
+    about_stack: "Технологии",
+    about_license: "Лицензия",
+    about_copyright: "Авторское право",
+    about_os_arch: "ОС / Архитектура",
+    about_config: "Файл настроек",
+    about_history: "Файл истории",
+    about_thanks: "Особая благодарность Trae (ИИ-помощнику для программирования) — весь код, тесты и документация этого инструмента созданы при помощи Trae, вся заслуга принадлежит Trae. Также благодарим Леонида Юрьева за libmdbx и проект egui / eframe.",
+    about_disclaimer: "Программа поставляется «КА ЕСТЬ», без каких-либо явных или подразумеваемых гарантий. Хотя она открывает базы MDBX только для чтения, автор не несёт ответственности за любое повреждение или потерю данных при использовании программы. Перед открытием важных баз делайте резервные копии.",
+    about_open_link_tip: "Открыть в браузере",
 
     filter_binary: "Бинарные",
     filter_all: "Все файлы",
@@ -1295,6 +1369,30 @@ mod tests {
             assert!(!table.fav_jump_tip.is_empty());
             assert!(!table.fav_del_tip.is_empty());
             assert!(!table.fav_empty.is_empty());
+        }
+    }
+
+    #[test]
+    fn all_tables_have_about_fields() {
+        for table in &TABLES {
+            assert!(!table.tab_about.is_empty());
+            assert!(!table.about_tagline.is_empty());
+            assert!(!table.about_group_app.is_empty());
+            assert!(!table.about_group_runtime.is_empty());
+            assert!(!table.about_group_links.is_empty());
+            assert!(!table.about_group_thanks.is_empty());
+            assert!(!table.about_group_disclaimer.is_empty());
+            assert!(!table.about_version.is_empty());
+            assert!(!table.about_build.is_empty());
+            assert!(!table.about_stack.is_empty());
+            assert!(!table.about_license.is_empty());
+            assert!(!table.about_copyright.is_empty());
+            assert!(!table.about_os_arch.is_empty());
+            assert!(!table.about_config.is_empty());
+            assert!(!table.about_history.is_empty());
+            assert!(!table.about_thanks.is_empty());
+            assert!(!table.about_disclaimer.is_empty());
+            assert!(!table.about_open_link_tip.is_empty());
         }
     }
 }

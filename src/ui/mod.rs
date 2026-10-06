@@ -3,6 +3,7 @@
 
 //! 界面层：应用状态与导航动作。只接触 db 层暴露的纯数据结构。
 
+mod about;
 mod dataview;
 mod detail;
 mod sidebar;
@@ -140,6 +141,8 @@ pub enum CenterTab {
     TableStat,
     /// 环境信息（几何/映射/事务/读者/主表）
     EnvInfo,
+    /// 关于（版本/环境/链接/致谢/免责）
+    About,
 }
 
 impl CenterTab {
@@ -150,6 +153,7 @@ impl CenterTab {
             CenterTab::Data => t.tab_data,
             CenterTab::TableStat => t.tab_stat,
             CenterTab::EnvInfo => t.tab_env,
+            CenterTab::About => t.tab_about,
         }
     }
 }
@@ -367,6 +371,8 @@ pub struct MdbxerApp {
     title_base: String,
     /// 当前已应用的窗口标题（含库路径），用于变化检测
     title: String,
+    /// 构建日期（取 exe 修改时间，"关于"页展示；取不到为 "—"）
+    build_date: String,
 }
 
 impl MdbxerApp {
@@ -473,6 +479,7 @@ impl MdbxerApp {
             fav_keys: Vec::new(),
             title: title_base.clone(),
             title_base,
+            build_date: build_date().unwrap_or_else(|| "—".to_string()),
         }
     }
 
@@ -1478,6 +1485,18 @@ fn absolutize_path(path: &str) -> String {
     }
 }
 
+/// 构建日期：取 exe 自身修改时间（即本次构建/发布时间），无需 build.rs。
+pub(crate) fn build_date() -> Option<String> {
+    std::env::current_exe()
+        .and_then(|p| std::fs::metadata(p))
+        .and_then(|m| m.modified())
+        .ok()
+        .map(|t| {
+            let dt: chrono::DateTime<chrono::Local> = t.into();
+            dt.format("%Y-%m-%d").to_string()
+        })
+}
+
 /// 反转取值方向（供"上一页"等反向操作使用）。
 fn opposite(dir: Direction) -> Direction {
     match dir {
@@ -1637,32 +1656,39 @@ impl eframe::App for MdbxerApp {
             }
         }
 
-        // 中央区域
+        // 中央区域（页签始终显示；"关于"无库也可查看）
         egui::CentralPanel::default().show(ui, |ui| {
             let t = crate::i18n::tr();
+            let mut tab = self.tab;
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut tab, CenterTab::Data, CenterTab::Data.label());
+                ui.selectable_value(&mut tab, CenterTab::TableStat, CenterTab::TableStat.label());
+                ui.selectable_value(&mut tab, CenterTab::EnvInfo, CenterTab::EnvInfo.label());
+                ui.selectable_value(&mut tab, CenterTab::About, CenterTab::About.label());
+            });
+            if tab != self.tab {
+                self.tab = tab;
+            }
+            ui.separator();
+            if self.tab == CenterTab::About {
+                let date = self.build_date.clone();
+                about::show(ui, &date);
+                return;
+            }
             if self.db.is_none() {
                 ui.vertical_centered(|ui| {
-                    ui.add_space(120.0);
+                    ui.add_space(100.0);
                     ui.heading("MDBXer");
                     ui.label(t.subtitle);
                     ui.label(t.no_db_center);
                 });
                 return;
             }
-            let mut tab = self.tab;
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut tab, CenterTab::Data, CenterTab::Data.label());
-                ui.selectable_value(&mut tab, CenterTab::TableStat, CenterTab::TableStat.label());
-                ui.selectable_value(&mut tab, CenterTab::EnvInfo, CenterTab::EnvInfo.label());
-            });
-            if tab != self.tab {
-                self.tab = tab;
-            }
-            ui.separator();
             match self.tab {
                 CenterTab::Data => dataview::show(ui, self),
                 CenterTab::TableStat => statsview::show_table_stat(ui, self),
                 CenterTab::EnvInfo => statsview::show_env_info(ui, self),
+                CenterTab::About => unreachable!(),
             }
         });
 

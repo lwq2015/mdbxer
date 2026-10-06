@@ -137,7 +137,7 @@ pub struct FavKey {
 
 /// 配置文件路径：优先 `%APPDATA%\mdbxer\config.json`；
 /// 无 %APPDATA%（非 Windows）时退化为 exe 旁的 `mdbxer-config.json`。
-fn config_path() -> Option<PathBuf> {
+pub(crate) fn config_path() -> Option<PathBuf> {
     if let Some(appdata) = std::env::var_os("APPDATA") {
         return Some(PathBuf::from(appdata).join("mdbxer").join("config.json"));
     }
@@ -415,8 +415,7 @@ mod tests {
         let back: FavKey = serde_json::from_str(&s).unwrap();
         assert_eq!(back, fk);
         // note 缺省兼容
-        let legacy: FavKey =
-            serde_json::from_str(r#"{"table":null,"key_hex":"00FF"}"#).unwrap();
+        let legacy: FavKey = serde_json::from_str(r#"{"table":null,"key_hex":"00FF"}"#).unwrap();
         assert_eq!(legacy.table, None);
         assert_eq!(legacy.note, "");
     }

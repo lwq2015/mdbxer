@@ -36,7 +36,10 @@ fn main() -> eframe::Result<()> {
         &title,
         options,
         Box::new(move |cc| {
-            ui::apply_theme(&cc.egui_ctx, crate::config::load_theme() == crate::config::Theme::Dark);
+            ui::apply_theme(
+                &cc.egui_ctx,
+                crate::config::load_theme() == crate::config::Theme::Dark,
+            );
             load_cjk_fonts(&cc.egui_ctx);
             let mut app = ui::MdbxerApp::new(app_title);
             // 支持命令行传入路径直接打开（也便于拖文件到 exe）；
@@ -55,15 +58,7 @@ fn main() -> eframe::Result<()> {
 /// 版本取 Cargo.toml；日期取 exe 自身的修改时间（即本次构建/发布时间），
 /// 无需 build.rs，跨平台。取不到时省略日期。
 fn app_title() -> String {
-    let date = std::env::current_exe()
-        .and_then(|p| std::fs::metadata(p))
-        .and_then(|m| m.modified())
-        .ok()
-        .map(|t| {
-            let dt: chrono::DateTime<chrono::Local> = t.into();
-            dt.format("%Y-%m-%d").to_string()
-        });
-    match date {
+    match ui::build_date() {
         Some(d) => format!("MDBXer v{} · {d}", env!("CARGO_PKG_VERSION")),
         None => format!("MDBXer v{}", env!("CARGO_PKG_VERSION")),
     }
@@ -80,11 +75,10 @@ fn load_cjk_fonts(ctx: &egui::Context) {
         return;
     };
     let mut fonts = egui::FontDefinitions::default();
-    fonts
-        .font_data
-        .insert("cjk".to_string(), std::sync::Arc::new(
-            egui::FontData::from_owned(data),
-        ));
+    fonts.font_data.insert(
+        "cjk".to_string(),
+        std::sync::Arc::new(egui::FontData::from_owned(data)),
+    );
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
         fonts
             .families

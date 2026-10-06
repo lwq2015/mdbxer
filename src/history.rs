@@ -115,7 +115,7 @@ impl History {
 
 /// 存储路径：优先 `%APPDATA%\mdbxer\history.json`；
 /// 无 %APPDATA%（非 Windows）时退化为 exe 旁的 `mdbxer-history.json`。
-fn storage_path() -> Option<PathBuf> {
+pub(crate) fn storage_path() -> Option<PathBuf> {
     if let Some(appdata) = std::env::var_os("APPDATA") {
         return Some(PathBuf::from(appdata).join("mdbxer").join("history.json"));
     }
