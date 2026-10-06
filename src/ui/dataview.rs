@@ -8,11 +8,14 @@ use crate::i18n::tr;
 use egui_extras::{Column, TableBuilder};
 
 /// 列头单元格：文字与整列空白都可点击。返回是否被点击。
-fn header_cell(ui: &mut egui::Ui, text: &str) -> bool {
+fn header_cell(ui: &mut egui::Ui, text: &str, tip: &str) -> bool {
     let r1 =
-        ui.add(egui::Label::new(egui::RichText::new(text).strong()).sense(egui::Sense::click()));
-    // 覆盖列内剩余空白区域，使整列都可点击
-    let r2 = ui.allocate_rect(ui.available_rect_before_wrap(), egui::Sense::click());
+        ui.add(egui::Label::new(egui::RichText::new(text).strong()).sense(egui::Sense::click()))
+            .on_hover_text(tip);
+    // 覆盖列内剩余空白区域，使整列都可点击、可悬停看提示
+    let r2 = ui
+        .allocate_rect(ui.available_rect_before_wrap(), egui::Sense::click())
+        .on_hover_text(tip);
     r1.clicked() || r2.clicked()
 }
 
@@ -195,22 +198,22 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         .min_scrolled_height(0.0)
         .header(text_height, |mut header| {
             header.col(|ui| {
-                if header_cell(ui, &index_title) {
+                if header_cell(ui, &index_title, t.col_tip_page) {
                     col_clicked = Some(0);
                 }
             });
             header.col(|ui| {
-                if header_cell(ui, key_title) {
+                if header_cell(ui, key_title, t.col_tip_key) {
                     col_clicked = Some(1);
                 }
             });
             header.col(|ui| {
-                if header_cell(ui, &type_title) {
+                if header_cell(ui, &type_title, t.col_tip_page) {
                     col_clicked = Some(2);
                 }
             });
             header.col(|ui| {
-                if header_cell(ui, &value_title) {
+                if header_cell(ui, &value_title, t.col_tip_page) {
                     col_clicked = Some(3);
                 }
             });
