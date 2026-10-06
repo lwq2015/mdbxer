@@ -354,6 +354,9 @@ pub struct MdbxerApp {
     focus_search: bool,
     /// 搜索框的真实控件 ID（每帧更新，用于判断 Ctrl+C 是否在复制框内文本）
     search_box_id: Option<egui::Id>,
+    /// Value 搜索的全表模式开关（默认关闭：V 键仅过滤当前页；
+    /// 开启后 V 键全表扫描并定位）
+    pub value_search_full: bool,
     // ── 主题 / 收藏 ──
     /// 当前主题（true = 深色）
     pub dark_theme: bool,
@@ -465,6 +468,7 @@ impl MdbxerApp {
             value_search: None,
             focus_search: false,
             search_box_id: None,
+            value_search_full: false,
             dark_theme: crate::config::load_theme() == crate::config::Theme::Dark,
             fav_tables: Vec::new(),
             fav_keys: Vec::new(),
@@ -963,6 +967,7 @@ impl MdbxerApp {
     pub fn start_full_value_search(&mut self) {
         let needle = self.search_input.trim().to_string();
         if needle.is_empty() {
+            self.status = Status::Msg(crate::i18n::tr().search_empty.to_string());
             return;
         }
         // 全表搜索结果自带定位，旧的页内过滤会干扰显示，一并清除
@@ -1013,8 +1018,16 @@ impl MdbxerApp {
 
         let mut found: Option<(Vec<u8>, Vec<u8>)> = None;
         for (k, v) in &batch.rows {
-            let text = crate::fmt::decode(v, val_mode, endian, 65536).to_lowercase();
-            if text.contains(&needle) {
+            // 同时按 Auto 解码与当前排版解码匹配：当前排版为 hex/数值时
+            // 文本搜索仍可用 Auto 命中
+            let auto_text =
+                crate::fmt::decode(v, crate::fmt::DecodeMode::Auto, endian, 65536).to_lowercase();
+            if auto_text.contains(&needle) {
+                found = Some((k.clone(), v.clone()));
+                break;
+            }
+            let mode_text = crate::fmt::decode(v, val_mode, endian, 65536).to_lowercase();
+            if mode_text.contains(&needle) {
                 found = Some((k.clone(), v.clone()));
                 break;
             }

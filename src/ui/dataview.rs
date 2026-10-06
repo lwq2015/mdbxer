@@ -108,15 +108,26 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         if ui.button("K").on_hover_text(t.key_search_btn_tip).clicked() {
             app.apply_key_search();
         }
-        // 搜索 Value（左键：全表扫描并定位到首个匹配；右键：仅当前页内包含过滤）
+        // 搜索 Value：行为由"全表"开关决定（开启=全表扫描定位，关闭=当前页过滤）
         let v_btn = ui
             .button("V")
             .on_hover_text(t.value_search_btn_tip);
         if v_btn.clicked() {
-            app.start_full_value_search();
+            if app.value_search_full {
+                app.start_full_value_search();
+            } else {
+                app.apply_value_search();
+            }
         }
-        if v_btn.secondary_clicked() {
-            app.apply_value_search();
+        if ui
+            .checkbox(&mut app.value_search_full, t.full_search_toggle)
+            .on_hover_text(t.full_search_tip)
+            .changed()
+        {
+            // 切换模式时清除另一模式的残留状态，避免误判
+            if app.value_search_full {
+                app.clear_value_search();
+            }
         }
         // 过滤状态指示 + 清除
         if app.key_filter.is_some() || app.value_filter.is_some() {
@@ -214,8 +225,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     if let Some(c) = sel_color {
                         rt = rt.color(c);
                     }
+                    // selectable(false)：避免单元格文本选区抢占 Ctrl+C，
+                    // 保证 Ctrl+C 始终复制选中行的 KV
                     if ui
-                        .add(egui::Label::new(rt).sense(egui::Sense::click()))
+                        .add(
+                            egui::Label::new(rt)
+                                .selectable(false)
+                                .sense(egui::Sense::click()),
+                        )
                         .clicked()
                     {
                         clicked_row = Some(i);
@@ -227,7 +244,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         rt = rt.color(c);
                     }
                     if ui
-                        .add(egui::Label::new(rt).sense(egui::Sense::click()))
+                        .add(
+                            egui::Label::new(rt)
+                                .selectable(false)
+                                .sense(egui::Sense::click()),
+                        )
                         .clicked()
                     {
                         clicked_row = Some(i);
@@ -239,7 +260,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         rt = rt.color(c);
                     }
                     if ui
-                        .add(egui::Label::new(rt).sense(egui::Sense::click()))
+                        .add(
+                            egui::Label::new(rt)
+                                .selectable(false)
+                                .sense(egui::Sense::click()),
+                        )
                         .clicked()
                     {
                         clicked_row = Some(i);
@@ -256,7 +281,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         rt = rt.color(c);
                     }
                     if ui
-                        .add(egui::Label::new(rt).sense(egui::Sense::click()))
+                        .add(
+                            egui::Label::new(rt)
+                                .selectable(false)
+                                .sense(egui::Sense::click()),
+                        )
                         .on_hover_text(t.dup_row_tip)
                         .clicked()
                     {
