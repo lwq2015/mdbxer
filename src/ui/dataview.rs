@@ -77,16 +77,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         }
 
         ui.separator();
-        // Key 搜索：回车生效；➡ 跳转定位 / 🔍 前缀过滤
-        // （符号均取自 egui 内置字体 emoji-icon/NotoEmoji，跨平台不依赖系统字体）
+        // 共享搜索框：Key（跳转/前缀过滤）和 Value（页内文本包含）共用
+        // 符号取自 egui 内置字体 emoji-icon/NotoEmoji，跨平台不依赖系统字体
         let sresp = ui.add(
-            egui::TextEdit::singleline(&mut app.key_search_input)
+            egui::TextEdit::singleline(&mut app.search_input)
                 .desired_width(160.0)
-                .hint_text(t.key_search_hint),
+                .hint_text(t.toolbar_search_hint),
         );
+        // 回车默认执行 Key 搜索（跳转或前缀过滤，取决于模式）
         if sresp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             app.apply_key_search();
         }
+        // Key 搜索模式切换：➡ 跳转定位 / 🔍 前缀过滤
         if ui
             .button(if app.key_filter_mode { "🔍" } else { "➡" })
             .on_hover_text(t.key_search_mode_tip)
@@ -94,7 +96,20 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         {
             app.key_filter_mode = !app.key_filter_mode;
         }
-        if app.key_filter.is_some() {
+        // 搜索 Key
+        if ui.button("K").on_hover_text(t.key_search_btn_tip).clicked() {
+            app.apply_key_search();
+        }
+        // 搜索 Value（当前页内文本包含过滤）
+        if ui
+            .button("V")
+            .on_hover_text(t.value_search_btn_tip)
+            .clicked()
+        {
+            app.apply_value_search();
+        }
+        // 过滤状态指示 + 清除
+        if app.key_filter.is_some() || app.value_filter.is_some() {
             ui.label(
                 egui::RichText::new(t.filter_active).color(ui.visuals().warn_fg_color),
             );
@@ -104,6 +119,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 .clicked()
             {
                 app.clear_key_search();
+                app.clear_value_search();
             }
         }
     });

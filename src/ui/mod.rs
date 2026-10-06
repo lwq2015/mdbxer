@@ -288,12 +288,14 @@ pub struct MdbxerApp {
     pub at_end: bool,
     /// 选中的行在 self.rows 中的下标
     pub selected_row: Option<usize>,
-    /// Key 搜索输入框内容（跳转 / 前缀过滤共用）
-    pub key_search_input: String,
+    /// 共享搜索输入框内容（Key 跳转/过滤、Value 页内过滤共用）
+    pub search_input: String,
     /// 当前生效的 Key 前缀过滤（None = 未过滤）
     pub key_filter: Option<Vec<u8>>,
     /// Key 搜索模式：false = 跳转定位；true = 前缀过滤
     pub key_filter_mode: bool,
+    /// 当前生效的 Value 页内过滤文本（None = 未过滤）
+    pub value_filter: Option<String>,
     /// Key 列解码格式（默认自动；编码固定的表可手动指定）
     pub key_mode: DecodeMode,
     /// Value 列解码格式（默认自动：Value 逐行猜测）
@@ -420,9 +422,10 @@ impl MdbxerApp {
             at_start: true,
             at_end: true,
             selected_row: None,
-            key_search_input: String::new(),
+            search_input: String::new(),
             key_filter: None,
             key_filter_mode: false,
+            value_filter: None,
             key_mode,
             val_mode,
             endian,
@@ -461,6 +464,11 @@ impl MdbxerApp {
     pub fn display_order(&mut self) -> Vec<usize> {
         self.refresh_views();
         let mut order: Vec<usize> = (0..self.rows.len()).collect();
+        // Value 页内搜索：按 Value 显示文本大小写不敏感包含过滤
+        if let Some(filter) = &self.value_filter {
+            let needle = filter.to_lowercase();
+            order.retain(|&i| self.views[i].val_text.to_lowercase().contains(&needle));
+        }
         let Some((col, asc)) = self.col_sort else { return order };
         match col {
             SortCol::Index => {}
@@ -558,8 +566,9 @@ impl MdbxerApp {
                 self.tab = CenterTab::Data;
                 self.stat_cache = None;
                 self.env_cache = None;
-                self.key_search_input.clear();
+                self.search_input.clear();
                 self.key_filter = None;
+                self.value_filter = None;
                 self.status = Status::Opened {
                     file_mode,
                     n,
@@ -599,8 +608,9 @@ impl MdbxerApp {
         self.selected_row = None;
         self.stat_cache = None;
         self.env_cache = None;
-        self.key_search_input.clear();
+        self.search_input.clear();
         self.key_filter = None;
+        self.value_filter = None;
         self.fav_tables.clear();
         self.fav_keys.clear();
         self.detail.clear();
@@ -686,8 +696,9 @@ impl MdbxerApp {
     pub fn select_table(&mut self, index: usize) {
         self.selected_table = Some(index);
         self.stat_cache = None;
-        self.key_search_input.clear();
+        self.search_input.clear();
         self.key_filter = None;
+        self.value_filter = None;
         self.load_first_page();
         self.save_per_db();
     }
@@ -808,7 +819,7 @@ impl MdbxerApp {
     /// Key 搜索：跳转模式复用 [`Self::jump`] 定位；前缀过滤模式只显示以输入
     /// 开头的 Key（文本或 hex(...)/0x... 输入，按字节语义匹配）。
     pub fn apply_key_search(&mut self) {
-        let input = self.key_search_input.trim().to_string();
+        let input = self.search_input.trim().to_string();
         if input.is_empty() {
             return;
         }
@@ -831,8 +842,20 @@ impl MdbxerApp {
     /// 清除 Key 前缀过滤并回到全表首页。
     pub fn clear_key_search(&mut self) {
         self.key_filter = None;
-        self.key_search_input.clear();
+        self.search_input.clear();
         self.load_first_page();
+    }
+
+    /// Value 页内搜索：把当前输入框内容作为 Value 显示文本的包含过滤条件。
+    /// 空输入清除过滤。
+    pub fn apply_value_search(&mut self) {
+        let input = self.search_input.trim().to_string();
+        self.value_filter = if input.is_empty() { None } else { Some(input) };
+    }
+
+    /// 清除 Value 页内过滤（不清空输入框）。
+    pub fn clear_value_search(&mut self) {
+        self.value_filter = None;
     }
 
     // ── 多值 ────────────────────────────────────────────────────
@@ -1132,7 +1155,7 @@ impl MdbxerApp {
             return;
         };
         self.select_table(idx);
-        self.key_search_input = format!("hex({})", fk.key_hex);
+        self.search_input = format!("hex({})", fk.key_hex);
         self.key_filter_mode = false;
         self.apply_key_search();
     }

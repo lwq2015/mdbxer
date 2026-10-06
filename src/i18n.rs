@@ -196,9 +196,13 @@ pub struct I18n {
     pub seg_range_t: &'static str,
     pub seg_bad: &'static str,
 
-    // ── Key 搜索工具条 ──
-    pub key_search_hint: &'static str,
+    // ── 搜索工具条（Key/Value 共享输入框） ──
+    pub toolbar_search_hint: &'static str,
     pub key_search_mode_tip: &'static str,
+    /// "K" 按钮 hover 提示
+    pub key_search_btn_tip: &'static str,
+    /// "V" 按钮 hover 提示
+    pub value_search_btn_tip: &'static str,
     pub filter_active: &'static str,
     pub filter_clear_tip: &'static str,
     /// {e}
@@ -620,10 +624,12 @@ const ZH: I18n = I18n {
     seg_range_t: "偏移超出范围：{v}（共 {total} 字节）",
     seg_bad: "请输入十进制偏移，或 0x 开头的十六进制偏移",
 
-    key_search_hint: "搜索 Key：文本或 hex(...)",
+    toolbar_search_hint: "搜索：文本或 hex(...)",
     key_search_mode_tip: "跳转模式：定位到首个不小于输入的 Key；过滤模式：只显示以输入开头的 Key（回车生效）",
+    key_search_btn_tip: "搜索 Key（跳转或前缀过滤）",
+    value_search_btn_tip: "搜索 Value（当前页内文本包含，大小写不敏感）",
     filter_active: "已过滤",
-    filter_clear_tip: "清除 Key 前缀过滤，恢复显示全表",
+    filter_clear_tip: "清除搜索过滤（Key 前缀 + Value 文本），恢复显示全表",
     key_search_bad_t: "搜索输入错误：{e}",
 
     export_tip: "把当前表导出为 CSV/JSON（后台线程，界面可继续操作）",
@@ -813,10 +819,12 @@ const EN: I18n = I18n {
     seg_range_t: "Offset out of range: {v} ({total} bytes)",
     seg_bad: "Enter a decimal offset, or hexadecimal prefixed with 0x",
 
-    key_search_hint: "Search keys: text or hex(...)",
+    toolbar_search_hint: "Search: text or hex(...)",
     key_search_mode_tip: "Jump mode: locate the first key >= input; Filter mode: show only keys starting with the input (Enter to apply)",
+    key_search_btn_tip: "Search keys (jump or prefix filter)",
+    value_search_btn_tip: "Search values (current page, text contains, case-insensitive)",
     filter_active: "filtered",
-    filter_clear_tip: "Clear the key prefix filter and show the whole table",
+    filter_clear_tip: "Clear search filters (key prefix + value text), show the whole table",
     key_search_bad_t: "Invalid search input: {e}",
 
     export_tip: "Export the current table as CSV/JSON (background thread; UI stays responsive)",
@@ -1006,10 +1014,12 @@ const RU: I18n = I18n {
     seg_range_t: "Смещение вне диапазона: {v} ({total} байт)",
     seg_bad: "Введите десятичное смещение или шестнадцатеричное с префиксом 0x",
 
-    key_search_hint: "Поиск ключей: текст или hex(...)",
+    toolbar_search_hint: "Поиск: текст или hex(...)",
     key_search_mode_tip: "Режим перехода: первый ключ >= ввода; режим фильтра: только ключи, начинающиеся с ввода (Enter — применить)",
+    key_search_btn_tip: "Поиск ключей (переход или фильтр по префиксу)",
+    value_search_btn_tip: "Поиск значений (текущая страница, содержит текст, без учёта регистра)",
     filter_active: "отфильтровано",
-    filter_clear_tip: "Сбросить фильтр по префиксу ключа и показать всю таблицу",
+    filter_clear_tip: "Сбросить фильтры поиска (префикс ключа + текст значения), показать всю таблицу",
     key_search_bad_t: "Неверный запрос поиска: {e}",
 
     export_tip: "Экспорт текущей таблицы в CSV/JSON (в фоне; интерфейс остаётся отзывчивым)",
@@ -1191,7 +1201,9 @@ mod tests {
     #[test]
     fn all_tables_have_key_search_fields() {
         for table in &TABLES {
-            assert!(!table.key_search_hint.is_empty());
+            assert!(!table.toolbar_search_hint.is_empty());
+            assert!(!table.key_search_btn_tip.is_empty());
+            assert!(!table.value_search_btn_tip.is_empty());
             assert!(!table.key_search_mode_tip.is_empty());
             assert!(!table.filter_active.is_empty());
             assert!(!table.filter_clear_tip.is_empty());
