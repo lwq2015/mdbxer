@@ -225,7 +225,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 }
                 if ui
                     .button(if app.dark_theme { "🌙" } else { "☀" })
-                    .on_hover_text(t.theme_tip)
+                    .on_hover_text(if app.dark_theme {
+                        t.theme_to_light
+                    } else {
+                        t.theme_to_dark
+                    })
                     .clicked()
                 {
                     app.toggle_theme(ui.ctx());

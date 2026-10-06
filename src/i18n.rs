@@ -213,7 +213,10 @@ pub struct I18n {
     pub export_done_t: &'static str,
 
     // ── 主题 / 收藏 ──
-    pub theme_tip: &'static str,
+    /// 深色主题下：切换到浅色
+    pub theme_to_light: &'static str,
+    /// 浅色主题下：切换到深色
+    pub theme_to_dark: &'static str,
     pub favorites_title: &'static str,
     pub fav_table_tip: &'static str,
     pub fav_key_tip: &'static str,
@@ -628,7 +631,8 @@ const ZH: I18n = I18n {
     export_progress_t: "导出中：已写出 {n} 条…",
     export_done_t: "导出完成：{n} 条，已保存到 {path}",
 
-    theme_tip: "切换深浅色主题",
+    theme_to_light: "切换到浅色主题",
+    theme_to_dark: "切换到深色主题",
     favorites_title: "收藏",
     fav_table_tip: "收藏 / 取消收藏该表",
     fav_key_tip: "收藏 / 取消收藏该 Key",
@@ -820,7 +824,8 @@ const EN: I18n = I18n {
     export_progress_t: "Exporting: {n} records written…",
     export_done_t: "Export finished: {n} records saved to {path}",
 
-    theme_tip: "Toggle dark/light theme",
+    theme_to_light: "Switch to light theme",
+    theme_to_dark: "Switch to dark theme",
     favorites_title: "Favorites",
     fav_table_tip: "Add/remove this table from favorites",
     fav_key_tip: "Add/remove this key from favorites",
@@ -1012,7 +1017,8 @@ const RU: I18n = I18n {
     export_progress_t: "Экспорт: записано {n} записей…",
     export_done_t: "Экспорт завершён: {n} записей сохранено в {path}",
 
-    theme_tip: "Переключить тёмную/светлую тему",
+    theme_to_light: "Переключиться на светлую тему",
+    theme_to_dark: "Переключиться на тёмную тему",
     favorites_title: "Избранное",
     fav_table_tip: "Добавить/убрать таблицу из избранного",
     fav_key_tip: "Добавить/убрать ключ из избранного",
@@ -1213,7 +1219,8 @@ mod tests {
     #[test]
     fn all_tables_have_theme_favorites_fields() {
         for table in &TABLES {
-            assert!(!table.theme_tip.is_empty());
+            assert!(!table.theme_to_light.is_empty());
+            assert!(!table.theme_to_dark.is_empty());
             assert!(!table.favorites_title.is_empty());
             assert!(!table.fav_table_tip.is_empty());
             assert!(!table.fav_key_tip.is_empty());
