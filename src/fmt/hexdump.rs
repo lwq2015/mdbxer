@@ -63,6 +63,46 @@ pub fn hex_line(
     s
 }
 
+/// 生成 HEX 列复制文本：与屏幕显示列对齐。
+///
+/// 选中区间 `lo..=hi`（全局字节序号，端点自动排序/夹取）跨显示行时按行换行，
+/// 每行从该行完整 HEX 段中切出被选中的字符区间——行首保留空格缩进，
+/// 使粘贴到等宽编辑器后各字节仍落在与视图相同的列；宽行 mid gap 同样保留。
+/// 行尾不保留尾随空格。
+pub fn hex_copy_selection(bytes: &[u8], lo: usize, hi: usize, width: usize) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    let n = width.max(1);
+    let (lo, hi) = (lo.min(hi), lo.max(hi).min(bytes.len() - 1));
+    if lo > hi {
+        return String::new();
+    }
+    let mid = mid_gap_index(n).unwrap_or(usize::MAX);
+    // 行内第 i 字节在纯 HEX 段文本中的起始字符下标
+    let cstart = |i: usize| 3 * i + if i >= mid { 1 } else { 0 };
+
+    let mut lines = Vec::new();
+    let mut r = lo / n;
+    let last_row = hi / n;
+    while r <= last_row {
+        let row_start = r * n;
+        let row_end = (row_start + n).min(bytes.len());
+        let sel_lo = lo.max(row_start) - row_start;
+        let sel_hi = hi.min(row_end - 1) - row_start; // 行内最后一个选中字节
+        let line = hex_line(&bytes[row_start..row_end], n, false, true, false, 0);
+        let sc = cstart(sel_lo);
+        let ec = cstart(sel_hi) + 2; // 不含该字节尾随的空格
+        // 行首未选中的字节用等宽空格顶替（保留列对齐，含 mid gap 宽度）
+        let mut out = String::with_capacity(ec);
+        out.push_str(&" ".repeat(sc));
+        out.push_str(&line[sc..ec]);
+        lines.push(out);
+        r += 1;
+    }
+    lines.join("\n")
+}
+
 /// 按 `width` 字节一行的 hex dump。三个开关分别控制 地址列 / 十六进制列 / ASCII 列。
 ///
 /// `base_offset` 为这段数据在原始字节序列中的起始偏移，
@@ -207,5 +247,44 @@ mod tests {
         // "00 00 00 00  00 00 00 00 "（结尾空格保留）
         assert!(line.starts_with("00 00 00 00  00"));
         assert_eq!(line.len(), hex_section_chars(8));
+    }
+
+    #[test]
+    fn hex_copy_selection_aligns_columns() {
+        // "Hello, MDBX!" 12 字节，行宽 8
+        let b = b"Hello, MDBX!";
+
+        // 行内单行部分选择：字节 1..=3 → 3 空格缩进（对齐第 2 字节列）
+        assert_eq!(hex_copy_selection(b, 1, 3, 8), "   65 6C 6C");
+        // 从行首选则无缩进
+        assert_eq!(hex_copy_selection(b, 0, 3, 8), "48 65 6C 6C");
+
+        // 跨两行且首行从字节 6 起：第一行缩进 3*6+mid 空隙 1 = 19 空格
+        let s = hex_copy_selection(b, 6, 11, 8);
+        assert_eq!(s, "                   20 4D\n44 42 58 21");
+        // 第二行 4 字节顶格（它在显示中就是行首）
+        assert!(s.ends_with("\n44 42 58 21"));
+
+        // 端点反序也归一化
+        assert_eq!(hex_copy_selection(b, 3, 1, 8), "   65 6C 6C");
+        // 超界夹取
+        assert_eq!(hex_copy_selection(b, 0, 99, 8).lines().count(), 2);
+    }
+
+    #[test]
+    fn hex_copy_selection_mid_gap_indent() {
+        let b = (0u8..16).collect::<Vec<u8>>();
+        // 选第二行字节 4..7：缩进 = 3*4 + mid 空隙 1 = 13 空格
+        let s = hex_copy_selection(&b, 12, 15, 8);
+        assert_eq!(s, "             0C 0D 0E 0F");
+        assert_eq!(s.find('0'), Some(13));
+
+        // 行内选中跨越 mid gap（字节 2..5）：选区内保留双空格间隙
+        let s = hex_copy_selection(&b, 2, 5, 8);
+        assert_eq!(s, "      02 03  04 05");
+
+        // 行宽 4（无 mid gap）：缩进 = 2*3 = 6 空格
+        let s = hex_copy_selection(b"ABCD", 2, 3, 4);
+        assert_eq!(s, "      43 44");
     }
 }

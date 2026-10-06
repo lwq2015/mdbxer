@@ -10,7 +10,9 @@ mod hexdump;
 mod value;
 
 pub use guess::guess;
-pub(crate) use hexdump::{ADDR_CHARS, hex_line, hex_section_chars, mid_gap_index};
+pub(crate) use hexdump::{
+    ADDR_CHARS, hex_copy_selection, hex_line, hex_section_chars, mid_gap_index,
+};
 pub use hexdump::{DEFAULT_HEX_WIDTH, HEX_WIDTHS, PAGE_BYTES};
 pub use value::decode;
 

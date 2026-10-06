@@ -303,22 +303,7 @@ pub(crate) fn hex_view(
                     .data(|d| d.get_temp::<DragCol>(col_id))
                     .unwrap_or_default();
                 let text = match col {
-                    DragCol::Hex => {
-                        // 按显示行分组：跨几行就输出几行，行内空格分隔，行间换行
-                        let mut lines = Vec::new();
-                        let mut idx = lo;
-                        while idx <= hi {
-                            let row_end = ((idx / n) * n + n - 1).min(hi);
-                            let s = chunk[(idx - lo)..=(row_end - lo)]
-                                .iter()
-                                .map(|b| format!("{b:02X}"))
-                                .collect::<Vec<_>>()
-                                .join(" ");
-                            lines.push(s);
-                            idx = row_end + 1;
-                        }
-                        lines.join("\n")
-                    }
+                    DragCol::Hex => crate::fmt::hex_copy_selection(bytes, lo, hi, n),
                     DragCol::Ascii => {
                         // 忠实于字节：连续拼接，不凭空插入换行；非 UTF-8 用替换字符
                         String::from_utf8_lossy(chunk).into_owned()
