@@ -95,7 +95,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             egui::Panel::bottom("fav_panel")
                 .resizable(false)
                 .show(ui, |ui| {
-                    ui.separator();
+                    // 不在此再加 ui.separator()：bottom 面板自身已在顶边画分隔线
                     egui::CollapsingHeader::new(t.favorites_title)
                         .id_salt("fav_keys")
                         .default_open(true)
@@ -140,24 +140,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             // ── 收藏的 Key：→ 跳转，× 删除 ──
                             for (i, fk) in app.fav_keys.iter().enumerate() {
                                 ui.horizontal(|ui| {
-                                    if ui
-                                        .small_button("➡")
-                                        .on_hover_text(t.fav_jump_tip)
-                                        .clicked()
+                                    if ui.small_button("➡").on_hover_text(t.fav_jump_tip).clicked()
                                     {
                                         fav_key_action = Some((i, true));
                                     }
-                                    if ui
-                                        .small_button("×")
-                                        .on_hover_text(t.fav_del_tip)
-                                        .clicked()
+                                    if ui.small_button("×").on_hover_text(t.fav_del_tip).clicked()
                                     {
                                         fav_key_action = Some((i, false));
                                     }
-                                    let table_name = fk
-                                        .table
-                                        .as_deref()
-                                        .unwrap_or(t.main_table);
+                                    let table_name = fk.table.as_deref().unwrap_or(t.main_table);
                                     let short_hex: String = fk.key_hex.chars().take(16).collect();
                                     let label = if fk.note.is_empty() {
                                         format!("{table_name} · {short_hex}")
@@ -184,9 +175,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 TableSort::NameDesc => {
                     idx.sort_by(|&a, &b| dbh.tables[b].display().cmp(&dbh.tables[a].display()))
                 }
-                TableSort::CountAsc => {
-                    idx.sort_by_key(|&i| dbh.tables[i].entries)
-                }
+                TableSort::CountAsc => idx.sort_by_key(|&i| dbh.tables[i].entries),
                 TableSort::CountDesc => {
                     idx.sort_by_key(|&i| std::cmp::Reverse(dbh.tables[i].entries))
                 }
