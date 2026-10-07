@@ -55,6 +55,10 @@ pub struct DetailState {
     pub key_blob_hit: Option<(usize, usize)>,
     /// Value 卡片最近一次搜索命中区间
     pub val_blob_hit: Option<(usize, usize)>,
+    /// Key 卡片待滚动的命中字节位置（全局偏移，消费一次后清空）
+    pub key_blob_scroll: Option<usize>,
+    /// Value 卡片待滚动的命中字节位置
+    pub val_blob_scroll: Option<usize>,
     /// Key 卡片 hex 视图选区的内容指纹（段偏移/长度/行/多值序号），用于换内容时清选区
     pub hex_key_fp: Option<(usize, usize, Option<usize>, usize)>,
     /// Key 卡片 hex 视图选区（字节全局序号端点，顺序无关）
@@ -88,6 +92,8 @@ impl Default for DetailState {
             val_blob_input: String::new(),
             key_blob_hit: None,
             val_blob_hit: None,
+            key_blob_scroll: None,
+            val_blob_scroll: None,
             hex_key_fp: None,
             hex_key_sel: None,
             hex_val_fp: None,
@@ -127,6 +133,8 @@ impl DetailState {
         self.val_blob_input.clear();
         self.key_blob_hit = None;
         self.val_blob_hit = None;
+        self.key_blob_scroll = None;
+        self.val_blob_scroll = None;
     }
 
     /// 加载指定 Key 的多值首页（值列表每页 DUP_PAGE_SIZE 个懒加载）；
@@ -180,6 +188,7 @@ impl DetailState {
         self.val_seg_off = 0;
         self.val_seg_input.clear();
         self.val_blob_hit = None;
+        self.val_blob_scroll = None;
         Ok(())
     }
 
@@ -336,6 +345,15 @@ impl DetailState {
         }
     }
 
+    /// 取出并清空待滚动的命中字节位置（全局偏移）；内容区滚动组件消费一次。
+    pub fn blob_scroll_take(&mut self, is_key: bool) -> Option<usize> {
+        if is_key {
+            self.key_blob_scroll.take()
+        } else {
+            self.val_blob_scroll.take()
+        }
+    }
+
     /// 在卡片完整字节中做字节子串搜索：文本按 UTF-8，`hex(...)/0x...` 按字节。
     /// `forward=false` 向小偏移方向；以当前命中为起点跳过自身，主方向无命中回绕。
     /// 命中后对齐到所在段并记录高亮区间。返回状态栏消息。
@@ -395,11 +413,16 @@ impl DetailState {
                 None => return t.blob_nomatch.to_string(),
             }
         };
-        // 记录命中并跳到所在段
+        // 记录命中并跳到所在段；置滚动目标，内容区滚动组件本帧消费后把命中行滚到可见
         let (_, hit) = self.blob_state_mut(is_key);
         *hit = Some((pos, needle.len()));
         let off = self.seg_state_mut(is_key).0;
         *off = (pos / fmt::PAGE_BYTES) * fmt::PAGE_BYTES;
+        if is_key {
+            self.key_blob_scroll = Some(pos);
+        } else {
+            self.val_blob_scroll = Some(pos);
+        }
         if wrapped {
             t.blob_wrap(pos)
         } else {
@@ -755,10 +778,8 @@ fn kv_card(
         let window = &bytes[off..end];
 
         // 文本视图（可折叠；长文本默认折叠，方便直接看 hex）。
-        // 注意：egui 的 desired_rows 只设最小高度（内容少于该行数时撑开），
-        // 不封顶；超出部分由外层右栏 ScrollArea 统一滚动。
-        // 字符额度按最宽的 binary 展开（9 字符/字节）+ 64 余量，
-        // 避免时间戳这类"小字节大文本"被截断出省略号。
+        // 内容区用独立滚动条（限高 16 行），卡片头/搜索行不随内容滚走，
+        // 滚动中也能继续搜索。
         let text = fmt::decode(
             window,
             app.detail.mode_of(is_key),
@@ -772,22 +793,28 @@ fn kv_card(
             .default_open(default_open)
             .show(ui, |ui| {
                 let mut text = text;
-                ui.add(
-                    egui::TextEdit::multiline(&mut text)
-                        .font(egui::TextStyle::Monospace)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(text_rows),
-                );
+                egui::ScrollArea::vertical()
+                    .id_salt(("detail_text_scroll", is_key))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut text)
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(text_rows),
+                        );
+                    });
             });
 
         // 十六进制视图：自绘交互组件（悬停整行/单字节联动、拖拽选区 HEX↔ASCII 同步）。
-        // 大段数据组件内部按裁剪区只渲染可见行；高度完全撑开，由外层 ScrollArea 滚动。
+        // 独立滚动区（限高），搜索命中后自动把命中行滚到可视区。
         egui::CollapsingHeader::new(t.section_hex)
             .id_salt(("detail_hex", is_key))
             .default_open(true)
             .show(ui, |ui| {
                 // 搜索命中先取（避免与下面 sel 的可变借用冲突）
                 let blob_hit = app.detail.blob_hit(is_key);
+                let scroll_to = app.detail.blob_scroll_take(is_key);
                 // 内容指纹：换行/翻多值/切段后字节变了，选区作废
                 let fp = (off, window.len(), app.selected_row, app.detail.dup_index);
                 let (stored, sel) = if is_key {
@@ -798,18 +825,25 @@ fn kv_card(
                 if *stored != Some(fp) {
                     *sel = None;
                 }
-                super::hexview::hex_view(
-                    ui,
-                    super::hexview::view_id(is_key),
-                    window,
-                    app.detail.hex_width,
-                    app.detail.show_addr,
-                    app.detail.show_hex,
-                    app.detail.show_ascii,
-                    off,
-                    sel,
-                    blob_hit,
-                );
+                egui::ScrollArea::vertical()
+                    .id_salt(("detail_hex_scroll", is_key))
+                    .auto_shrink([false, false])
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        super::hexview::hex_view(
+                            ui,
+                            super::hexview::view_id(is_key),
+                            window,
+                            app.detail.hex_width,
+                            app.detail.show_addr,
+                            app.detail.show_hex,
+                            app.detail.show_ascii,
+                            off,
+                            sel,
+                            blob_hit,
+                            scroll_to,
+                        );
+                    });
                 *stored = Some(fp);
             });
     });

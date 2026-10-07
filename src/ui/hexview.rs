@@ -129,6 +129,7 @@ pub(crate) fn view_id(is_key: bool) -> egui::Id {
 /// - `base_offset`：本段在原始字节中的起始偏移（地址列用）；
 /// - `sel`：当前选区（字节全局序号，端点顺序无关）；内容切换由调用方负责清空。
 /// - `hit`：内容搜索命中区间（字节全局序号 start, len），琥珀色高亮；与选区重叠时让位于选区。
+/// - `scroll_to`：需要滚动到可见的命中字节（全局偏移，卡片搜索命中后由调用方一次性传入）。
 pub(crate) fn hex_view(
     ui: &mut egui::Ui,
     id: egui::Id,
@@ -140,6 +141,7 @@ pub(crate) fn hex_view(
     base_offset: usize,
     sel: &mut Option<(usize, usize)>,
     hit: Option<(usize, usize)>,
+    scroll_to: Option<usize>,
 ) -> egui::Response {
     let n = width.max(1);
     let rows = bytes.len().div_ceil(n).max(1);
@@ -175,6 +177,21 @@ pub(crate) fn hex_view(
         ascii_x: rect.left() + addr_w + hex_w,
         ascii_w,
     };
+
+    // 搜索命中后自动滚动：命中字节在本段内时，把该行滚到可视区（调用方一次性传入）
+    if let Some(g) = scroll_to {
+        if g >= base_offset && g < base_offset + bytes.len() {
+            let row = (g - base_offset) / n;
+            let y = geom.top + row as f32 * rh;
+            ui.scroll_to_rect(
+                egui::Rect::from_min_size(
+                    egui::pos2(rect.left(), y),
+                    egui::vec2(rect.width(), rh),
+                ),
+                Some(egui::Align::Center),
+            );
+        }
+    }
 
     // 内容/配置/主题指纹：变了就丢弃 galley 缓存
     let tag = {
