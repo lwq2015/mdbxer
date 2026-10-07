@@ -109,7 +109,10 @@ fn try_utf16(bytes: &[u8]) -> Option<(String, String)> {
         }
         let n = chars.len() as u32;
         let ascii_ok = ascii >= 2 && ascii * 3 >= n * 2; // ASCII 占比 ≥ 2/3
-        let cjk_ok = ascii + alpha >= n * 2 / 3 && alpha >= 4; // 无 ASCII 的字母文本（如中文）
+        // 无 ASCII 的字母文本（如中文）。除字母数量外还要求文字体系一致：
+        // 真实文本极少混用两套文字，而随机二进制（如 GBK 字节）按 UTF-16 误读
+        // 常撞出 "生僻 CJK + 谚文音节" 这种跨体系组合——混入即不猜，宁显二进制。
+        let cjk_ok = ascii + alpha >= n * 2 / 3 && alpha >= 4 && single_script(&chars);
         if ascii_ok || cjk_ok {
             let replace = best
                 .as_ref()
@@ -139,6 +142,36 @@ fn utf16_units(bytes: &[u8], big: bool) -> Vec<u16> {
         .collect()
 }
 
+/// 文字体系粗分（仅区分主要文字块，标点/数字/符号归 0 不参与判断）。
+fn script_bucket(c: char) -> u8 {
+    match c as u32 {
+        0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF => 1, // CJK 统一表意
+        0xAC00..=0xD7AF | 0x1100..=0x11FF | 0x3130..=0x318F => 2, // 谚文
+        0x0400..=0x052F => 3,                                     // 西里尔
+        0x3040..=0x30FF => 4,                                     // 假名
+        0x0600..=0x06FF | 0x0750..=0x077F => 5,                   // 阿拉伯
+        0x00C0..=0x024F => 6,                                     // 拉丁扩展
+        _ => 0,
+    }
+}
+
+/// 字母字符是否同属一套文字体系（不同体系混排视为可疑）。
+fn single_script(chars: &[char]) -> bool {
+    let mut seen = 0u8;
+    for c in chars {
+        let b = script_bucket(*c);
+        if b == 0 {
+            continue;
+        }
+        if seen == 0 {
+            seen = b;
+        } else if seen != b {
+            return false;
+        }
+    }
+    true
+}
+
 /// 校验并解码 UTF-16 单元：拒绝未配对代理与控制字符（`\t \n \r` 除外）、内嵌 NUL；
 /// 容忍并剥掉单个结尾 NUL。全部合法才返回文本。
 fn utf16_validate(units: &[u16]) -> Option<String> {
@@ -165,6 +198,16 @@ fn utf16_validate(units: &[u16]) -> Option<String> {
             char::from_u32(u as u32)?
         };
         if c.is_control() && !matches!(c, '\t' | '\n' | '\r') {
+            return None;
+        }
+        // 拒绝私用区（PUA）：真实文本几乎不含 PUA，而 GBK/GB18030 等传统编码
+        // 字节按 UTF-16 误读时经常落入 U+E000–U+F8FF（如 gbk_text 曾误判出
+        // "譬需□□□□"），命中私用区即说明这更像二进制/其他编码，不猜 UTF-16。
+        let cp = c as u32;
+        if (0xE000..=0xF8FF).contains(&cp)
+            || (0xF_0000..=0xF_FFFD).contains(&cp)
+            || (0x10_0000..=0x10_FFFD).contains(&cp)
+        {
             return None;
         }
         s.push(c);
@@ -346,5 +389,17 @@ mod tests {
         let t = crate::i18n::tr();
         assert_ne!(label, t.guess_utf16_le);
         let _ = bytes;
+    }
+
+    #[test]
+    fn no_guess_utf16_for_gbk_bytes() {
+        // "GBK 简体中文" 的 GBK 字节按 UTF-16 LE 误读会得到 4 个字母字符
+        // （CJK/西里尔/谚文）混 2 个私用区字符，曾误判为 UTF-16 显示乱码。
+        // 私用区拒绝规则生效后应回退为二进制。
+        let gbk = encoding_rs::GBK.encode("GBK 简体中文").0.into_owned();
+        let (label, _) = guess(&gbk, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_ne!(label, t.guess_utf16_le);
+        assert_ne!(label, t.guess_utf16_be);
     }
 }
