@@ -47,6 +47,14 @@ pub struct DetailState {
     pub key_seg_input: String,
     /// Value 卡片偏移跳转输入框
     pub val_seg_input: String,
+    /// Key 卡片大字段内容搜索输入（文本或 hex(...)）
+    pub key_blob_input: String,
+    /// Value 卡片大字段内容搜索输入
+    pub val_blob_input: String,
+    /// Key 卡片最近一次搜索命中区间（全局偏移 start, len），用于 hex 高亮
+    pub key_blob_hit: Option<(usize, usize)>,
+    /// Value 卡片最近一次搜索命中区间
+    pub val_blob_hit: Option<(usize, usize)>,
     /// Key 卡片 hex 视图选区的内容指纹（段偏移/长度/行/多值序号），用于换内容时清选区
     pub hex_key_fp: Option<(usize, usize, Option<usize>, usize)>,
     /// Key 卡片 hex 视图选区（字节全局序号端点，顺序无关）
@@ -76,6 +84,10 @@ impl Default for DetailState {
             val_seg_off: 0,
             key_seg_input: String::new(),
             val_seg_input: String::new(),
+            key_blob_input: String::new(),
+            val_blob_input: String::new(),
+            key_blob_hit: None,
+            val_blob_hit: None,
             hex_key_fp: None,
             hex_key_sel: None,
             hex_val_fp: None,
@@ -111,6 +123,10 @@ impl DetailState {
         self.val_seg_off = 0;
         self.key_seg_input.clear();
         self.val_seg_input.clear();
+        self.key_blob_input.clear();
+        self.val_blob_input.clear();
+        self.key_blob_hit = None;
+        self.val_blob_hit = None;
     }
 
     /// 加载指定 Key 的多值首页（值列表每页 DUP_PAGE_SIZE 个懒加载）；
@@ -160,9 +176,10 @@ impl DetailState {
             }
         }
         self.dup_index = idx.min(self.dup_total.saturating_sub(1));
-        // 切换到另一个值：Value 分段偏移归零
+        // 切换到另一个值：Value 分段偏移归零；旧值的搜索命中失效（输入保留）
         self.val_seg_off = 0;
         self.val_seg_input.clear();
+        self.val_blob_hit = None;
         Ok(())
     }
 
@@ -295,6 +312,98 @@ impl DetailState {
             }
             Ok(v) => t.seg_range_msg(v, total),
             Err(_) => t.seg_bad.to_string(),
+        }
+    }
+
+    /// Key/Value 卡片大字段搜索状态（输入框 + 命中区间）的可变引用。
+    fn blob_state_mut(
+        &mut self,
+        is_key: bool,
+    ) -> (&mut String, &mut Option<(usize, usize)>) {
+        if is_key {
+            (&mut self.key_blob_input, &mut self.key_blob_hit)
+        } else {
+            (&mut self.val_blob_input, &mut self.val_blob_hit)
+        }
+    }
+
+    /// Key/Value 卡片大字段搜索命中区间（只读，供 hex 高亮）。
+    pub fn blob_hit(&self, is_key: bool) -> Option<(usize, usize)> {
+        if is_key {
+            self.key_blob_hit
+        } else {
+            self.val_blob_hit
+        }
+    }
+
+    /// 在卡片完整字节中做字节子串搜索：文本按 UTF-8，`hex(...)/0x...` 按字节。
+    /// `forward=false` 向小偏移方向；以当前命中为起点跳过自身，主方向无命中回绕。
+    /// 命中后对齐到所在段并记录高亮区间。返回状态栏消息。
+    pub fn blob_search(&mut self, is_key: bool, bytes: &[u8], forward: bool) -> String {
+        let t = tr();
+        let s = self.blob_state_mut(is_key).0.trim().to_string();
+        if s.is_empty() {
+            return t.blob_prompt.to_string();
+        }
+        let needle = match parse_bytes_input(&s) {
+            Ok(b) => b,
+            Err(e) => return t.dup_bad_query(&e),
+        };
+        if needle.is_empty() || needle.len() > bytes.len() {
+            return t.blob_nomatch.to_string();
+        }
+        let cur = self.blob_hit(is_key);
+        let (pos, wrapped) = if forward {
+            // 从当前命中末尾之后继续；无命中则从头搜
+            let start = cur.map(|(p, l)| p + l).unwrap_or(0).min(bytes.len());
+            match bytes[start..]
+                .windows(needle.len())
+                .position(|w| w == needle)
+                .map(|i| start + i)
+            {
+                Some(p) => (p, false),
+                None if start > 0 => {
+                    // 回绕：在 [0, start) 内找
+                    match bytes[..start]
+                        .windows(needle.len())
+                        .position(|w| w == needle)
+                    {
+                        Some(p) => (p, true),
+                        None => return t.blob_nomatch.to_string(),
+                    }
+                }
+                None => return t.blob_nomatch.to_string(),
+            }
+        } else {
+            // 从当前命中起点之前找；无命中则从末尾搜
+            let start = cur.map(|(p, _)| p).unwrap_or(bytes.len()).min(bytes.len());
+            match bytes[..start]
+                .windows(needle.len())
+                .rposition(|w| w == needle)
+            {
+                Some(p) => (p, false),
+                None if start < bytes.len() => {
+                    match bytes[start..]
+                        .windows(needle.len())
+                        .rposition(|w| w == needle)
+                        .map(|i| start + i)
+                    {
+                        Some(p) => (p, true),
+                        None => return t.blob_nomatch.to_string(),
+                    }
+                }
+                None => return t.blob_nomatch.to_string(),
+            }
+        };
+        // 记录命中并跳到所在段
+        let (_, hit) = self.blob_state_mut(is_key);
+        *hit = Some((pos, needle.len()));
+        let off = self.seg_state_mut(is_key).0;
+        *off = (pos / fmt::PAGE_BYTES) * fmt::PAGE_BYTES;
+        if wrapped {
+            t.blob_wrap(pos)
+        } else {
+            t.blob_located(pos)
         }
     }
 }
@@ -517,6 +626,29 @@ fn kv_card(
             });
         }
 
+        // 大字段内容搜索：较长内容才显示（文本按 UTF-8，hex(...)/0x... 按字节，回绕）
+        if total > 512 {
+            ui.horizontal(|ui| {
+                let input = if is_key {
+                    &mut app.detail.key_blob_input
+                } else {
+                    &mut app.detail.val_blob_input
+                };
+                let resp = ui.add(
+                    egui::TextEdit::singleline(input)
+                        .desired_width(178.0)
+                        .hint_text(t.search_hint),
+                );
+                let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if ui.button("⬆").on_hover_text(t.search_prev_tip).clicked() {
+                    app.status = Status::Msg(app.detail.blob_search(is_key, bytes, false));
+                }
+                if ui.button("⬇").on_hover_text(t.search_next_tip).clicked() || enter {
+                    app.status = Status::Msg(app.detail.blob_search(is_key, bytes, true));
+                }
+            });
+        }
+
         // 多值导航：仅 Value 卡片、多值表显示
         let is_dup = !is_key && app.cur_table().map(|tbl| tbl.dup_sort).unwrap_or(false);
         if is_dup {
@@ -654,6 +786,8 @@ fn kv_card(
             .id_salt(("detail_hex", is_key))
             .default_open(true)
             .show(ui, |ui| {
+                // 搜索命中先取（避免与下面 sel 的可变借用冲突）
+                let blob_hit = app.detail.blob_hit(is_key);
                 // 内容指纹：换行/翻多值/切段后字节变了，选区作废
                 let fp = (off, window.len(), app.selected_row, app.detail.dup_index);
                 let (stored, sel) = if is_key {
@@ -674,6 +808,7 @@ fn kv_card(
                     app.detail.show_ascii,
                     off,
                     sel,
+                    blob_hit,
                 );
                 *stored = Some(fp);
             });
@@ -719,4 +854,91 @@ fn detail_needed_width(ui: &egui::Ui, d: &DetailState) -> f32 {
     // 估小了内容超宽会把面板顶回去，估大了右侧留空白）
     const CHROME: f32 = 80.0;
     line_chars * char_w + CHROME
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DetailState;
+
+    /// 构造带搜索输入的状态，跑一次搜索，返回 (命中区间, 段偏移)。
+    fn run_search(input: &str, data: &[u8], fwd: bool) -> (Option<(usize, usize)>, usize) {
+        let mut st = DetailState::default();
+        st.val_blob_input = input.to_string();
+        let _ = st.blob_search(false, data, fwd);
+        (st.blob_hit(false), st.val_seg_off)
+    }
+
+    #[test]
+    fn blob_search_forward_first() {
+        let data = b"xxabcxxabcxx";
+        let (hit, off) = run_search("abc", data, true);
+        assert_eq!(hit, Some((2, 3)));
+        assert_eq!(off, 0);
+    }
+
+    #[test]
+    fn blob_search_forward_skip_self_and_wrap() {
+        let data = b"xxabcxxabcxx";
+        let mut st = DetailState::default();
+        st.val_blob_input = "abc".into();
+        // 第一次：位置 2
+        let _ = st.blob_search(false, data, true);
+        assert_eq!(st.blob_hit(false), Some((2, 3)));
+        // 第二次：位置 7
+        let _ = st.blob_search(false, data, true);
+        assert_eq!(st.blob_hit(false), Some((7, 3)));
+        // 第三次：回绕到 2
+        let msg = st.blob_search(false, data, true);
+        assert_eq!(st.blob_hit(false), Some((2, 3)));
+        assert!(msg.contains("0x2"));
+    }
+
+    #[test]
+    fn blob_search_backward() {
+        let data = b"xxabcxxabcxx";
+        let mut st = DetailState::default();
+        st.val_blob_input = "abc".into();
+        // 无命中锚点：全文反向找最后一个
+        let _ = st.blob_search(false, data, false);
+        assert_eq!(st.blob_hit(false), Some((7, 3)));
+        // 继续向前：位置 2
+        let _ = st.blob_search(false, data, false);
+        assert_eq!(st.blob_hit(false), Some((2, 3)));
+        // 再向前：回绕到 7
+        let _ = st.blob_search(false, data, false);
+        assert_eq!(st.blob_hit(false), Some((7, 3)));
+    }
+
+    #[test]
+    fn blob_search_hex_input() {
+        let data = [0x00, 0x11, 0xDE, 0xAD, 0xBE, 0xEF, 0x22];
+        let (hit, _) = run_search("hex(deadbeef)", &data, true);
+        assert_eq!(hit, Some((2, 4)));
+    }
+
+    #[test]
+    fn blob_search_no_match() {
+        let data = b"hello world";
+        let (hit, _) = run_search("zzz", data, true);
+        assert_eq!(hit, None);
+    }
+
+    #[test]
+    fn blob_search_segments_aligned() {
+        // 命中落在第 2 个 64KiB 段：段偏移对齐到 PAGE_BYTES
+        let mut data = vec![0u8; crate::fmt::PAGE_BYTES + 100];
+        let p = crate::fmt::PAGE_BYTES + 10;
+        data[p..p + 3].copy_from_slice(b"zzz");
+        let (hit, off) = run_search("zzz", &data, true);
+        assert_eq!(hit, Some((p, 3)));
+        assert_eq!(off, crate::fmt::PAGE_BYTES);
+    }
+
+    #[test]
+    fn blob_search_empty_prompt() {
+        let mut st = DetailState::default();
+        let msg = st.blob_search(false, b"abc", true);
+        assert!(!msg.is_empty());
+        assert_eq!(st.blob_hit(false), None);
+    }
 }

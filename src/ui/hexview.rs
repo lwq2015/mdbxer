@@ -128,6 +128,7 @@ pub(crate) fn view_id(is_key: bool) -> egui::Id {
 /// - `id`：组件唯一 id（Key/Value 卡片各一）；
 /// - `base_offset`：本段在原始字节中的起始偏移（地址列用）；
 /// - `sel`：当前选区（字节全局序号，端点顺序无关）；内容切换由调用方负责清空。
+/// - `hit`：内容搜索命中区间（字节全局序号 start, len），琥珀色高亮；与选区重叠时让位于选区。
 pub(crate) fn hex_view(
     ui: &mut egui::Ui,
     id: egui::Id,
@@ -138,6 +139,7 @@ pub(crate) fn hex_view(
     show_ascii: bool,
     base_offset: usize,
     sel: &mut Option<(usize, usize)>,
+    hit: Option<(usize, usize)>,
 ) -> egui::Response {
     let n = width.max(1);
     let rows = bytes.len().div_ceil(n).max(1);
@@ -329,6 +331,8 @@ pub(crate) fn hex_view(
     let row_bg = with_alpha(vis.widgets.hovered.bg_fill, 40);
     let byte_bg = with_alpha(vis.selection.bg_fill, 80);
     let sel_bg = with_alpha(vis.selection.bg_fill, 150);
+    // 搜索命中：琥珀色（固定色，深浅主题下都与蓝色选区可区分）
+    let hit_bg = egui::Color32::from_rgba_unmultiplied(0xF5, 0xA6, 0x23, 0x66);
 
     // 悬停字节（未拖拽时用 hover 位置；拖拽中用指针位置联动）
     let pointer = if resp.dragged() {
@@ -342,6 +346,17 @@ pub(crate) fn hex_view(
     }
 
     let sel_norm = sel.map(|(a, b)| (a.min(b), a.max(b)));
+    // 搜索命中（全局偏移）裁剪到本段，转为段内闭区间
+    let hit_norm = hit.and_then(|(s, l)| {
+        let g_hi = s + l;
+        let seg_end = base_offset + bytes.len();
+        if g_hi <= base_offset || s >= seg_end {
+            return None;
+        }
+        let lo = s.saturating_sub(base_offset);
+        let hi = g_hi.min(seg_end) - base_offset - 1;
+        Some((lo, hi))
+    });
 
     // galley 缓存：本帧取一次、帧末写回
     let mut cache = ui
@@ -371,9 +386,10 @@ pub(crate) fn hex_view(
         for i in 0..chunk_len {
             let g = r * n + i;
             let selected = sel_norm.is_some_and(|(lo, hi)| g >= lo && g <= hi);
+            let hit_now = hit_norm.is_some_and(|(lo, hi)| g >= lo && g <= hi);
             let hovered = hover.is_some_and(|(hr, hi)| hr == r && hi == i);
 
-            // 2) 选区 / 悬停字节背景（HEX 与 ASCII 联动）
+            // 2) 选区 / 搜索命中 / 悬停字节背景（HEX 与 ASCII 联动）；选区优先于命中
             let v_inset = egui::vec2(0.0, 1.0);
             if selected {
                 if show_hex {
@@ -381,6 +397,13 @@ pub(crate) fn hex_view(
                 }
                 if show_ascii {
                     painter.rect_filled(geom.ascii_cell(r, i).shrink2(v_inset), 1.5, sel_bg);
+                }
+            } else if hit_now {
+                if show_hex {
+                    painter.rect_filled(geom.hex_cell(n, r, i).shrink2(v_inset), 1.5, hit_bg);
+                }
+                if show_ascii {
+                    painter.rect_filled(geom.ascii_cell(r, i).shrink2(v_inset), 1.5, hit_bg);
                 }
             } else if hovered {
                 if show_hex {
