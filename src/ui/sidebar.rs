@@ -22,74 +22,21 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         .resizable(true)
         .size_range(LEFT_PANEL_MIN..=max_w)
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.strong(t.tables_title);
-                ui.separator();
-                let mut sort = app.table_sort;
-                let ir = egui::ComboBox::from_id_salt("table_sort")
-                    .width(86.0)
-                    .selected_text(sort.label())
-                    .show_ui(ui, |ui| {
-                        for s in TableSort::ALL {
-                            ui.selectable_value(&mut sort, s, s.label());
-                        }
-                    });
-                super::wheel_cycle(ui.ctx(), &ir.response, &TableSort::ALL, &mut sort);
-                if sort != app.table_sort {
-                    app.table_sort = sort;
-                    app.save_ui_prefs();
-                }
-            });
-            // 过滤表名（占满剩余宽度）+ 导出当前表（CSV/JSON 下拉 + ⬇）
-            // ⬇ U+2B07 取自 egui 内置 NotoEmoji/emoji-icon，跨平台一致
-            //
-            // 用 right_to_left 布局：⬇/下拉按实际测量宽度从右向左占位，过滤框最后
-            // 精确吃掉剩余宽度。若按固定估值预留（如假设下拉恒为 52px），选 JSON 后
-            // 下拉实际更宽，本行会恒定溢出几像素；SidePanel 每帧把内容期望宽度写回
-            // PanelState，面板就会随重绘一帧帧被顶到最大宽度（JSON 左栏变胖 bug）。
-            // 外层 horizontal 把行高收紧为一行（with_layout 在 top-down 下会拿到
-            // 整段剩余高度），内层才换成 right_to_left。
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut export_clicked = false;
-                    let mut ef = app.export_format;
-                    if ui
-                        .add_enabled(
-                            app.db.is_some() && app.export_ev_rx.is_none(),
-                            egui::Button::new("⬇"),
-                        )
-                        .on_hover_text(t.export_tip)
-                        .clicked()
-                    {
-                        export_clicked = true;
-                    }
-                    egui::ComboBox::from_id_salt("export_format")
-                        .width(52.0)
-                        .selected_text(ef.label())
-                        .show_ui(ui, |ui| {
-                            for f in crate::export::ExportFormat::ALL {
-                                ui.selectable_value(&mut ef, f, f.label());
-                            }
-                        });
-                    if ef != app.export_format {
-                        app.export_format = ef;
-                        app.save_ui_prefs();
-                    }
-                    if export_clicked {
-                        app.start_export();
-                    }
-                    // 剩余空间全部给过滤框（此时右侧控件已按实际宽度占位）
-                    let filter_w = ui.available_width().max(40.0);
-                    ui.add(
-                        egui::TextEdit::singleline(&mut app.table_filter)
-                            .hint_text(t.filter_hint)
-                            .desired_width(filter_w),
-                    );
-                });
-            });
-            ui.separator();
-
             let Some(dbh) = &app.db else { return };
+
+            // 表列表折叠状态决定收藏区高度上限：展开时限 70%（表列表要占大头），
+            // 折叠后整个左栏只剩折叠头一行，收藏区可占满剩余高度
+            let tables_open = egui::collapsing_header::CollapsingState::load(
+                ui.ctx(),
+                egui::Id::new("tables_fold"),
+            )
+            .is_some_and(|s| s.is_open());
+            let avail_h = ui.available_height();
+            let fav_max_h = if tables_open {
+                avail_h * 0.7
+            } else {
+                avail_h - 30.0
+            };
 
             // ── 底部固定收藏区（先登记面板，剩余空间才全部分给表列表）──
             // 动作在不可变收集区记录，闭包结束后统一应用（规避借用）
@@ -98,13 +45,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let mut fav_key_action: Option<(usize, bool)> = None; // (下标, true=跳转)
             // 可拖拽高度：拖动面板顶边调整，egui 持久化到 PanelState（重启保持）。
             // default_size 是首帧初始高度（无持久化状态时 egui 默认只有一行高，
-            // 且 ScrollArea 垂直自适应会随之收缩、永远撑不开，必须显式给定）；
-            // 上限 0.7 倍左栏可用高度，保证表列表始终有至少 ~30% 空间
+            // 且 ScrollArea 垂直自适应会随之收缩、永远撑不开，必须显式给定）
             egui::Panel::bottom("fav_panel")
                 .resizable(true)
                 .min_size(28.0)
                 .default_size(180.0)
-                .max_size(ui.available_height() * 0.7)
+                .max_size(fav_max_h)
                 // 只清左右内边距（默认 symmetric(8,2) 与父面板 padding 叠加显得太宽），
                 // 保留 panel_fill 背景与顶部分隔线
                 .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(0, 2)))
@@ -246,30 +192,93 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         });
                 });
 
-            // ── 表列表（过滤 + 排序 + 收藏表稳定置顶）──
-            let filter = app.table_filter.to_lowercase();
-            let mut idx: Vec<usize> = (0..dbh.tables.len()).collect();
-            idx.retain(|&i| {
-                filter.is_empty() || dbh.tables[i].display().to_lowercase().contains(&filter)
-            });
-            match app.table_sort {
-                TableSort::NameAsc => {
-                    idx.sort_by(|&a, &b| dbh.tables[a].display().cmp(&dbh.tables[b].display()))
-                }
-                TableSort::NameDesc => {
-                    idx.sort_by(|&a, &b| dbh.tables[b].display().cmp(&dbh.tables[a].display()))
-                }
-                TableSort::CountAsc => idx.sort_by_key(|&i| dbh.tables[i].entries),
-                TableSort::CountDesc => {
-                    idx.sort_by_key(|&i| std::cmp::Reverse(dbh.tables[i].entries))
-                }
-            }
-            // 收藏表稳定置顶（保持各自原有的排序结果顺序）
-            idx.sort_by_key(|&i| !app.fav_tables.contains(&dbh.tables[i].name));
-
+            // ── 表列表折叠头：折叠后过滤/排序/列表整体收起，左栏让给收藏区 ──
+            // 排序/导出格式/过滤框用局部镜像：闭包内只改局部，闭包外统一写回
+            // app——否则闭包内对 app 的可变借用与 dbh（&app.db）的不可变借用冲突
+            let mut sort = app.table_sort;
+            let mut ef = app.export_format;
+            let mut filter_s = app.table_filter.clone();
+            let mut export_clicked = false;
             let mut clicked = None;
             let mut row_fav_toggled = None;
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::CollapsingHeader::new(egui::RichText::new(t.tables_title).strong())
+                .id_salt("tables_fold")
+                .default_open(true)
+                .show_unindented(ui, |ui| {
+                    // 排序下拉（折叠头自带标题，不再单独占一行）
+                    ui.horizontal(|ui| {
+                        let ir = egui::ComboBox::from_id_salt("table_sort")
+                            .width(86.0)
+                            .selected_text(sort.label())
+                            .show_ui(ui, |ui| {
+                                for s in TableSort::ALL {
+                                    ui.selectable_value(&mut sort, s, s.label());
+                                }
+                            });
+                        super::wheel_cycle(ui.ctx(), &ir.response, &TableSort::ALL, &mut sort);
+                    });
+                    // 过滤表名（占满剩余宽度）+ 导出当前表（CSV/JSON 下拉 + ⬇）
+                    // ⬇ U+2B07 取自 egui 内置 NotoEmoji/emoji-icon，跨平台一致
+                    //
+                    // 用 right_to_left 布局：⬇/下拉按实际测量宽度从右向左占位，过滤框最后
+                    // 精确吃掉剩余宽度。若按固定估值预留（如假设下拉恒为 52px），选 JSON 后
+                    // 下拉实际更宽，本行会恒定溢出几像素；SidePanel 每帧把内容期望宽度写回
+                    // PanelState，面板就会随重绘一帧帧被顶到最大宽度（JSON 左栏变胖 bug）。
+                    // 外层 horizontal 把行高收紧为一行（with_layout 在 top-down 下会拿到
+                    // 整段剩余高度），内层才换成 right_to_left。
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .add_enabled(
+                                    app.db.is_some() && app.export_ev_rx.is_none(),
+                                    egui::Button::new("⬇"),
+                                )
+                                .on_hover_text(t.export_tip)
+                                .clicked()
+                            {
+                                export_clicked = true;
+                            }
+                            egui::ComboBox::from_id_salt("export_format")
+                                .width(52.0)
+                                .selected_text(ef.label())
+                                .show_ui(ui, |ui| {
+                                    for f in crate::export::ExportFormat::ALL {
+                                        ui.selectable_value(&mut ef, f, f.label());
+                                    }
+                                });
+                            // 剩余空间全部给过滤框（此时右侧控件已按实际宽度占位）
+                            let filter_w = ui.available_width().max(40.0);
+                            ui.add(
+                                egui::TextEdit::singleline(&mut filter_s)
+                                    .hint_text(t.filter_hint)
+                                    .desired_width(filter_w),
+                            );
+                        });
+                    });
+                    ui.separator();
+
+                    // ── 表列表（过滤 + 排序 + 收藏表稳定置顶）──
+                    let filter = filter_s.to_lowercase();
+                    let mut idx: Vec<usize> = (0..dbh.tables.len()).collect();
+                    idx.retain(|&i| {
+                        filter.is_empty() || dbh.tables[i].display().to_lowercase().contains(&filter)
+                    });
+                    match sort {
+                        TableSort::NameAsc => {
+                            idx.sort_by(|&a, &b| dbh.tables[a].display().cmp(&dbh.tables[b].display()))
+                        }
+                        TableSort::NameDesc => {
+                            idx.sort_by(|&a, &b| dbh.tables[b].display().cmp(&dbh.tables[a].display()))
+                        }
+                        TableSort::CountAsc => idx.sort_by_key(|&i| dbh.tables[i].entries),
+                        TableSort::CountDesc => {
+                            idx.sort_by_key(|&i| std::cmp::Reverse(dbh.tables[i].entries))
+                        }
+                    }
+                    // 收藏表稳定置顶（保持各自原有的排序结果顺序）
+                    idx.sort_by_key(|&i| !app.fav_tables.contains(&dbh.tables[i].name));
+
+                    egui::ScrollArea::vertical().show(ui, |ui| {
                 for i in idx {
                     let tbl = &dbh.tables[i];
                     let selected = app.selected_table == Some(i);
@@ -304,8 +313,23 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     });
                 }
             });
+                }); // 表列表折叠头 body 结束
 
-            // ── 统一应用本帧动作（dbh 的不可变借用到此结束）──
+            // ── 统一写回镜像并应用本帧动作（闭包借用到此全部结束）──
+            if sort != app.table_sort {
+                app.table_sort = sort;
+                app.save_ui_prefs();
+            }
+            if ef != app.export_format {
+                app.export_format = ef;
+                app.save_ui_prefs();
+            }
+            if filter_s != app.table_filter {
+                app.table_filter = filter_s;
+            }
+            if export_clicked {
+                app.start_export();
+            }
             if let Some(i) = clicked.or(fav_table_pick) {
                 app.select_table(i);
             }
