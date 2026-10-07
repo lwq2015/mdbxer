@@ -125,6 +125,19 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
                 .flat_map(|u| u.to_le_bytes())
                 .collect(),
         ),
+        // 手动切到 gb18030 排版时，应显示简体中文（GBK 是 GB18030 子集）
+        (
+            b"gbk_text",
+            encoding_rs::GBK.encode("GBK 简体中文").0.into_owned(),
+        ),
+        // 手动切到 windows-1251 排版时，应显示西里尔俄文
+        (
+            b"cp1251_text",
+            encoding_rs::WINDOWS_1251
+                .encode("Русский текст")
+                .0
+                .into_owned(),
+        ),
         // ── 新格式：base64 / uuid / json ──
         // 手动切到 Base64 排版时，值应显示为 SGVsbG8sIE1EQlgh
         (b"base64_hello", b"Hello, MDBX!".to_vec()),

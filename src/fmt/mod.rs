@@ -69,6 +69,10 @@ pub enum DecodeMode {
     Utf8,
     Utf16Le,
     Utf16Be,
+    /// GB18030（GBK/GB2312 超集，简体中文传统编码）
+    Gb18030,
+    /// Windows-1251（西里尔字母，俄语传统编码）
+    Cp1251,
     I8,
     I16,
     I32,
@@ -91,11 +95,13 @@ pub enum DecodeMode {
 }
 
 impl DecodeMode {
-    pub const ALL: [DecodeMode; 20] = [
+    pub const ALL: [DecodeMode; 22] = [
         DecodeMode::Auto,
         DecodeMode::Utf8,
         DecodeMode::Utf16Le,
         DecodeMode::Utf16Be,
+        DecodeMode::Gb18030,
+        DecodeMode::Cp1251,
         DecodeMode::I8,
         DecodeMode::I16,
         DecodeMode::I32,
@@ -121,6 +127,8 @@ impl DecodeMode {
             DecodeMode::Utf8 => "utf8".to_string(),
             DecodeMode::Utf16Le => "utf16 (LE)".to_string(),
             DecodeMode::Utf16Be => "utf16 (BE)".to_string(),
+            DecodeMode::Gb18030 => "gb18030".to_string(),
+            DecodeMode::Cp1251 => "windows-1251".to_string(),
             DecodeMode::I8 => "int8".to_string(),
             DecodeMode::I16 => "int16".to_string(),
             DecodeMode::I32 => "int32".to_string(),
@@ -147,6 +155,8 @@ impl DecodeMode {
             DecodeMode::Utf8 => "utf8",
             DecodeMode::Utf16Le => "utf16le",
             DecodeMode::Utf16Be => "utf16be",
+            DecodeMode::Gb18030 => "gb18030",
+            DecodeMode::Cp1251 => "cp1251",
             DecodeMode::I8 => "i8",
             DecodeMode::I16 => "i16",
             DecodeMode::I32 => "i32",
@@ -172,6 +182,8 @@ impl DecodeMode {
             "utf8" => DecodeMode::Utf8,
             "utf16le" => DecodeMode::Utf16Le,
             "utf16be" => DecodeMode::Utf16Be,
+            "gb18030" => DecodeMode::Gb18030,
+            "cp1251" => DecodeMode::Cp1251,
             "i8" => DecodeMode::I8,
             "i16" => DecodeMode::I16,
             "i32" => DecodeMode::I32,
@@ -229,8 +241,8 @@ mod tests {
     }
 
     #[test]
-    fn decode_mode_all_has_20() {
-        assert_eq!(DecodeMode::ALL.len(), 20);
+    fn decode_mode_all_complete() {
+        assert_eq!(DecodeMode::ALL.len(), 22);
     }
 
     #[test]

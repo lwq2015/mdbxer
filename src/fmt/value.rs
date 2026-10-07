@@ -121,6 +121,8 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) 
         DecodeMode::Utf8 => String::from_utf8_lossy(bytes).into_owned(),
         DecodeMode::Utf16Le => utf16_text(bytes, false),
         DecodeMode::Utf16Be => utf16_text(bytes, true),
+        DecodeMode::Gb18030 => legacy_text(bytes, encoding_rs::GB18030),
+        DecodeMode::Cp1251 => legacy_text(bytes, encoding_rs::WINDOWS_1251),
         DecodeMode::I8 => int!(i8),
         DecodeMode::U8 => int!(u8),
         DecodeMode::I16 => int!(i16),
@@ -200,6 +202,12 @@ fn utf16_text(bytes: &[u8], big_endian: bool) -> String {
         })
         .collect();
     String::from_utf16_lossy(&units)
+}
+
+/// 传统单/双字节编码文本（GB18030、Windows-1251 等）。
+/// encoding_rs 对未定义字节输出 U+FFFD 替换符，与 UTF-8 lossy 行为一致。
+fn legacy_text(bytes: &[u8], enc: &'static encoding_rs::Encoding) -> String {
+    enc.decode(bytes).0.into_owned()
 }
 
 /// u64 显示文本；落在 Unix 时间戳合理区间时附本地日期。
@@ -406,7 +414,7 @@ mod tests {
             assert_eq!(s, t.empty, "mode={:?}", mode);
         }
         // 字符串/进制模式：空数据返回空串（无内容可展示）
-        let textual = [Utf8, Utf16Le, Utf16Be, Hex, Dec, Binary];
+        let textual = [Utf8, Utf16Le, Utf16Be, Gb18030, Cp1251, Hex, Dec, Binary];
         for mode in textual {
             let s = decode(&[], mode, Endian::Little, 100);
             assert_eq!(s, "", "mode={:?}", mode);
@@ -422,6 +430,28 @@ mod tests {
         assert_eq!(
             decode(&[0xAB, 0xCD], DecodeMode::Hex, Endian::Little, 100),
             "AB CD"
+        );
+    }
+
+    #[test]
+    fn decode_gb18030() {
+        setup();
+        // "中文" GBK 字节（GB18030 超集兼容）
+        let bytes = [0xD6, 0xD0, 0xCE, 0xC4];
+        assert_eq!(
+            decode(&bytes, DecodeMode::Gb18030, Endian::Little, 100),
+            "中文"
+        );
+    }
+
+    #[test]
+    fn decode_cp1251() {
+        setup();
+        // "Привет" 的 Windows-1251 字节
+        let bytes = [0xCF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2];
+        assert_eq!(
+            decode(&bytes, DecodeMode::Cp1251, Endian::Little, 100),
+            "Привет"
         );
     }
 
