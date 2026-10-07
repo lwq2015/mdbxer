@@ -533,7 +533,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let nv = card_natural_height(ui, app, value.len(), v_win, &v_text, false, dup_sort);
             let gap = 8.0;
             let half = (avail - gap) / 2.0;
-            let (kb, vb) = if nk + gap + nv <= avail {
+            // Value 卡片的预算在 Key 卡片渲染完后按实测高度回填（见下），这里只需 Key 份额
+            let (kb, _vb) = if nk + gap + nv <= avail {
                 (nk, nv)
             } else if nk <= half {
                 (nk, avail - gap - nk)
@@ -549,9 +550,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     Some(n) => format!("Key #{n}"),
                     None => "Key".to_string(),
                 };
-                kv_card(ui, app, &key_title, &key, true, &key, &k_text, kb);
+                let kh = kv_card(ui, app, &key_title, &key, true, &key, &k_text, kb);
                 ui.add_space(gap);
 
+                // Key 卡片没用完的预算（估算偏差/内容少）全部实测回填给 Value，
+                // 内容丰富时两卡恰好撑满右栏，底部不留空白
+                let vb = (avail - gap - kh).max(120.0);
                 let val_title = if dup_sort {
                     t.val_title(dup_index + 1, dup_total)
                 } else {
@@ -702,7 +706,7 @@ fn kv_card(
     key: &[u8],
     text: &str,
     budget: f32,
-) {
+) -> f32 {
     let t = tr();
     let dup_sort = app.cur_table().map(|tbl| tbl.dup_sort).unwrap_or(false);
     let save_name = if is_key {
@@ -714,6 +718,9 @@ fn kv_card(
     };
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.set_width(ui.available_width());
+        // 卡片内容起始游标：hex 区高度用"预算 − 已用"实测回填，
+        // 不靠前文估算，保证卡片始终撑满分到的预算
+        let card_top = ui.cursor().min.y;
 
         ui.horizontal(|ui| {
             ui.strong(title);
@@ -923,7 +930,8 @@ fn kv_card(
         let fixed = card_fixed_overhead(total, is_key, is_dup);
         let default_open = total <= 512;
         let (text_open, hex_open) = card_section_open(ui.ctx(), is_key, total);
-        let (text_h, hex_h) = card_content_heights(
+        // hex 份额不在这里定：渲染时按游标实测回填（见下），此处只分文本区
+        let (text_h, _) = card_content_heights(
             ui,
             app,
             window,
@@ -977,6 +985,9 @@ fn kv_card(
         // 卡片头/搜索行固定在外面，滚动中也能继续搜索；命中后自动滚到可视区。
         // 用 CollapsingState + 全局 Id（与 card_section_open 预算估算同一组），
         // 折叠状态变化时高度分配下一帧即自适应。
+        // hex 区高度实测回填：吃掉卡片预算减去已用高度（44 ≈ hex 标题行
+        // + 分组 frame 下内边距 + 尾部间距），卡片始终撑满、右栏底部不留空白。
+        let hex_h = (budget - (ui.cursor().min.y - card_top) - 44.0).max(line_h * 2.0);
         egui::collapsing_header::CollapsingState::load_with_default_open(
             ui.ctx(),
             egui::Id::new(("detail_hex", is_key)),
@@ -1026,7 +1037,10 @@ fn kv_card(
                     });
                 *stored = Some(fp);
             });
-    });
+        })
+        .response
+        .rect
+        .height()
 }
 
 /// 复制按钮用：完整解码文本（不受 cell_max 截断）。
