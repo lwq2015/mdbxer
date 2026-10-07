@@ -361,6 +361,9 @@ pub struct MdbxerApp {
     pub at_end: bool,
     /// 选中的行在 self.rows 中的下标
     pub selected_row: Option<usize>,
+    /// 一次性滚动请求：中央表格本帧应把该显示行号滚入可视区（None = 无请求）。
+    /// `select_row` 移动选中行时登记，dataview 渲染时消费（take），避免每帧强制滚动。
+    pub pending_scroll: Option<usize>,
     /// 共享搜索输入框内容（Key 跳转/过滤、Value 页内过滤共用）
     pub search_input: String,
     /// 当前生效的 Key 前缀过滤（None = 未过滤）
@@ -517,6 +520,7 @@ impl MdbxerApp {
             at_start: true,
             at_end: true,
             selected_row: None,
+            pending_scroll: None,
             search_input: String::new(),
             key_filter: None,
             key_filter_mode: false,
@@ -694,6 +698,7 @@ impl MdbxerApp {
                     self.rows.clear();
                     self.base_index = None;
                     self.selected_row = None;
+                    self.pending_scroll = None;
                     self.detail.clear();
                     self.status = Status::NoTables(path);
                 }
@@ -725,6 +730,7 @@ impl MdbxerApp {
         self.base_index = None;
         self.selected_table = None;
         self.selected_row = None;
+        self.pending_scroll = None;
         self.stat_cache = None;
         self.env_cache = None;
         self.search_input.clear();
@@ -781,6 +787,7 @@ impl MdbxerApp {
                     self.rows.clear();
                     self.base_index = None;
                     self.selected_row = None;
+                    self.pending_scroll = None;
                     self.detail.clear();
                     self.status = Status::NoTables(path);
                 }
@@ -867,6 +874,8 @@ impl MdbxerApp {
             self.detail.clear();
         } else {
             self.selected_row = Some(0);
+            // 翻页/换表后选中首行：让表格滚回顶部显示新页开头
+            self.pending_scroll = Some(0);
             self.load_dups();
         }
     }
@@ -1417,6 +1426,8 @@ impl MdbxerApp {
             return;
         }
         self.selected_row = Some(index);
+        // 登记一次性滚动请求：键盘移动、F3 命中或点击后把该行滚入可视区
+        self.pending_scroll = self.display_order().iter().position(|&x| x == index);
         self.clear_transient_status();
         self.load_dups();
     }

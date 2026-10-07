@@ -203,6 +203,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let order = app.display_order();
     let total_rows = order.len();
     let selected = app.selected_row;
+    // 消费一次性滚动请求（键盘 ↑↓ / F3 命中 / 翻页回顶登记的显示行号）。
+    // align=None：只在目标行不可见时滚到刚好可见，可见时不打断手动滚动。
+    let scroll_to = app
+        .pending_scroll
+        .take()
+        .filter(|&di| di < total_rows);
     let sort_desc = app.sort_desc;
     let col_sort = app.col_sort;
 
@@ -230,16 +236,20 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             egui::Color32::from_rgb(0xC8, 0xDC, 0xF0)
         };
         ui.style_mut().visuals.selection.bg_fill = bg;
-        TableBuilder::new(ui)
+        let mut table = TableBuilder::new(ui)
             .striped(true)
             .resizable(true)
             .sense(egui::Sense::click())
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(Column::exact(56.0))
             .column(Column::initial(160.0).at_least(80.0).clip(true))
-            .column(Column::exact(78.0))
+            .column(Column::exact(80.0))
             .column(Column::remainder().clip(true))
-            .min_scrolled_height(0.0)
+            .min_scrolled_height(0.0);
+        if let Some(di) = scroll_to {
+            table = table.scroll_to_row(di, None);
+        }
+        table
             .header(text_height, |mut header| {
                 header.col(|ui| {
                     if header_cell(ui, &index_title, t.col_tip_page) {
