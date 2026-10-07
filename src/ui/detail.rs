@@ -715,7 +715,8 @@ fn detail_needed_width(ui: &egui::Ui, d: &DetailState) -> f32 {
     if d.show_ascii {
         line_chars += n;
     }
-    // 面板边框/分组 frame/折叠缩进/文本框内边距与滚动条余量
-    const CHROME: f32 = 100.0;
+    // 面板边框/分组 frame/折叠缩进/滚动条余量（实测约 60~70，留少量冗余；
+    // 估小了内容超宽会把面板顶回去，估大了右侧留空白）
+    const CHROME: f32 = 80.0;
     line_chars * char_w + CHROME
 }
