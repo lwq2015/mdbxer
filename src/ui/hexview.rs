@@ -239,17 +239,18 @@ pub(crate) fn hex_view(
             let view = ui.clip_rect();
             let margin = 28.0;
             let dt = ui.input(|i| i.stable_dt).min(0.05);
-            let max_speed = rh * 14.0; // 点/秒
+            // 速度曲线：二次方——贴边缓慢精修，越出边缘越远越快；上限约 60 行高/秒
+            let max_speed = rh * 60.0; // 点/秒
             let mut edge = false;
             if rect.top() < view.top() - 1.0 && p.y < view.top() + margin {
                 // egui 约定 scroll delta 正值 = 向上看
-                let k = (view.top() + margin - p.y) / margin;
-                ui.scroll_with_delta(egui::vec2(0.0, max_speed * k.clamp(0.0, 1.0) * dt));
+                let k = ((view.top() + margin - p.y) / margin).clamp(0.0, 4.0);
+                ui.scroll_with_delta(egui::vec2(0.0, max_speed * k * k * dt));
                 p.y = view.top() + 1.0;
                 edge = true;
             } else if rect.bottom() > view.bottom() + 1.0 && p.y > view.bottom() - margin {
-                let k = (p.y - (view.bottom() - margin)) / margin;
-                ui.scroll_with_delta(egui::vec2(0.0, -max_speed * k.clamp(0.0, 1.0) * dt));
+                let k = ((p.y - (view.bottom() - margin)) / margin).clamp(0.0, 4.0);
+                ui.scroll_with_delta(egui::vec2(0.0, -max_speed * k * k * dt));
                 p.y = view.bottom() - 2.0;
                 edge = true;
             }
