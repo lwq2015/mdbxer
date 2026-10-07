@@ -203,6 +203,38 @@ impl DecodeMode {
             _ => DecodeMode::Auto,
         }
     }
+
+    /// 指定类型时"类型"列的显示标签（风格与 [`guess`] 的猜测标签一致：
+    /// 多字节整数/浮点带字节序后缀）；[`DecodeMode::Auto`] 返回 None，
+    /// 由调用方按字节内容自动猜测。
+    pub fn forced_label(self, endian: Endian) -> Option<String> {
+        let t = crate::i18n::tr();
+        let sfx = endian.suffix();
+        Some(match self {
+            DecodeMode::Auto => return None,
+            DecodeMode::Utf8 => t.guess_utf8.to_string(),
+            DecodeMode::Utf16Le => t.guess_utf16_le.to_string(),
+            DecodeMode::Utf16Be => t.guess_utf16_be.to_string(),
+            DecodeMode::Gb18030 => "GB18030".to_string(),
+            DecodeMode::Cp1251 => "Windows-1251".to_string(),
+            DecodeMode::I8 => "i8".to_string(),
+            DecodeMode::U8 => "u8".to_string(),
+            DecodeMode::I16 => format!("i16 {sfx}"),
+            DecodeMode::U16 => format!("u16 {sfx}"),
+            DecodeMode::I32 => format!("i32 {sfx}"),
+            DecodeMode::U32 => format!("u32 {sfx}"),
+            DecodeMode::I64 => format!("i64 {sfx}"),
+            DecodeMode::U64 => format!("u64 {sfx}"),
+            DecodeMode::F32 => format!("f32 {sfx}"),
+            DecodeMode::F64 => format!("f64 {sfx}"),
+            DecodeMode::Hex => "hex".to_string(),
+            DecodeMode::Dec => "dec".to_string(),
+            DecodeMode::Binary => "binary".to_string(),
+            DecodeMode::Base64 => "base64".to_string(),
+            DecodeMode::Uuid => "uuid".to_string(),
+            DecodeMode::Json => "JSON".to_string(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -258,6 +290,32 @@ mod tests {
     #[test]
     fn decode_mode_default_is_auto() {
         assert_eq!(DecodeMode::default(), DecodeMode::Auto);
+    }
+
+    #[test]
+    fn forced_label_none_for_auto_and_suffixed_for_multibyte() {
+        // Auto 不产生指定标签（调用方退回自动猜测）
+        assert_eq!(DecodeMode::Auto.forced_label(Endian::Little), None);
+        // 单字节类型无字节序后缀
+        assert_eq!(
+            DecodeMode::U8.forced_label(Endian::Little).as_deref(),
+            Some("u8")
+        );
+        // 多字节整数随字节序加后缀
+        assert_eq!(
+            DecodeMode::U32.forced_label(Endian::Little).as_deref(),
+            Some("u32 LE")
+        );
+        assert_eq!(
+            DecodeMode::U32.forced_label(Endian::Big).as_deref(),
+            Some("u32 BE")
+        );
+        // 全部非 Auto 模式都有标签
+        for m in DecodeMode::ALL {
+            if m != DecodeMode::Auto {
+                assert!(m.forced_label(Endian::Little).is_some());
+            }
+        }
     }
 
     #[test]

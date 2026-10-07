@@ -41,6 +41,26 @@ pub enum MsgLevel {
     Error,
 }
 
+/// 最近一次使用的搜索位置：F3/Shift+F3 据此决定继续哪个搜索。
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum SearchContext {
+    /// 尚未使用过任何搜索
+    #[default]
+    None,
+    /// 中央搜索框：Key 跳转定位 / 前缀过滤
+    MainKey,
+    /// 中央搜索框：Value 页内过滤（F3 在过滤结果行间移动）
+    MainValue,
+    /// 中央搜索框：全表 Value 扫描（F3 从当前行继续扫下一个）
+    MainValueFull,
+    /// 右栏 Key 卡片大字段字节搜索
+    DetailKeyBlob,
+    /// 右栏 Value 卡片大字段字节搜索
+    DetailValBlob,
+    /// 右栏多值表的值内容搜索
+    DetailDup,
+}
+
 /// 状态栏消息。
 /// 持久状态（就绪/已打开/已关闭等）每帧按当前语言渲染，切换语言即时跟随；
 /// 一次性提示（错误、跳转结果等）保留生成时的文本，下次操作自然被替换。
@@ -290,10 +310,14 @@ impl TableSort {
 struct ValueSearchState {
     /// 搜索词（小写，匹配时也将目标转小写比较）
     needle: String,
-    /// 下一批续读锚点（None = 从头开始）
+    /// 下一批续读锚点（None = 从扫描方向的表头/表尾开始）
     anchor: Option<db::RawAnchor>,
     /// 已扫描条数（进度用）
     checked: usize,
+    /// 反向扫描（Shift+F3：沿 Key 减小方向找）
+    backward: bool,
+    /// 是否已回绕过一圈（F3 续扫到尽头后自动从头再来一次，再没有才报未找到）
+    wrapped: bool,
 }
 
 pub struct MdbxerApp {
@@ -400,6 +424,8 @@ pub struct MdbxerApp {
     /// Value 搜索的全表模式开关（默认关闭：V 键仅过滤当前页；
     /// 开启后 V 键全表扫描并定位）
     pub value_search_full: bool,
+    /// 最近一次使用的搜索位置：F3/Shift+F3 全局继续搜索时按此分发
+    pub last_search: SearchContext,
     // ── 主题 / 收藏 ──
     /// 当前主题（true = 深色）
     pub dark_theme: bool,
@@ -518,6 +544,7 @@ impl MdbxerApp {
             search_box_id: None,
             row_copy_pending: false,
             value_search_full: false,
+            last_search: SearchContext::None,
             dark_theme: crate::config::load_theme() == crate::config::Theme::Dark,
             fav_tables: Vec::new(),
             fav_keys: Vec::new(),
@@ -591,7 +618,11 @@ impl MdbxerApp {
                     crate::fmt::decode(&r.value, self.val_mode, self.endian, self.cell_max);
                 RowView {
                     key_text: crate::fmt::decode(&r.key, self.key_mode, self.endian, self.cell_max),
-                    type_label: crate::fmt::guess(&r.value, self.endian).0,
+                    // Value 指定了解码类型时，类型列同步显示指定类型；只有"自动"才按字节猜测。
+                    type_label: match self.val_mode.forced_label(self.endian) {
+                        Some(label) => label,
+                        None => crate::fmt::guess(&r.value, self.endian).0,
+                    },
                     val_num: leading_num(&val_text),
                     val_text,
                 }
@@ -982,6 +1013,7 @@ impl MdbxerApp {
         if input.is_empty() {
             return;
         }
+        self.last_search = SearchContext::MainKey;
         if !self.key_filter_mode {
             // 跳转模式：语义与跳转框一致（INTEGER_KEY 表接受十进制），但不写跳转框
             self.jump_with(&input);
@@ -1010,6 +1042,9 @@ impl MdbxerApp {
     pub fn apply_value_search(&mut self) {
         let input = self.search_input.trim().to_string();
         self.value_filter = if input.is_empty() { None } else { Some(input) };
+        if self.value_filter.is_some() {
+            self.last_search = SearchContext::MainValue;
+        }
     }
 
     /// 清除 Value 页内过滤（不清空输入框）。
@@ -1017,8 +1052,49 @@ impl MdbxerApp {
         self.value_filter = None;
     }
 
+    /// F3/Shift+F3：按最近使用的搜索位置继续查找下一个/上一个。
+    /// 焦点在不在搜索框里都能用（VSCode/浏览器习惯）。
+    pub fn continue_search(&mut self, forward: bool) {
+        // 全表扫描进行中时 F3 不打断（扫描本身在逐批推进）
+        if self.value_search.is_some() {
+            return;
+        }
+        match self.last_search {
+            SearchContext::None => {}
+            SearchContext::MainKey => self.apply_key_search(),
+            SearchContext::MainValue => self.move_in_page_filter(forward),
+            SearchContext::MainValueFull => self.continue_full_value_search(forward),
+            SearchContext::DetailKeyBlob | SearchContext::DetailValBlob => {
+                let is_key = self.last_search == SearchContext::DetailKeyBlob;
+                let bytes = if is_key {
+                    let Some(i) = self.selected_row else { return };
+                    let Some(row) = self.rows.get(i) else { return };
+                    row.key.clone()
+                } else {
+                    let Some(v) = self.current_value() else { return };
+                    v
+                };
+                self.status =
+                    Status::leveled(self.detail.blob_search(is_key, &bytes, forward));
+            }
+            SearchContext::DetailDup => {
+                let Some(i) = self.selected_row else { return };
+                let Some(row) = self.rows.get(i) else { return };
+                let Some(table) = self.cur_table() else { return };
+                let table_name = table.name.clone();
+                let Some(dbh) = self.db.as_ref() else { return };
+                let dctx = crate::ui::detail::DupCtx {
+                    db: &dbh.db,
+                    table: table_name.as_deref(),
+                    key: &row.key,
+                };
+                self.status = Status::leveled(self.detail.dup_search(&dctx, forward));
+            }
+        }
+    }
+
     /// 全局快捷键：Ctrl+O 打开、Ctrl+F 聚焦搜索框、Ctrl+C 复制选中行、
-    /// Esc 清除过滤、PgUp/PgDn 翻页。
+    /// Esc 清除过滤、F3/Shift+F3 继续搜索、PgUp/PgDn 翻页。
     pub fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         // Ctrl+C/X/V 在 egui-winit 层被转换为 Event::Copy/Cut/Paste 后直接消费，
         // 不会再产生 Key::C 按键事件，因此复制只能监听 Event::Copy/Cut。
@@ -1044,6 +1120,7 @@ impl MdbxerApp {
             for k in [
                 egui::Key::O,
                 egui::Key::F,
+                egui::Key::F3,
                 egui::Key::Escape,
                 egui::Key::PageUp,
                 egui::Key::PageDown,
@@ -1073,6 +1150,11 @@ impl MdbxerApp {
                 // 只设标记，搜索框渲染时再 request_focus：
                 // 直接对猜测的 ID request_focus 会因 ID 不存在触发 accesskit panic
                 self.focus_search = true;
+            }
+            egui::Key::F3 if !ctrl => {
+                // F3 = 在最近使用的搜索里找下一个；Shift+F3 = 上一个
+                let backward = ctx.input(|i| i.modifiers.shift);
+                self.continue_search(!backward);
             }
             egui::Key::Escape => {
                 // 按"有什么清什么"复位，避免无内容时的副作用：
@@ -1122,14 +1204,74 @@ impl MdbxerApp {
             self.status = Status::warn(crate::i18n::tr().search_empty.to_string());
             return;
         }
+        self.last_search = SearchContext::MainValueFull;
         // 全表搜索结果自带定位，旧的页内过滤会干扰显示，一并清除
         self.value_filter = None;
         self.value_search = Some(ValueSearchState {
             needle: needle.to_lowercase(),
             anchor: None,
             checked: 0,
+            backward: false,
+            // 从头发起的搜索本来就是完整一遍，无需再回绕
+            wrapped: true,
         });
         self.status = Status::info(crate::i18n::tr().searching_value.to_string());
+    }
+
+    /// F3/Shift+F3 续扫全表：从当前选中行的相邻位置沿指定方向继续扫描，
+    /// 到尽头自动回绕一圈。无选中行时退化为从头搜索。
+    fn continue_full_value_search(&mut self, forward: bool) {
+        let needle = self.search_input.trim().to_string();
+        if needle.is_empty() {
+            self.status = Status::warn(crate::i18n::tr().search_empty.to_string());
+            return;
+        }
+        // 以当前选中记录（多值表为当前值）作为续扫锚点，扫描时跳过锚点本身
+        let anchor = (|| {
+            let i = self.selected_row?;
+            let row = self.rows.get(i)?;
+            let v = self.current_value().unwrap_or_else(|| row.value.clone());
+            Some((row.key.clone(), v))
+        })();
+        let Some(anchor) = anchor else {
+            self.start_full_value_search();
+            return;
+        };
+        self.last_search = SearchContext::MainValueFull;
+        self.value_filter = None;
+        self.value_search = Some(ValueSearchState {
+            needle: needle.to_lowercase(),
+            anchor: Some(anchor),
+            checked: 0,
+            backward: !forward,
+            wrapped: false,
+        });
+        self.status = Status::info(crate::i18n::tr().searching_value.to_string());
+    }
+
+    /// F3/Shift+F3 续接页内 Value 过滤：在过滤后的显示顺序里移动选中行。
+    fn move_in_page_filter(&mut self, forward: bool) {
+        if self.value_filter.is_none() {
+            return;
+        }
+        let order = self.display_order();
+        if order.is_empty() {
+            return;
+        }
+        let target = match self.selected_row {
+            Some(cur) => {
+                match order.iter().position(|&i| i == cur) {
+                    Some(p) if forward && p + 1 < order.len() => Some(order[p + 1]),
+                    Some(p) if !forward && p > 0 => Some(order[p - 1]),
+                    None => Some(order[0]),
+                    _ => None, // 已到边界
+                }
+            }
+            None => Some(order[0]),
+        };
+        if let Some(i) = target {
+            self.select_row(i);
+        }
     }
 
     /// 取消进行中的全表 Value 搜索。
@@ -1148,7 +1290,15 @@ impl MdbxerApp {
         };
         let name = table.name.clone();
         let dup_sort = table.dup_sort;
-        let dir = self.sort_dir();
+        // 扫描方向：Shift+F3 反向续扫时沿 Key 减小方向；定位仍用显示方向
+        let scan_dir = if state.backward {
+            match self.sort_dir() {
+                db::Direction::Forward => db::Direction::Backward,
+                db::Direction::Backward => db::Direction::Forward,
+            }
+        } else {
+            self.sort_dir()
+        };
         let needle = state.needle.clone();
         let anchor = state.anchor.clone();
         let val_mode = self.val_mode;
@@ -1160,7 +1310,7 @@ impl MdbxerApp {
             &dbh.db,
             name.as_deref(),
             dup_sort,
-            dir,
+            scan_dir,
             anchor.as_ref(),
             anchor.is_some(),
             BATCH,
@@ -1192,12 +1342,12 @@ impl MdbxerApp {
 
         if let Some((k, _v)) = found {
             // 定位：复用 jump_to（普通表落到匹配 key 的行，多值表落到该 key
-            // 的分组页，保持分组显示不破坏）
+            // 的分组页，保持分组显示不破坏）。始终按显示方向定位，与扫描方向无关。
             let page = db::jump_to(
                 &dbh.db,
                 name.as_deref(),
                 dup_sort,
-                dir,
+                self.sort_dir(),
                 db::JumpKey::Bytes(k),
                 page_size,
             );
@@ -1222,10 +1372,16 @@ impl MdbxerApp {
             return;
         }
 
-        // 未找到：续读或结束
+        // 未找到：续读；到尽头未回绕过则从头（反向搜索从尾）再扫一圈
         if batch.has_more {
             state.anchor = batch.rows.last().cloned();
             self.status = Status::info(crate::i18n::tr().searching_value_progress(state.checked));
+            self.value_search = Some(state);
+        } else if !state.wrapped {
+            state.anchor = None;
+            state.wrapped = true;
+            self.status =
+                Status::info(crate::i18n::tr().searching_value_wrap(state.checked));
             self.value_search = Some(state);
         } else {
             self.status = Status::warn(crate::i18n::tr().value_not_found.to_string());

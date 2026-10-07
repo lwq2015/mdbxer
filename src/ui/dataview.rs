@@ -156,6 +156,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         }
         // 回车 = Key 搜索（跳转或前缀过滤，取决于模式）；
         // Ctrl+回车 = Value 搜索（行为同 V 按钮，由"全表"开关决定）
+        // 回车后保留焦点，连续回车不必重新点框（F3 也可全局继续）
         if sresp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             if ui.input(|i| i.modifiers.ctrl) {
                 if app.value_search_full {
@@ -166,6 +167,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             } else {
                 app.apply_key_search();
             }
+            sresp.request_focus();
         }
         // 搜索 Key
         if ui.button("K").on_hover_text(t.key_search_btn_tip).clicked() {
@@ -304,14 +306,36 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         }
                     });
                     row_ui.col(|ui| {
-                        let rt = egui::RichText::new(&view.type_label);
+                        // Value 指定了解码类型时，类型标签用强调色并加 hover 说明，
+                        // 与自动猜测的默认文本区分开
+                        let forced = app.val_mode != crate::fmt::DecodeMode::Auto;
+                        let mut rt = egui::RichText::new(&view.type_label);
+                        if forced {
+                            rt = rt.color(ui.visuals().hyperlink_color);
+                        }
                         let resp = ui.add(
                             egui::Label::new(rt)
                                 .selectable(false)
                                 .show_tooltip_when_elided(false)
                                 .sense(egui::Sense::click()),
                         );
-                        elide_tooltip(ui, resp.clone(), &view.type_label);
+                        if forced {
+                            // 标签被列宽截断时在 tooltip 里补全全名，再附指定类型说明
+                            let font = ui.style().text_styles[&egui::TextStyle::Body].clone();
+                            let label_w = ui.fonts_mut(|f| {
+                                f.layout_no_wrap(view.type_label.clone(), font, egui::Color32::WHITE)
+                                    .size()
+                                    .x
+                            });
+                            let tip = if label_w > resp.rect.width() {
+                                format!("{}\n\n{}", view.type_label, t.type_forced_tip)
+                            } else {
+                                t.type_forced_tip.to_string()
+                            };
+                            resp.clone().on_hover_text(tip);
+                        } else {
+                            elide_tooltip(ui, resp.clone(), &view.type_label);
+                        }
                         if resp.clicked() {
                             clicked_row = Some(i);
                             app.row_copy_pending = true;

@@ -40,48 +40,52 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     app.save_ui_prefs();
                 }
             });
-            // 过滤表名（弹性占满剩余宽度）+ 导出当前表（CSV/JSON 下拉 + ⬇）
+            // 过滤表名（占满剩余宽度）+ 导出当前表（CSV/JSON 下拉 + ⬇）
             // ⬇ U+2B07 取自 egui 内置 NotoEmoji/emoji-icon，跨平台一致
+            //
+            // 用 right_to_left 布局：⬇/下拉按实际测量宽度从右向左占位，过滤框最后
+            // 精确吃掉剩余宽度。若按固定估值预留（如假设下拉恒为 52px），选 JSON 后
+            // 下拉实际更宽，本行会恒定溢出几像素；SidePanel 每帧把内容期望宽度写回
+            // PanelState，面板就会随重绘一帧帧被顶到最大宽度（JSON 左栏变胖 bug）。
+            // 外层 horizontal 把行高收紧为一行（with_layout 在 top-down 下会拿到
+            // 整段剩余高度），内层才换成 right_to_left。
             ui.horizontal(|ui| {
-                // 先算出导出控件所需宽度，剩余空间给过滤框，避免过滤框 INFINITY
-                // 把导出挤出可见区
-                let spacing = ui.spacing().item_spacing.x;
-                let export_w = 52.0 // ComboBox 宽度
-                    + 26.0 // ⬇ 按钮宽度
-                    + spacing * 2.0; // 两个控件间距
-                let filter_w = (ui.available_width() - export_w).max(40.0);
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.table_filter)
-                        .hint_text(t.filter_hint)
-                        .desired_width(filter_w),
-                );
-                let mut export_clicked = false;
-                let mut ef = app.export_format;
-                egui::ComboBox::from_id_salt("export_format")
-                    .width(52.0)
-                    .selected_text(ef.label())
-                    .show_ui(ui, |ui| {
-                        for f in crate::export::ExportFormat::ALL {
-                            ui.selectable_value(&mut ef, f, f.label());
-                        }
-                    });
-                if ef != app.export_format {
-                    app.export_format = ef;
-                    app.save_ui_prefs();
-                }
-                if ui
-                    .add_enabled(
-                        app.db.is_some() && app.export_ev_rx.is_none(),
-                        egui::Button::new("⬇"),
-                    )
-                    .on_hover_text(t.export_tip)
-                    .clicked()
-                {
-                    export_clicked = true;
-                }
-                if export_clicked {
-                    app.start_export();
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut export_clicked = false;
+                    let mut ef = app.export_format;
+                    if ui
+                        .add_enabled(
+                            app.db.is_some() && app.export_ev_rx.is_none(),
+                            egui::Button::new("⬇"),
+                        )
+                        .on_hover_text(t.export_tip)
+                        .clicked()
+                    {
+                        export_clicked = true;
+                    }
+                    egui::ComboBox::from_id_salt("export_format")
+                        .width(52.0)
+                        .selected_text(ef.label())
+                        .show_ui(ui, |ui| {
+                            for f in crate::export::ExportFormat::ALL {
+                                ui.selectable_value(&mut ef, f, f.label());
+                            }
+                        });
+                    if ef != app.export_format {
+                        app.export_format = ef;
+                        app.save_ui_prefs();
+                    }
+                    if export_clicked {
+                        app.start_export();
+                    }
+                    // 剩余空间全部给过滤框（此时右侧控件已按实际宽度占位）
+                    let filter_w = ui.available_width().max(40.0);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.table_filter)
+                            .hint_text(t.filter_hint)
+                            .desired_width(filter_w),
+                    );
+                });
             });
             ui.separator();
 

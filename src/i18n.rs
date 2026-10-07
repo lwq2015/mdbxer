@@ -149,6 +149,8 @@ pub struct I18n {
     pub col_tip_key: &'static str,
     /// #/类型/Value 列头 hover：说明仅页内排序
     pub col_tip_page: &'static str,
+    /// 类型列在 Value 工具栏指定了解码类型时的 hover 说明
+    pub type_forced_tip: &'static str,
     /// 多值分组行后缀模板 {n}
     pub dup_n_values_t: &'static str,
 
@@ -265,6 +267,8 @@ pub struct I18n {
     pub searching_value: &'static str,
     /// {n}
     pub searching_value_progress_t: &'static str,
+    /// 全表续扫到尽头后回绕扫描的进度 {n}
+    pub searching_value_wrap_t: &'static str,
     pub value_found: &'static str,
     pub value_not_found: &'static str,
     /// {e}
@@ -488,6 +492,10 @@ impl I18n {
         fill(self.searching_value_progress_t, &[("n", &n.to_string())])
     }
 
+    pub fn searching_value_wrap(&self, n: usize) -> String {
+        fill(self.searching_value_wrap_t, &[("n", &n.to_string())])
+    }
+
     pub fn dup_wrap(&self, i: usize, total: usize) -> String {
         fill(
             self.dup_wrap_t,
@@ -640,6 +648,7 @@ const ZH: I18n = I18n {
     col_type: "类型",
     col_tip_key: "按 Key 排序 = 全表遍历方向（B+ 树索引顺序）\n点击切换升序 / 降序，翻页保持",
     col_tip_page: "页内排序：仅对当前已加载的这一页生效\n点击循环：升序 → 降序 → 默认顺序",
+    type_forced_tip: "当前显示 Value 工具栏手动指定的解码类型，非自动猜测\n切回「自动」即恢复按内容猜测",
     dup_n_values_t: "〔{n} 个值〕",
 
     detail_select_hint: "在中间表格选择一行以查看详情",
@@ -665,8 +674,8 @@ const ZH: I18n = I18n {
     dup_tip_last: "最后一个值",
     goto: "跳至",
     search_hint: "搜索值：文本或 hex(...)",
-    search_prev_tip: "向前查找（Ctrl+Enter 等效；到头回绕）",
-    search_next_tip: "向后查找（Enter 等效；到头回绕）",
+    search_prev_tip: "向前查找（Shift+Enter/Ctrl+Enter；Shift+F3 全局继续；到头回绕）",
+    search_next_tip: "向后查找（Enter；F3 全局继续；到头回绕）",
     guess_line_t: "猜测：{label}，{n} 字节",
     bytes_t: "{n} 字节",
     section_text: "文本",
@@ -691,12 +700,12 @@ const ZH: I18n = I18n {
     blob_wrap_t: "已回绕定位到偏移 0x{hex}",
 
     toolbar_search_hint: "搜索：文本或 hex(...)",
-    search_box_tip: "Enter：搜索 Key；Ctrl+Enter：搜索 Value",
+    search_box_tip: "Enter：搜索 Key；Ctrl+Enter：搜索 Value；F3/Shift+F3：继续上一次搜索",
     key_mode_tip_off: "切换到过滤模式：K 键只显示以输入开头的 Key（回车生效）",
     key_mode_tip_on: "切换到跳转模式：K 键定位到首个不小于输入的 Key",
     key_search_btn_tip: "搜索 Key（跳转或前缀过滤，Enter）",
     value_search_tip_off: "搜索 Value：页内过滤（当前页文本包含，大小写不敏感，Ctrl+Enter）",
-    value_search_tip_on: "搜索 Value：全表扫描（找到首个包含搜索词的记录并定位，Ctrl+Enter）",
+    value_search_tip_on: "搜索 Value：全表扫描（找到首个包含搜索词的记录并定位，Ctrl+Enter；F3/Shift+F3 继续找上/下一个）",
     full_search_toggle: "全表",
     full_search_tip_off: "切换到全表搜索模式：V 键逐批扫描全表并定位到首个匹配",
     full_search_tip_on: "切换到页内过滤模式：V 键仅过滤当前已加载的行",
@@ -728,6 +737,7 @@ const ZH: I18n = I18n {
     not_found_ge: "未找到不小于该 key 的记录",
     searching_value: "正在全表搜索 Value…",
     searching_value_progress_t: "已扫描 {n} 条…",
+    searching_value_wrap_t: "已到尽头，回绕继续扫描（{n} 条）…",
     value_found: "已找到匹配项",
     value_not_found: "未找到匹配项",
     jump_fail_t: "跳转失败：{e}",
@@ -875,6 +885,7 @@ const EN: I18n = I18n {
     col_type: "Type",
     col_tip_key: "Sort by Key = whole-table traversal order (B+tree index)\nClick to toggle ascending / descending; kept across pages",
     col_tip_page: "In-page sort: affects only the currently loaded page\nClick to cycle: ascending → descending → default order",
+    type_forced_tip: "Showing the decode type manually selected in the Value toolbar, not auto-detection\nSwitch it back to \"Auto\" to guess from content",
     dup_n_values_t: " ({n} values)",
 
     detail_select_hint: "Select a row in the table to view details",
@@ -900,8 +911,8 @@ const EN: I18n = I18n {
     dup_tip_last: "Last value",
     goto: "Go to",
     search_hint: "Search values: text or hex(...)",
-    search_prev_tip: "Search backward (Ctrl+Enter; wraps at ends)",
-    search_next_tip: "Search forward (Enter; wraps at ends)",
+    search_prev_tip: "Search backward (Shift+Enter/Ctrl+Enter; Shift+F3 from anywhere; wraps at ends)",
+    search_next_tip: "Search forward (Enter; F3 from anywhere; wraps at ends)",
     guess_line_t: "Guessed: {label}, {n} bytes",
     bytes_t: "{n} bytes",
     section_text: "Text",
@@ -926,12 +937,12 @@ const EN: I18n = I18n {
     blob_wrap_t: "Wrapped to offset 0x{hex}",
 
     toolbar_search_hint: "Search: text or hex(...)",
-    search_box_tip: "Enter: search key; Ctrl+Enter: search value",
+    search_box_tip: "Enter: search key; Ctrl+Enter: search value; F3/Shift+F3: repeat last search",
     key_mode_tip_off: "Switch to filter mode: K shows only keys starting with the input (Enter to apply)",
     key_mode_tip_on: "Switch to jump mode: K locates the first key >= input",
     key_search_btn_tip: "Search keys (jump or prefix filter, Enter)",
     value_search_tip_off: "Search value: filter current page (case-insensitive contains, Ctrl+Enter)",
-    value_search_tip_on: "Search value: full-table scan (locate the first record containing the term, Ctrl+Enter)",
+    value_search_tip_on: "Search value: full-table scan (locate the first record containing the term, Ctrl+Enter; F3/Shift+F3: find next/previous)",
     full_search_toggle: "Full",
     full_search_tip_off: "Switch to full-table search: V scans the whole table and locates the first match",
     full_search_tip_on: "Switch to page filter: V filters the currently loaded rows only",
@@ -963,6 +974,7 @@ const EN: I18n = I18n {
     not_found_ge: "No record found with a key greater than or equal to this one",
     searching_value: "Searching all values…",
     searching_value_progress_t: "Scanned {n} entries…",
+    searching_value_wrap_t: "Reached the end, wrapping around ({n} scanned)…",
     value_found: "Match found",
     value_not_found: "No match found",
     jump_fail_t: "Jump failed: {e}",
@@ -1110,6 +1122,7 @@ const RU: I18n = I18n {
     col_type: "Тип",
     col_tip_key: "Сортировка по Key = порядок обхода всей таблицы (индекс B+дерева)\nЩелчок: по возрастанию / по убыванию, сохраняется при листании",
     col_tip_page: "Сортировка в пределах страницы: только текущая загруженная страница\nЩелчок: по возрастанию → по убыванию → исходный порядок",
+    type_forced_tip: "Показан тип декодирования, вручную выбранный на панели Value, а не автоопределение\nПереключите обратно на «Авто», чтобы угадывать по содержимому",
     dup_n_values_t: " ({n} знач.)",
 
     detail_select_hint: "Выберите строку в таблице для просмотра деталей",
@@ -1135,8 +1148,8 @@ const RU: I18n = I18n {
     dup_tip_last: "Последнее значение",
     goto: "К №",
     search_hint: "Поиск значений: текст или hex(...)",
-    search_prev_tip: "Искать назад (Ctrl+Enter; с переходом в конце)",
-    search_next_tip: "Искать вперёд (Enter; с переходом в конце)",
+    search_prev_tip: "Искать назад (Shift+Enter/Ctrl+Enter; Shift+F3 глобально; с переходом в конце)",
+    search_next_tip: "Искать вперёд (Enter; F3 глобально; с переходом в конце)",
     guess_line_t: "Тип: {label}, {n} байт",
     bytes_t: "{n} байт",
     section_text: "Текст",
@@ -1161,12 +1174,12 @@ const RU: I18n = I18n {
     blob_wrap_t: "С переходом к смещению 0x{hex}",
 
     toolbar_search_hint: "Поиск: текст или hex(...)",
-    search_box_tip: "Enter: поиск ключа; Ctrl+Enter: поиск значения",
+    search_box_tip: "Enter: поиск ключа; Ctrl+Enter: поиск значения; F3/Shift+F3: повторить последний поиск",
     key_mode_tip_off: "Переключиться в режим фильтра: K показывает только ключи, начинающиеся с ввода (Enter — применить)",
     key_mode_tip_on: "Переключиться в режим перехода: K переходит к первому ключу >= ввода",
     key_search_btn_tip: "Поиск ключей (переход или фильтр по префиксу, Enter)",
     value_search_tip_off: "Поиск значения: фильтр по текущей странице (вхождение без учёта регистра, Ctrl+Enter)",
-    value_search_tip_on: "Поиск значения: сканирование всей таблицы (переход к первой записи с совпадением, Ctrl+Enter)",
+    value_search_tip_on: "Поиск значения: сканирование всей таблицы (переход к первой записи с совпадением, Ctrl+Enter; F3/Shift+F3: следующее/предыдущее)",
     full_search_toggle: "Вся",
     full_search_tip_off: "Переключиться на поиск по всей таблице: V сканирует её и переходит к первому совпадению",
     full_search_tip_on: "Переключиться на фильтр по странице: V фильтрует только загруженные строки",
@@ -1198,6 +1211,7 @@ const RU: I18n = I18n {
     not_found_ge: "Не найдено записи с ключом больше или равным заданному",
     searching_value: "Поиск по всем значениям…",
     searching_value_progress_t: "Проверено {n} записей…",
+    searching_value_wrap_t: "Достигнут конец, переход к началу ({n} проверено)…",
     value_found: "Совпадение найдено",
     value_not_found: "Совпадений не найдено",
     jump_fail_t: "Ошибка перехода: {e}",
@@ -1433,6 +1447,7 @@ mod tests {
         for table in &TABLES {
             assert!(!table.col_tip_key.is_empty());
             assert!(!table.col_tip_page.is_empty());
+            assert!(!table.type_forced_tip.is_empty());
         }
     }
 

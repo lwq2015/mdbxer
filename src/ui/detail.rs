@@ -668,12 +668,13 @@ fn card_window<'b>(app: &MdbxerApp, bytes: &'b [u8], is_key: bool) -> (usize, &'
 /// 卡片文本/hex 两区的折叠状态。估算与渲染必须使用同一组 Id，
 /// 这里用全局 `Id::new`（不用 `ui.make_persistent_id`，否则会带上
 /// ScrollArea/分组的路径前缀，show() 里预估算时对不上）。
-fn card_section_open(ctx: &egui::Context, is_key: bool, total: usize) -> (bool, bool) {
-    let text_default = total <= 512;
+fn card_section_open(ctx: &egui::Context, is_key: bool) -> (bool, bool) {
+    // 文本区默认展开：卡片高度已自适应（内部 ScrollArea + 16 行上限），
+    // 大值折叠反而要多点一次；Id 盐值随之固定（不再随大小改变默认值）
     let text_open = egui::collapsing_header::CollapsingState::load_with_default_open(
         ctx,
-        egui::Id::new(("detail_text", is_key, text_default)),
-        text_default,
+        egui::Id::new(("detail_text", is_key, true)),
+        true,
     )
     .is_open();
     let hex_open = egui::collapsing_header::CollapsingState::load_with_default_open(
@@ -701,7 +702,7 @@ fn card_natural_height(
         .fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())))
         + ui.spacing().extra_text_line_spacing;
     let fixed = card_fixed_overhead(total, is_key, dup_nav);
-    let (text_open, hex_open) = card_section_open(ui.ctx(), is_key, total);
+    let (text_open, hex_open) = card_section_open(ui.ctx(), is_key);
     let (text_h, hex_h) =
         card_content_heights(ui, app, window, text, line_h, f32::INFINITY, text_open, hex_open);
     fixed + text_h + hex_h
@@ -889,16 +890,30 @@ fn kv_card(
                         .hint_text(t.search_hint),
                 );
                 let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                let ctrl = ui.input(|i| i.modifiers.ctrl);
-                let prev =
-                    ui.button("⬆").on_hover_text(t.search_prev_tip).clicked() || (enter && ctrl);
+                let (ctrl, shift) =
+                    ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
+                // Enter=下一个；Shift+Enter 或 Ctrl+Enter=上一个
+                let prev = ui.button("⬆").on_hover_text(t.search_prev_tip).clicked()
+                    || (enter && (shift || ctrl));
                 let next =
-                    ui.button("⬇").on_hover_text(t.search_next_tip).clicked() || (enter && !ctrl);
+                    ui.button("⬇").on_hover_text(t.search_next_tip).clicked() || (enter && !shift && !ctrl);
+                if prev || next {
+                    app.last_search = if is_key {
+                        super::SearchContext::DetailKeyBlob
+                    } else {
+                        super::SearchContext::DetailValBlob
+                    };
+                }
                 if prev {
                     app.status = Status::leveled(app.detail.blob_search(is_key, bytes, false));
                 }
                 if next {
                     app.status = Status::leveled(app.detail.blob_search(is_key, bytes, true));
+                }
+                // egui singleline 回车默认 surrender_focus，焦点离开后连续回车
+                // 无法继续搜下一个命中——搜索完立刻把焦点要回此输入框
+                if enter {
+                    resp.request_focus();
                 }
                 // VSCode 风格命中计数：当前第 n 个 / 共 m 个
                 if let Some((n, m)) = app.detail.blob_matches(is_key) {
@@ -990,23 +1005,32 @@ fn kv_card(
                             .hint_text(t.search_hint),
                     );
                     let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    let ctrl = ui.input(|i| i.modifiers.ctrl);
-                    let prev =
-                        ui.button("⬆").on_hover_text(t.search_prev_tip).clicked() || (enter && ctrl);
-                    let next =
-                        ui.button("⬇").on_hover_text(t.search_next_tip).clicked() || (enter && !ctrl);
+                    let (ctrl, shift) =
+                        ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
+                    // Enter=下一个；Shift+Enter 或 Ctrl+Enter=上一个
+                    let prev = ui.button("⬆").on_hover_text(t.search_prev_tip).clicked()
+                        || (enter && (shift || ctrl));
+                    let next = ui.button("⬇").on_hover_text(t.search_next_tip).clicked()
+                        || (enter && !shift && !ctrl);
+                    if prev || next {
+                        app.last_search = super::SearchContext::DetailDup;
+                    }
                     if prev {
                         app.status = Status::leveled(app.detail.dup_search(&dctx, false));
                     }
                     if next {
                         app.status = Status::leveled(app.detail.dup_search(&dctx, true));
                     }
+                    // 回车后焦点保留在搜索框，连续 Enter 可逐个命中
+                    if enter {
+                        resp.request_focus();
+                    }
                 });
                 ui.add_space(2.0);
             }
         }
 
-        // 文本视图（可折叠；长文本默认折叠，方便直接看 hex）。
+        // 文本视图（可折叠；默认展开，大值靠内部 ScrollArea + 16 行上限约束高度）。
         // egui TextEdit 自身无内部滚动、高度随内容无限增长（desired_rows 只是下限），
         // 故必须包一层 ScrollArea。内容预算在文本/hex 两区均分卡片预算的余量，
         // 装不下时各自内部滚动，卡片头/搜索行不随内容滚走。
@@ -1014,8 +1038,7 @@ fn kv_card(
             .fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())))
             + ui.spacing().extra_text_line_spacing;
         let fixed = card_fixed_overhead(total, is_key, is_dup);
-        let default_open = total <= 512;
-        let (text_open, hex_open) = card_section_open(ui.ctx(), is_key, total);
+        let (text_open, hex_open) = card_section_open(ui.ctx(), is_key);
         // hex 份额不在这里定：渲染时按游标实测回填（见下），此处只分文本区
         let (text_h, _) = card_content_heights(
             ui,
@@ -1063,8 +1086,8 @@ fn kv_card(
         })();
         egui::collapsing_header::CollapsingState::load_with_default_open(
             ui.ctx(),
-            egui::Id::new(("detail_text", is_key, default_open)),
-            default_open,
+            egui::Id::new(("detail_text", is_key, true)),
+            true,
         )
         .show_header(ui, |ui| {
             // 与 CollapsingHeader 默认一致：标题用 Button 样式文本

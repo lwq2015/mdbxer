@@ -112,9 +112,16 @@ pub fn show(ui: &mut egui::Ui, build_date: &str) {
                 ui.label(t.about_thanks);
                 ui.add_space(10.0);
 
-                // ── 免责声明 ──
+                // ── 免责声明（警示底色 + 边框，比普通弱文本更醒目）──
                 section(ui, t.about_group_disclaimer);
-                ui.label(egui::RichText::new(t.about_disclaimer).weak());
+                let warn = ui.visuals().warn_fg_color;
+                egui::Frame::group(ui.style())
+                    .fill(warn.gamma_multiply(0.10))
+                    .stroke(egui::Stroke::new(1.0, warn.gamma_multiply(0.55)))
+                    .inner_margin(8.0)
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new(t.about_disclaimer).color(warn));
+                    });
                 ui.add_space(16.0);
             });
             ui.add_space(side);
