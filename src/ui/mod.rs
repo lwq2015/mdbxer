@@ -24,7 +24,8 @@ pub const DEFAULT_CELL_MAX: usize = 256;
 pub const EXPORT_BATCH: usize = 2000;
 
 /// 左栏宽度范围（点）
-pub const LEFT_PANEL_MIN: f32 = 180.0;
+/// 下限取内部最宽一行（过滤框 40 + 导出下拉 52 + ⬇钮 26 + 间距/边距）能正常交互的尺寸
+pub const LEFT_PANEL_MIN: f32 = 120.0;
 pub const LEFT_PANEL_MAX: f32 = 320.0;
 /// 中央数据表保留的最小宽度：两侧面板拖宽时不得把它挤得更窄
 pub const MIDDLE_MIN_WIDTH: f32 = 360.0;
