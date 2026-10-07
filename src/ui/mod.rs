@@ -809,6 +809,7 @@ impl MdbxerApp {
         self.key_filter = None;
         self.value_filter = None;
         self.value_search = None;
+        self.clear_transient_status();
         self.load_first_page();
         self.save_per_db();
     }
@@ -1221,7 +1222,24 @@ impl MdbxerApp {
             return;
         }
         self.selected_row = Some(index);
+        self.clear_transient_status();
         self.load_dups();
+    }
+
+    /// 切换上下文（换行/换表/翻页）时，把与旧上下文绑定的一次性消息
+    /// （已导出/已定位/未找到等）恢复为持久的库状态，避免状态栏挂着旧消息。
+    fn clear_transient_status(&mut self) {
+        if let Status::Msg(_) = self.status {
+            if let Some(h) = &self.db {
+                if let Some(path) = &self.opened_path {
+                    self.status = Status::Opened {
+                        file_mode: h.no_sub_dir,
+                        n: h.tables.len(),
+                        path: path.clone(),
+                    };
+                }
+            }
+        }
     }
 
     /// 当前应显示的 value：多值表取当前 dup，否则取选中行的 value。
