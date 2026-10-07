@@ -139,12 +139,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                     }
                                 });
                             }
-                            // ── 收藏的 Key：→ 跳转，× 删除 ──
+                            // ── 收藏的 Key：× 删除，点标签直接跳转 ──
                             for (i, fk) in app.fav_keys.iter().enumerate() {
                                 ui.horizontal(|ui| {
-                                    if ui.small_button("➡").on_hover_text(t.fav_jump_tip).clicked()
+                                    if ui.small_button("×").on_hover_text(t.fav_del_tip).clicked()
                                     {
-                                        fav_key_action = Some((i, true));
+                                        fav_key_action = Some((i, false));
                                     }
                                     let table_name = fk.table.as_deref().unwrap_or(t.main_table);
                                     // Key 显示解码后的可读文本（自动猜测），hex 全文放 hover
@@ -163,11 +163,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                     } else {
                                         format!("{table_name} · {} · {key_text}", fk.note)
                                     };
-                                    ui.label(egui::RichText::new(label).monospace())
-                                        .on_hover_text(format!("{table_name} · {}", fk.key_hex));
-                                    if ui.small_button("×").on_hover_text(t.fav_del_tip).clicked()
+                                    if ui
+                                        .selectable_label(
+                                            false,
+                                            egui::RichText::new(label).monospace(),
+                                        )
+                                        .on_hover_text(format!(
+                                            "{}\n{table_name} · {}",
+                                            t.fav_jump_tip, fk.key_hex
+                                        ))
+                                        .clicked()
                                     {
-                                        fav_key_action = Some((i, false));
+                                        fav_key_action = Some((i, true));
                                     }
                                 });
                             }

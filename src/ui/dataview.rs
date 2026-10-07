@@ -208,132 +208,129 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let mut col_clicked: Option<u8> = None;
     let mut clicked_row = None;
 
-    TableBuilder::new(ui)
-        .striped(true)
-        .resizable(true)
-        .sense(egui::Sense::click())
-        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::exact(56.0))
-        .column(Column::initial(240.0).at_least(80.0).clip(true))
-        .column(Column::exact(80.0))
-        .column(Column::remainder().clip(true))
-        .min_scrolled_height(0.0)
-        .header(text_height, |mut header| {
-            header.col(|ui| {
-                if header_cell(ui, &index_title, t.col_tip_page) {
-                    col_clicked = Some(0);
-                }
-            });
-            header.col(|ui| {
-                if header_cell(ui, key_title, t.col_tip_key) {
-                    col_clicked = Some(1);
-                }
-            });
-            header.col(|ui| {
-                if header_cell(ui, &type_title, t.col_tip_page) {
-                    col_clicked = Some(2);
-                }
-            });
-            header.col(|ui| {
-                if header_cell(ui, &value_title, t.col_tip_page) {
-                    col_clicked = Some(3);
-                }
-            });
-        })
-        .body(|body| {
-            body.rows(text_height, total_rows, |mut row_ui| {
-                let di = row_ui.index();
-                let i = order[di];
-                let row = &app.rows[i];
-                let view = &app.views[i];
-                let is_sel = selected == Some(i);
-                row_ui.set_selected(is_sel);
-                // 选中行文字反白，与文本选区颜色区分开
-                let sel_color = if is_sel {
-                    Some(egui::Color32::WHITE)
-                } else {
-                    None
-                };
-                row_ui.col(|ui| {
-                    let abs = match app.base_index {
-                        Some(b) => b + i + 1,
-                        None => i + 1,
-                    };
-                    let mut rt = egui::RichText::new(abs.to_string());
-                    if let Some(c) = sel_color {
-                        rt = rt.color(c);
-                    }
-                    // selectable(false)：避免单元格文本选区抢占 Ctrl+C，
-                    // 保证 Ctrl+C 始终复制选中行的 KV
-                    let resp = ui.add(
-                        egui::Label::new(rt)
-                            .selectable(false)
-                            .sense(egui::Sense::click()),
-                    );
-                    elide_tooltip(ui, resp.clone(), &abs.to_string());
-                    if resp.clicked() {
-                        clicked_row = Some(i);
-                        app.row_copy_pending = true;
+    // 选中行用浅色底 + 默认文字色（不再反白），
+    // 截断 tooltip 等继承颜色的场景就不会再出现白字白底；scope 内生效不外泄
+    ui.scope(|ui| {
+        let bg = if ui.visuals().dark_mode {
+            egui::Color32::from_rgb(0x2F, 0x4A, 0x66)
+        } else {
+            egui::Color32::from_rgb(0xC8, 0xDC, 0xF0)
+        };
+        ui.style_mut().visuals.selection.bg_fill = bg;
+        TableBuilder::new(ui)
+            .striped(true)
+            .resizable(true)
+            .sense(egui::Sense::click())
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::exact(56.0))
+            .column(Column::initial(240.0).at_least(80.0).clip(true))
+            .column(Column::exact(80.0))
+            .column(Column::remainder().clip(true))
+            .min_scrolled_height(0.0)
+            .header(text_height, |mut header| {
+                header.col(|ui| {
+                    if header_cell(ui, &index_title, t.col_tip_page) {
+                        col_clicked = Some(0);
                     }
                 });
-                row_ui.col(|ui| {
-                    let mut rt = egui::RichText::new(&view.key_text).monospace();
-                    if let Some(c) = sel_color {
-                        rt = rt.color(c);
-                    }
-                    let resp = ui.add(
-                        egui::Label::new(rt)
-                            .selectable(false)
-                            .sense(egui::Sense::click()),
-                    );
-                    elide_tooltip(ui, resp.clone(), &view.key_text);
-                    if resp.clicked() {
-                        clicked_row = Some(i);
-                        app.row_copy_pending = true;
+                header.col(|ui| {
+                    if header_cell(ui, key_title, t.col_tip_key) {
+                        col_clicked = Some(1);
                     }
                 });
-                row_ui.col(|ui| {
-                    let mut rt = egui::RichText::new(&view.type_label);
-                    if let Some(c) = sel_color {
-                        rt = rt.color(c);
-                    }
-                    let resp = ui.add(
-                        egui::Label::new(rt)
-                            .selectable(false)
-                            .sense(egui::Sense::click()),
-                    );
-                    elide_tooltip(ui, resp.clone(), &view.type_label);
-                    if resp.clicked() {
-                        clicked_row = Some(i);
-                        app.row_copy_pending = true;
+                header.col(|ui| {
+                    if header_cell(ui, &type_title, t.col_tip_page) {
+                        col_clicked = Some(2);
                     }
                 });
-                row_ui.col(|ui| {
-                    // 多值表分组行：显示第一个值的预览 + 值总数（值列表在右侧翻看）
-                    let text = match row.dup_count {
-                        Some(n) => format!("{}{}", view.val_text, t.dup_n_values(n)),
-                        None => view.val_text.clone(),
-                    };
-                    let mut rt = egui::RichText::new(&text).monospace();
-                    if let Some(c) = sel_color {
-                        rt = rt.color(c);
-                    }
-                    let resp = ui.add(
-                        egui::Label::new(rt)
-                            .selectable(false)
-                            .sense(egui::Sense::click()),
-                    );
-                    elide_tooltip(ui, resp.clone(), &text);
-                    if resp.clicked() {
-                        clicked_row = Some(i);
-                        app.row_copy_pending = true;
+                header.col(|ui| {
+                    if header_cell(ui, &value_title, t.col_tip_page) {
+                        col_clicked = Some(3);
                     }
                 });
-                if row_ui.response().clicked() {
-                    clicked_row = Some(i);
-                }
+            })
+            .body(|body| {
+                body.rows(text_height, total_rows, |mut row_ui| {
+                    let di = row_ui.index();
+                    let i = order[di];
+                    let row = &app.rows[i];
+                    let view = &app.views[i];
+                    let is_sel = selected == Some(i);
+                    row_ui.set_selected(is_sel);
+                    // 文字保持默认色：选中行底色已改浅色，无需反白
+                    row_ui.col(|ui| {
+                        let abs = match app.base_index {
+                            Some(b) => b + i + 1,
+                            None => i + 1,
+                        };
+                        let rt = egui::RichText::new(abs.to_string());
+                        // selectable(false)：避免单元格文本选区抢占 Ctrl+C，
+                        // 保证 Ctrl+C 始终复制选中行的 KV
+                        let resp = ui.add(
+                            egui::Label::new(rt)
+                                .selectable(false)
+                                .show_tooltip_when_elided(false)
+                                .sense(egui::Sense::click()),
+                        );
+                        elide_tooltip(ui, resp.clone(), &abs.to_string());
+                        if resp.clicked() {
+                            clicked_row = Some(i);
+                            app.row_copy_pending = true;
+                        }
+                    });
+                    row_ui.col(|ui| {
+                        let rt = egui::RichText::new(&view.key_text).monospace();
+                        let resp = ui.add(
+                            egui::Label::new(rt)
+                                .selectable(false)
+                                .show_tooltip_when_elided(false)
+                                .sense(egui::Sense::click()),
+                        );
+                        elide_tooltip(ui, resp.clone(), &view.key_text);
+                        if resp.clicked() {
+                            clicked_row = Some(i);
+                            app.row_copy_pending = true;
+                        }
+                    });
+                    row_ui.col(|ui| {
+                        let rt = egui::RichText::new(&view.type_label);
+                        let resp = ui.add(
+                            egui::Label::new(rt)
+                                .selectable(false)
+                                .show_tooltip_when_elided(false)
+                                .sense(egui::Sense::click()),
+                        );
+                        elide_tooltip(ui, resp.clone(), &view.type_label);
+                        if resp.clicked() {
+                            clicked_row = Some(i);
+                            app.row_copy_pending = true;
+                        }
+                    });
+                    row_ui.col(|ui| {
+                        // 多值表分组行：显示第一个值的预览 + 值总数（值列表在右侧翻看）
+                        let text = match row.dup_count {
+                            Some(n) => format!("{}{}", view.val_text, t.dup_n_values(n)),
+                            None => view.val_text.clone(),
+                        };
+                        let rt = egui::RichText::new(&text).monospace();
+                        let resp = ui.add(
+                            egui::Label::new(rt)
+                                .selectable(false)
+                                .show_tooltip_when_elided(false)
+                                .sense(egui::Sense::click()),
+                        );
+                        elide_tooltip(ui, resp.clone(), &text);
+                        if resp.clicked() {
+                            clicked_row = Some(i);
+                            app.row_copy_pending = true;
+                        }
+                    });
+                    if row_ui.response().clicked() {
+                        clicked_row = Some(i);
+                    }
+                });
             });
-        });
+    });
 
     // ── 列头排序点击处理 ─────────────────────────────────────────
     match col_clicked {
