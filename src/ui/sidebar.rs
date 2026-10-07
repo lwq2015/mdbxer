@@ -109,92 +109,151 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         .show_unindented(ui, |ui| {
                             // 收紧行内间距：★/➡/× 按钮与文字贴紧，左右都不留多余空隙
                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 1.0);
-                            if app.fav_tables.is_empty() && app.fav_keys.is_empty() {
-                                ui.weak(t.fav_empty);
-                            }
-                            // ── 收藏的表：★ 取消收藏，点表名直接跳转 ──
+                            // 收藏区高度 = 内容自然行数 × 行高，再封顶左栏可用高度 60%
+                            //（保证表列表始终有空间；内容少时紧凑显示，超出才内部滚动）
+                            let row_h = ui
+                                .spacing()
+                                .interact_size
+                                .y
+                                .max(ui.text_style_height(&egui::TextStyle::Body))
+                                + ui.spacing().item_spacing.y;
+                            let mut n_rows = if app.fav_tables.is_empty() { 1 } else { 0 };
                             for fname in &app.fav_tables {
-                                let display = dbh
-                                    .tables
-                                    .iter()
-                                    .find(|ti| &ti.name == fname)
-                                    .map(|ti| ti.display())
-                                    .unwrap_or_else(|| {
-                                        fname.clone().unwrap_or_else(|| t.main_table.to_string())
-                                    });
-                                let selected = app.cur_table().map(|ti| &ti.name) == Some(fname);
-                                ui.horizontal(|ui| {
-                                    if ui
-                                        .small_button("★")
-                                        .on_hover_text(t.fav_rm_t_tip)
-                                        .clicked()
-                                    {
-                                        fav_table_toggle = Some(fname.clone());
+                                n_rows += 1;
+                                let open = ui.ctx().memory(|m| {
+                                    m.data
+                                        .get_temp::<bool>(egui::Id::new(("fav_fold", fname.clone())))
+                                        .unwrap_or(true)
+                                });
+                                if open {
+                                    n_rows +=
+                                        app.fav_keys.iter().filter(|f| &f.table == fname).count();
+                                }
+                            }
+                            let content_h = n_rows as f32 * row_h;
+                            let max_h =
+                                content_h.min((ui.available_height() * 0.6).max(row_h * 3.0));
+                            // 宽度方向必须占满：否则内容水平不设限，行按钮 truncate 失效
+                            // 反而逐帧撑宽左栏（见 JSON 左栏变胖 bug）
+                            egui::ScrollArea::vertical()
+                                .max_height(max_h)
+                                .auto_shrink([false, true])
+                                .show(ui, |ui| {
+                                    if app.fav_tables.is_empty() {
+                                        ui.weak(t.fav_empty);
                                     }
-                                    if ui
-                                        .add(
-                                            egui::Button::selectable(
-                                                selected,
-                                                egui::RichText::new(display).monospace(),
+                                    // ── 收藏的表：折叠头（与详情区同款矢量三角），
+                                    //    头内 ★ 取消收藏（级联删其 Key 收藏）、点表名跳转；
+                                    //    body 缩进渲染该表的 Key 收藏子列表
+                                    for fname in &app.fav_tables {
+                                        let display = dbh
+                                            .tables
+                                            .iter()
+                                            .find(|ti| &ti.name == fname)
+                                            .map(|ti| ti.display())
+                                            .unwrap_or_else(|| {
+                                                fname
+                                                    .clone()
+                                                    .unwrap_or_else(|| t.main_table.to_string())
+                                            });
+                                        let selected =
+                                            app.cur_table().map(|ti| &ti.name) == Some(fname);
+                                        // 该表的 Key 收藏（保持全局下标供动作分发）
+                                        let key_idx: Vec<usize> = app
+                                            .fav_keys
+                                            .iter()
+                                            .enumerate()
+                                            .filter(|(_, f)| &f.table == fname)
+                                            .map(|(i, _)| i)
+                                            .collect();
+                                        egui::collapsing_header::CollapsingState
+                                            ::load_with_default_open(
+                                                ui.ctx(),
+                                                egui::Id::new(("fav_fold", fname.clone())),
+                                                true,
                                             )
-                                            .truncate(),
-                                        )
-                                        .clicked()
-                                    {
-                                        if let Some(pos) =
-                                            dbh.tables.iter().position(|ti| ti.name == *fname)
-                                        {
-                                            fav_table_pick = Some(pos);
-                                        }
+                                            .show_header(ui, |ui| {
+                                                if ui
+                                                    .small_button("★")
+                                                    .on_hover_text(t.fav_rm_t_tip)
+                                                    .clicked()
+                                                {
+                                                    fav_table_toggle = Some(fname.clone());
+                                                }
+                                                if ui
+                                                    .add(
+                                                        egui::Button::selectable(
+                                                            selected,
+                                                            egui::RichText::new(display)
+                                                                .monospace(),
+                                                        )
+                                                        .truncate(),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    if let Some(pos) = dbh
+                                                        .tables
+                                                        .iter()
+                                                        .position(|ti| ti.name == *fname)
+                                                    {
+                                                        fav_table_pick = Some(pos);
+                                                    }
+                                                }
+                                            })
+                                            .body(|ui| {
+                                                for i in key_idx {
+                                                    let fk = &app.fav_keys[i];
+                                                    ui.horizontal(|ui| {
+                                                        // 与表收藏统一：★ 取消收藏
+                                                        if ui
+                                                            .small_button("★")
+                                                            .on_hover_text(t.fav_rm_k_tip)
+                                                            .clicked()
+                                                        {
+                                                            fav_key_action = Some((i, false));
+                                                        }
+                                                        // 子列表在表名之下，不再重复表名前缀；
+                                                        // Key 显示解码后的可读文本，hex 全文放 hover
+                                                        let key_text =
+                                                            crate::ui::parse_hex(&fk.key_hex)
+                                                                .map(|b| {
+                                                                    crate::fmt::decode(
+                                                                        &b,
+                                                                        crate::fmt::DecodeMode::Auto,
+                                                                        app.endian,
+                                                                        24,
+                                                                    )
+                                                                })
+                                                                .unwrap_or_else(|_| {
+                                                                    fk.key_hex.chars().take(16).collect()
+                                                                });
+                                                        let label = if fk.note.is_empty() {
+                                                            key_text
+                                                        } else {
+                                                            format!("{} · {key_text}", fk.note)
+                                                        };
+                                                        if ui
+                                                            .add(
+                                                                egui::Button::selectable(
+                                                                    false,
+                                                                    egui::RichText::new(label)
+                                                                        .monospace(),
+                                                                )
+                                                                .truncate(),
+                                                            )
+                                                            .on_hover_text(format!(
+                                                                "{}\n{}",
+                                                                t.fav_jump_tip, fk.key_hex
+                                                            ))
+                                                            .clicked()
+                                                        {
+                                                            fav_key_action = Some((i, true));
+                                                        }
+                                                    });
+                                                }
+                                            });
                                     }
                                 });
-                            }
-                            // ── 收藏的 Key：★ 取消收藏，点标签直接跳转 ──
-                            for (i, fk) in app.fav_keys.iter().enumerate() {
-                                ui.horizontal(|ui| {
-                                    // 与表收藏统一：★ 取消收藏
-                                    if ui
-                                        .small_button("★")
-                                        .on_hover_text(t.fav_rm_k_tip)
-                                        .clicked()
-                                    {
-                                        fav_key_action = Some((i, false));
-                                    }
-                                    let table_name = fk.table.as_deref().unwrap_or(t.main_table);
-                                    // Key 显示解码后的可读文本（自动猜测），hex 全文放 hover
-                                    let key_text = crate::ui::parse_hex(&fk.key_hex)
-                                        .map(|b| {
-                                            crate::fmt::decode(
-                                                &b,
-                                                crate::fmt::DecodeMode::Auto,
-                                                app.endian,
-                                                24,
-                                            )
-                                        })
-                                        .unwrap_or_else(|_| fk.key_hex.chars().take(16).collect());
-                                    let label = if fk.note.is_empty() {
-                                        format!("{table_name} · {key_text}")
-                                    } else {
-                                        format!("{table_name} · {} · {key_text}", fk.note)
-                                    };
-                                    if ui
-                                        .add(
-                                            egui::Button::selectable(
-                                                false,
-                                                egui::RichText::new(label).monospace(),
-                                            )
-                                            .truncate(),
-                                        )
-                                        .on_hover_text(format!(
-                                            "{}\n{table_name} · {}",
-                                            t.fav_jump_tip, fk.key_hex
-                                        ))
-                                        .clicked()
-                                    {
-                                        fav_key_action = Some((i, true));
-                                    }
-                                });
-                            }
                         });
                 });
 

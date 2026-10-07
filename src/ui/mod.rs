@@ -665,6 +665,7 @@ impl MdbxerApp {
                 let rec = crate::config::load_per_db(&path);
                 self.fav_tables = rec.fav_tables.clone();
                 self.fav_keys = rec.fav_keys.clone();
+                self.normalize_favs();
                 self.selected_table = if n > 0 {
                     rec.last_table
                         .and_then(|name| {
@@ -1663,9 +1664,11 @@ impl MdbxerApp {
     }
 
     /// 切换某表的收藏状态（None = 主表）。
+    /// Key 收藏挂在表收藏的子列表下：取消表收藏时级联移除该表的 Key 收藏。
     pub fn toggle_fav_table(&mut self, name: Option<String>) {
         if let Some(pos) = self.fav_tables.iter().position(|n| *n == name) {
             self.fav_tables.remove(pos);
+            self.fav_keys.retain(|f| f.table != name);
         } else {
             self.fav_tables.push(name);
         }
@@ -1673,6 +1676,7 @@ impl MdbxerApp {
     }
 
     /// 切换当前表中某 Key 的收藏状态。
+    /// Key 收藏的宿主表若未收藏则自动补入表收藏（保证"表 → Key 子列表"结构）。
     pub fn toggle_fav_key(&mut self, key: &[u8]) {
         let Some(table) = self.cur_table() else {
             return;
@@ -1686,6 +1690,9 @@ impl MdbxerApp {
         {
             self.fav_keys.remove(pos);
         } else {
+            if !self.fav_tables.contains(&table_name) {
+                self.fav_tables.push(table_name.clone());
+            }
             self.fav_keys.push(crate::config::FavKey {
                 table: table_name,
                 key_hex,
@@ -1693,6 +1700,20 @@ impl MdbxerApp {
             });
         }
         self.save_per_db();
+    }
+
+    /// 载入每库收藏后归一化：Key 收藏的宿主表若未收藏则自动补入表收藏，
+    /// 兼容旧数据中"孤儿 Key 收藏"（表不在收藏区），保证子列表结构恒成立。
+    fn normalize_favs(&mut self) {
+        let missing: Vec<Option<String>> = self
+            .fav_keys
+            .iter()
+            .map(|f| f.table.clone())
+            .filter(|t| !self.fav_tables.contains(t))
+            .collect();
+        for name in missing {
+            self.fav_tables.push(name);
+        }
     }
 
     /// 当前表的该 Key 是否已收藏。
