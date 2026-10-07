@@ -150,7 +150,6 @@ pub struct I18n {
     pub col_tip_page: &'static str,
     /// 多值分组行后缀模板 {n}
     pub dup_n_values_t: &'static str,
-    pub dup_row_tip: &'static str,
 
     // ── 右侧详情 ──
     pub detail_select_hint: &'static str,
@@ -619,8 +618,7 @@ const ZH: I18n = I18n {
     col_type: "类型",
     col_tip_key: "按 Key 排序 = 全表遍历方向（B+ 树索引顺序）\n点击切换升序 / 降序，翻页保持",
     col_tip_page: "页内排序：仅对当前已加载的这一页生效\n点击循环：升序 → 降序 → 默认顺序",
-    dup_n_values_t: "  〔{n} 个值〕",
-    dup_row_tip: "多值表：每 Key 占一行；选中后可在右侧详情中翻看全部值",
+    dup_n_values_t: "〔{n} 个值〕",
 
     detail_select_hint: "在中间表格选择一行以查看详情",
     hex_view: "十六进制视图：",
@@ -844,8 +842,7 @@ const EN: I18n = I18n {
     col_type: "Type",
     col_tip_key: "Sort by Key = whole-table traversal order (B+tree index)\nClick to toggle ascending / descending; kept across pages",
     col_tip_page: "In-page sort: affects only the currently loaded page\nClick to cycle: ascending → descending → default order",
-    dup_n_values_t: "  [{n} values]",
-    dup_row_tip: "Duplicate-sort table: one row per Key; select it to browse all values in the detail panel",
+    dup_n_values_t: " ({n} values)",
 
     detail_select_hint: "Select a row in the table to view details",
     hex_view: "Hex view:",
@@ -1069,8 +1066,7 @@ const RU: I18n = I18n {
     col_type: "Тип",
     col_tip_key: "Сортировка по Key = порядок обхода всей таблицы (индекс B+дерева)\nЩелчок: по возрастанию / по убыванию, сохраняется при листании",
     col_tip_page: "Сортировка в пределах страницы: только текущая загруженная страница\nЩелчок: по возрастанию → по убыванию → исходный порядок",
-    dup_n_values_t: "  [{n} знач.]",
-    dup_row_tip: "Таблица с дублями: одна строка на Key; выберите её, чтобы просмотреть все значения на панели деталей",
+    dup_n_values_t: " ({n} знач.)",
 
     detail_select_hint: "Выберите строку в таблице для просмотра деталей",
     hex_view: "Hex-просмотр:",

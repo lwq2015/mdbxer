@@ -19,6 +19,28 @@ fn header_cell(ui: &mut egui::Ui, text: &str, tip: &str) -> bool {
     r1.clicked() || r2.clicked()
 }
 
+/// 单元格 hover 提示：仅当内容被截断时弹，强制默认颜色避免选中行白字白底。
+fn elide_tooltip(ui: &mut egui::Ui, resp: egui::Response, full: &str) {
+    let mono = egui::FontId::monospace(ui.style().text_styles[&egui::TextStyle::Body].size);
+    let width = ui.fonts_mut(|f| {
+        f.layout_no_wrap(full.to_string(), mono, egui::Color32::WHITE)
+            .size()
+            .x
+    });
+    if width > resp.rect.width() {
+        let text = if full.chars().count() > 512 {
+            full.chars().take(512).collect::<String>() + "…"
+        } else {
+            full.to_string()
+        };
+        resp.on_hover_text(
+            egui::RichText::new(text)
+                .monospace()
+                .color(ui.visuals().text_color()),
+        );
+    }
+}
+
 /// "数据"页签入口：工具条 + 行表格 + 列头排序处理。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let t = tr();
@@ -243,18 +265,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     }
                     // selectable(false)：避免单元格文本选区抢占 Ctrl+C，
                     // 保证 Ctrl+C 始终复制选中行的 KV
-                    // show_tooltip_when_elided(false)：clip 列截断时不弹自动全文
-                    // tooltip——大 binary 全文可达数万字（性能差），且选中行文字为
-                    // 白色、tooltip 底也是白色会"空白"；完整值请在右栏详情查看。
-                    if ui
-                        .add(
-                            egui::Label::new(rt)
-                                .selectable(false)
-                                .show_tooltip_when_elided(false)
-                                .sense(egui::Sense::click()),
-                        )
-                        .clicked()
-                    {
+                    let resp = ui.add(
+                        egui::Label::new(rt)
+                            .selectable(false)
+                            .sense(egui::Sense::click()),
+                    );
+                    elide_tooltip(ui, resp.clone(), &abs.to_string());
+                    if resp.clicked() {
                         clicked_row = Some(i);
                         app.row_copy_pending = true;
                     }
@@ -264,15 +281,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     if let Some(c) = sel_color {
                         rt = rt.color(c);
                     }
-                    if ui
-                        .add(
-                            egui::Label::new(rt)
-                                .selectable(false)
-                                .show_tooltip_when_elided(false)
-                                .sense(egui::Sense::click()),
-                        )
-                        .clicked()
-                    {
+                    let resp = ui.add(
+                        egui::Label::new(rt)
+                            .selectable(false)
+                            .sense(egui::Sense::click()),
+                    );
+                    elide_tooltip(ui, resp.clone(), &view.key_text);
+                    if resp.clicked() {
                         clicked_row = Some(i);
                         app.row_copy_pending = true;
                     }
@@ -282,15 +297,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     if let Some(c) = sel_color {
                         rt = rt.color(c);
                     }
-                    if ui
-                        .add(
-                            egui::Label::new(rt)
-                                .selectable(false)
-                                .show_tooltip_when_elided(false)
-                                .sense(egui::Sense::click()),
-                        )
-                        .clicked()
-                    {
+                    let resp = ui.add(
+                        egui::Label::new(rt)
+                            .selectable(false)
+                            .sense(egui::Sense::click()),
+                    );
+                    elide_tooltip(ui, resp.clone(), &view.type_label);
+                    if resp.clicked() {
                         clicked_row = Some(i);
                         app.row_copy_pending = true;
                     }
@@ -301,20 +314,17 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         Some(n) => format!("{}{}", view.val_text, t.dup_n_values(n)),
                         None => view.val_text.clone(),
                     };
-                    let mut rt = egui::RichText::new(text).monospace();
+                    let mut rt = egui::RichText::new(&text).monospace();
                     if let Some(c) = sel_color {
                         rt = rt.color(c);
                     }
-                    if ui
-                        .add(
-                            egui::Label::new(rt)
-                                .selectable(false)
-                                .show_tooltip_when_elided(false)
-                                .sense(egui::Sense::click()),
-                        )
-                        .on_hover_text(t.dup_row_tip)
-                        .clicked()
-                    {
+                    let resp = ui.add(
+                        egui::Label::new(rt)
+                            .selectable(false)
+                            .sense(egui::Sense::click()),
+                    );
+                    elide_tooltip(ui, resp.clone(), &text);
+                    if resp.clicked() {
                         clicked_row = Some(i);
                         app.row_copy_pending = true;
                     }
