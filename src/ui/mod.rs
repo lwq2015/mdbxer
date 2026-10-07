@@ -331,6 +331,9 @@ pub struct MdbxerApp {
     pub db: Option<DbHandle>,
     /// 当前打开的数据库路径（用于窗口标题）；None 表示未打开
     pub opened_path: Option<String>,
+    // ── 窗口 ──
+    /// 主窗口是否已完成首帧居中（启动时 winit 默认位置偏左上）
+    pub centered: bool,
     // ── 左栏 ──
     /// 表名过滤输入框
     pub table_filter: String,
@@ -506,6 +509,7 @@ impl MdbxerApp {
             history: History::load(),
             db: None,
             opened_path: None,
+            centered: false,
             table_filter: String::new(),
             table_sort,
             left_visible: prefs.left_visible.unwrap_or(true),
@@ -1980,6 +1984,14 @@ impl eframe::App for MdbxerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
+        // 主窗口首帧居中：winit 默认把窗口放在屏幕左上角附近。
+        // monitor_size 上报前一帧为 None，未成功前逐帧重试
+        if !self.centered {
+            if let Some(cmd) = egui::ViewportCommand::center_on_screen(ctx) {
+                ctx.send_viewport_cmd(cmd);
+                self.centered = true;
+            }
+        }
         // 拖拽文件/目录到窗口直接打开
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         if let Some(file) = dropped.into_iter().next() {
