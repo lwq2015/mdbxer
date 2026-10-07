@@ -128,9 +128,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                         fav_table_toggle = Some(fname.clone());
                                     }
                                     if ui
-                                        .selectable_label(
-                                            selected,
-                                            egui::RichText::new(display).monospace(),
+                                        .add(
+                                            egui::Button::selectable(
+                                                selected,
+                                                egui::RichText::new(display).monospace(),
+                                            )
+                                            .truncate(),
                                         )
                                         .clicked()
                                     {
@@ -167,9 +170,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                         format!("{table_name} · {} · {key_text}", fk.note)
                                     };
                                     if ui
-                                        .selectable_label(
-                                            false,
-                                            egui::RichText::new(label).monospace(),
+                                        .add(
+                                            egui::Button::selectable(
+                                                false,
+                                                egui::RichText::new(label).monospace(),
+                                            )
+                                            .truncate(),
                                         )
                                         .on_hover_text(format!(
                                             "{}\n{table_name} · {}",
@@ -223,7 +229,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         }
                         let text = t.table_entry(&tbl.display(), tbl.entries, &tbl.flags_desc());
                         if ui
-                            .selectable_label(selected, egui::RichText::new(text).monospace())
+                            .add(
+                                egui::Button::selectable(
+                                    selected,
+                                    egui::RichText::new(text).monospace(),
+                                )
+                                .truncate(),
+                            )
                             .clicked()
                         {
                             clicked = Some(i);
