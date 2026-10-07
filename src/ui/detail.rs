@@ -465,64 +465,99 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let dup_sort = app.cur_table().map(|tbl| tbl.dup_sort).unwrap_or(false);
             let (dup_index, dup_total) = (app.detail.dup_index, app.detail.dup_total);
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                // 单行紧凑：三个列开关 + 行宽下拉，文字说明全部走 hover 提示
-                ui.horizontal(|ui| {
-                    // HEX 与 ASCII 至少保留一项：只剩一项时该项变灰、不可取消；
-                    // 即只有另一项仍勾选时，才允许关掉这一项。
-                    hex_pref_changed = ui
-                        .checkbox(&mut app.detail.show_addr, t.addr)
-                        .on_hover_text(t.hex_addr_tip)
+            // 单行紧凑：三个列开关 + 行宽下拉，文字说明全部走 hover 提示
+            ui.horizontal(|ui| {
+                // HEX 与 ASCII 至少保留一项：只剩一项时该项变灰、不可取消；
+                // 即只有另一项仍勾选时，才允许关掉这一项。
+                hex_pref_changed = ui
+                    .checkbox(&mut app.detail.show_addr, t.addr)
+                    .on_hover_text(t.hex_addr_tip)
+                    .changed()
+                    | ui
+                        .add_enabled(
+                            app.detail.show_ascii,
+                            egui::Checkbox::new(&mut app.detail.show_hex, "HEX"),
+                        )
+                        .on_hover_text(t.hex_col_tip)
                         .changed()
-                        | ui
-                            .add_enabled(
-                                app.detail.show_ascii,
-                                egui::Checkbox::new(&mut app.detail.show_hex, "HEX"),
-                            )
-                            .on_hover_text(t.hex_col_tip)
-                            .changed()
-                        | ui
-                            .add_enabled(
-                                app.detail.show_hex,
-                                egui::Checkbox::new(&mut app.detail.show_ascii, "ASCII"),
-                            )
-                            .on_hover_text(t.hex_ascii_tip)
-                            .changed();
-                    ui.separator();
-                    let mut w = app.detail.hex_width;
-                    let ir = egui::ComboBox::from_id_salt("hex_width")
-                        .width(52.0)
-                        .selected_text(w.to_string())
-                        .show_ui(ui, |ui| {
-                            for v in fmt::HEX_WIDTHS {
-                                ui.selectable_value(&mut w, v, v.to_string());
-                            }
-                        });
-                    super::wheel_cycle(ui.ctx(), &ir.response, &fmt::HEX_WIDTHS, &mut w);
-                    ir.response.on_hover_text(t.hex_width_tip);
-                    if w != app.detail.hex_width {
-                        app.detail.hex_width = w;
-                        hex_pref_changed = true;
-                    }
-                    if hex_pref_changed {
-                        app.save_ui_prefs();
-                    }
-                });
+                    | ui
+                        .add_enabled(
+                            app.detail.show_hex,
+                            egui::Checkbox::new(&mut app.detail.show_ascii, "ASCII"),
+                        )
+                        .on_hover_text(t.hex_ascii_tip)
+                        .changed();
                 ui.separator();
+                let mut w = app.detail.hex_width;
+                let ir = egui::ComboBox::from_id_salt("hex_width")
+                    .width(52.0)
+                    .selected_text(w.to_string())
+                    .show_ui(ui, |ui| {
+                        for v in fmt::HEX_WIDTHS {
+                            ui.selectable_value(&mut w, v, v.to_string());
+                        }
+                    });
+                super::wheel_cycle(ui.ctx(), &ir.response, &fmt::HEX_WIDTHS, &mut w);
+                ir.response.on_hover_text(t.hex_width_tip);
+                if w != app.detail.hex_width {
+                    app.detail.hex_width = w;
+                    hex_pref_changed = true;
+                }
+                if hex_pref_changed {
+                    app.save_ui_prefs();
+                }
+            });
+            ui.separator();
 
+            // 预取两卡片的分段窗口与解码文本，用于估算自然高度
+            let (_, k_win) = card_window(app, &key, true);
+            let k_text = fmt::decode(
+                k_win,
+                app.detail.key_mode,
+                app.endian,
+                k_win.len() * 9 + 64,
+            );
+            let (_, v_win) = card_window(app, &value, false);
+            let v_text = fmt::decode(
+                v_win,
+                app.detail.val_mode,
+                app.endian,
+                v_win.len() * 9 + 64,
+            );
+
+            // 高度预算：两张卡片都装得下时各按自然高度；装不下时至少均分——
+            // 小卡片按自然高度渲染，省下的余量全部让给大卡片。
+            // 预算在进入外层滚动区之前量好（滚动区内 available_height 是"无限"）。
+            let avail = ui.available_height();
+            let nk = card_natural_height(ui, app, key.len(), k_win, &k_text, true, false);
+            let nv = card_natural_height(ui, app, value.len(), v_win, &v_text, false, dup_sort);
+            let gap = 8.0;
+            let half = (avail - gap) / 2.0;
+            let (kb, vb) = if nk + gap + nv <= avail {
+                (nk, nv)
+            } else if nk <= half {
+                (nk, avail - gap - nk)
+            } else if nv <= half {
+                (avail - gap - nv, nv)
+            } else {
+                (half, half)
+            };
+
+            // 外层滚动区仅作兜底：预算准确时不出现；估算偏差溢出时仍能滚到
+            egui::ScrollArea::vertical().show(ui, |ui| {
                 let key_title = match key_no {
                     Some(n) => format!("Key #{n}"),
                     None => "Key".to_string(),
                 };
-                kv_card(ui, app, &key_title, &key, true, &key);
-                ui.add_space(8.0);
+                kv_card(ui, app, &key_title, &key, true, &key, &k_text, kb);
+                ui.add_space(gap);
 
                 let val_title = if dup_sort {
                     t.val_title(dup_index + 1, dup_total)
                 } else {
                     "Value".to_string()
                 };
-                kv_card(ui, app, &val_title, &value, false, &key);
+                kv_card(ui, app, &val_title, &value, false, &key, &v_text, vb);
             });
         });
     app.detail_panel_w = resp.response.rect.width();
@@ -541,8 +576,123 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     }
 }
 
+/// 卡片当前段窗口（偏移自动夹到有效范围），供高度估算与渲染共用。
+fn card_window<'b>(app: &MdbxerApp, bytes: &'b [u8], is_key: bool) -> (usize, &'b [u8]) {
+    let total = bytes.len();
+    let off = app.detail.seg_off(is_key);
+    let off = if off >= total {
+        total.saturating_sub(fmt::PAGE_BYTES.min(total))
+    } else {
+        off
+    };
+    let end = (off + fmt::PAGE_BYTES).min(total);
+    (off, &bytes[off..end])
+}
+
+/// 卡片文本/hex 两区的折叠状态。估算与渲染必须使用同一组 Id，
+/// 这里用全局 `Id::new`（不用 `ui.make_persistent_id`，否则会带上
+/// ScrollArea/分组的路径前缀，show() 里预估算时对不上）。
+fn card_section_open(ctx: &egui::Context, is_key: bool, total: usize) -> (bool, bool) {
+    let text_default = total <= 512;
+    let text_open = egui::collapsing_header::CollapsingState::load_with_default_open(
+        ctx,
+        egui::Id::new(("detail_text", is_key, text_default)),
+        text_default,
+    )
+    .is_open();
+    let hex_open = egui::collapsing_header::CollapsingState::load_with_default_open(
+        ctx,
+        egui::Id::new(("detail_hex", is_key)),
+        true,
+    )
+    .is_open();
+    (text_open, hex_open)
+}
+
+/// 卡片自然高度估算：固定开销（标题/导航/搜索/两个折叠头/间距）
+/// + 文本区（≤16 行）+ hex 区（行数 × 行高）。折叠的区按 0 计，
+/// 高度让给其它区（折叠一方后可用高度理应更多）。
+fn card_natural_height(
+    ui: &egui::Ui,
+    app: &MdbxerApp,
+    total: usize,
+    window: &[u8],
+    text: &str,
+    is_key: bool,
+    dup_nav: bool,
+) -> f32 {
+    let line_h = ui
+        .fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())))
+        + ui.spacing().extra_text_line_spacing;
+    let fixed = card_fixed_overhead(total, is_key, dup_nav);
+    let (text_open, hex_open) = card_section_open(ui.ctx(), is_key, total);
+    let (text_h, hex_h) =
+        card_content_heights(ui, app, window, text, line_h, f32::INFINITY, text_open, hex_open);
+    fixed + text_h + hex_h
+}
+
+/// 卡片固定开销：标题行 + 两个折叠标题行 + 可选的分段/搜索/多值导航行 + 间距。
+fn card_fixed_overhead(total: usize, _is_key: bool, dup_nav: bool) -> f32 {
+    let mut h = 26.0 + 24.0 * 2.0 + 20.0; // 标题 + 文本头 + hex 头 + 间距
+    if total > fmt::PAGE_BYTES {
+        h += 28.0; // 分段导航行
+    }
+    if total > 512 {
+        h += 28.0; // 字段内搜索行
+    }
+    if dup_nav {
+        h += 56.0; // 多值导航两行
+    }
+    h
+}
+
+/// 文本/hex 内容区在内容预算 `content_budget` 下的实际高度分配：
+/// 都装得下按自然高度；装不下时至少各分一半，小的一方把余量让给大的一方；
+/// 折叠的区分 0、预算全部给展开的一方。
+fn card_content_heights(
+    ui: &egui::Ui,
+    app: &MdbxerApp,
+    window: &[u8],
+    text: &str,
+    line_h: f32,
+    content_budget: f32,
+    text_open: bool,
+    hex_open: bool,
+) -> (f32, f32) {
+    // 文本自然高度按真实折行计算（与 TextEdit 渲染一致，防止长逻辑行被估成 1 行），
+    // 上限 16 行；galley 由 egui 全局缓存，重复估算开销可忽略
+    let text_nat = if text_open {
+        let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+        let wrap_w = (ui.available_width() - 40.0).max(80.0); // 扣折叠缩进/滚动条/文本框内边距
+        let galley = ui
+            .fonts_mut(|f| f.layout(text.to_string(), font_id, egui::Color32::WHITE, wrap_w));
+        galley.size().y.max(line_h).min(16.0 * line_h) + 12.0
+    } else {
+        0.0
+    };
+    let hex_rows = window.len().div_ceil(app.detail.hex_width).max(1);
+    let hex_nat = if hex_open {
+        hex_rows as f32 * line_h + 12.0
+    } else {
+        0.0
+    };
+    if text_nat + hex_nat <= content_budget {
+        return (text_nat, hex_nat);
+    }
+    let half = content_budget / 2.0;
+    if text_nat <= half {
+        (text_nat, content_budget - text_nat)
+    } else if hex_nat <= half {
+        (content_budget - hex_nat, hex_nat)
+    } else {
+        (half, half)
+    }
+}
+
 /// 一个 Key 或 Value 卡片。`is_key` 决定使用 key_mode 还是 val_mode；
-/// `key` 为选中行的 Key 字节（多值导航操作要用）。
+/// `key` 为选中行的 Key 字节（多值导航操作要用）；
+/// `text` 为当前段窗口已解码的文本；`budget` 为本卡片可用高度上限
+/// （超过时文本/hex 两区均分余量、各自内部滚动）。
 fn kv_card(
     ui: &mut egui::Ui,
     app: &mut MdbxerApp,
@@ -550,6 +700,8 @@ fn kv_card(
     bytes: &[u8],
     is_key: bool,
     key: &[u8],
+    text: &str,
+    budget: f32,
 ) {
     let t = tr();
     let dup_sort = app.cur_table().map(|tbl| tbl.dup_sort).unwrap_or(false);
@@ -607,12 +759,7 @@ fn kv_card(
         // 大字段分段：固定放在标题行正下方，避免随字节数/多值导航行数上下位移。
         // 每段 fmt::PAGE_BYTES 字节，超出时显示导航条。
         let total = bytes.len();
-        let off = app.detail.seg_off(is_key);
-        let off = if off >= total {
-            total.saturating_sub(fmt::PAGE_BYTES.min(total))
-        } else {
-            off
-        };
+        let (off, window) = card_window(app, bytes, is_key);
         if total > fmt::PAGE_BYTES {
             ui.horizontal(|ui| {
                 // 按钮/输入框固定在最左：段号与偏移文本长度会变，放前面会挤动按钮
@@ -766,22 +913,26 @@ fn kv_card(
             }
         }
 
-        // 分段窗口（导航条固定在卡片标题行正下方）
-        let end = (off + fmt::PAGE_BYTES).min(total);
-        let window = &bytes[off..end];
-
         // 文本视图（可折叠；长文本默认折叠，方便直接看 hex）。
         // egui TextEdit 自身无内部滚动、高度随内容无限增长（desired_rows 只是下限），
-        // 故必须包一层 ScrollArea：内容 ≤16 行时 auto_shrink 收缩到内容高度（无滚动条），
-        // 超过 16 行才出现内部滚动条，卡片头/搜索行不随内容滚走。
-        let text = fmt::decode(
-            window,
-            app.detail.mode_of(is_key),
-            app.endian,
-            window.len() * 9 + 64,
-        );
-        let text_rows = text.lines().count().clamp(1, 16);
+        // 故必须包一层 ScrollArea。内容预算在文本/hex 两区均分卡片预算的余量，
+        // 装不下时各自内部滚动，卡片头/搜索行不随内容滚走。
+        let line_h = ui
+            .fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())))
+            + ui.spacing().extra_text_line_spacing;
+        let fixed = card_fixed_overhead(total, is_key, is_dup);
         let default_open = total <= 512;
+        let (text_open, hex_open) = card_section_open(ui.ctx(), is_key, total);
+        let (text_h, hex_h) = card_content_heights(
+            ui,
+            app,
+            window,
+            text,
+            line_h,
+            (budget - fixed).max(80.0),
+            text_open,
+            hex_open,
+        );
         // 猜测/字节数信息紧跟"文本"标题文字同一行右侧（自定义标题行），
         // 不再单列一行占据文本框与 hex 之间的位置
         let guess_text = if app.detail.mode_of(is_key) == DecodeMode::Auto {
@@ -791,7 +942,7 @@ fn kv_card(
         };
         egui::collapsing_header::CollapsingState::load_with_default_open(
             ui.ctx(),
-            ui.make_persistent_id(("detail_text", is_key, default_open)),
+            egui::Id::new(("detail_text", is_key, default_open)),
             default_open,
         )
         .show_header(ui, |ui| {
@@ -805,21 +956,18 @@ fn kv_card(
             ui.weak(guess_text);
         })
         .body(|ui| {
-            let mut text = text;
-            let line_h = ui
-                .fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())))
-                + ui.spacing().extra_text_line_spacing;
-            // + 12 ≈ TextEdit frame 上下内边距，保证 16 行整内容恰好不滚
+            let mut text_owned = text.to_string();
+            // + 12 ≈ TextEdit frame 上下内边距，保证整数行内容恰好不滚
             egui::ScrollArea::vertical()
                 .id_salt(("detail_text_scroll", is_key))
                 .auto_shrink([false, true])
-                .max_height(16.0 * line_h + 12.0)
+                .max_height(text_h)
                 .show(ui, |ui| {
                     ui.add(
-                        egui::TextEdit::multiline(&mut text)
+                        egui::TextEdit::multiline(&mut text_owned)
                             .font(egui::TextStyle::Monospace)
                             .desired_width(f32::INFINITY)
-                            .desired_rows(text_rows),
+                            .desired_rows(1),
                     );
                 });
         });
@@ -827,10 +975,22 @@ fn kv_card(
         // 十六进制视图：自绘交互组件（悬停整行/单字节联动、拖拽选区 HEX↔ASCII 同步）。
         // 独立滚动区：高度随内容自适应（auto_shrink 高度方向），只有超过上限才出滚动条；
         // 卡片头/搜索行固定在外面，滚动中也能继续搜索；命中后自动滚到可视区。
-        egui::CollapsingHeader::new(t.section_hex)
-            .id_salt(("detail_hex", is_key))
-            .default_open(true)
-            .show(ui, |ui| {
+        // 用 CollapsingState + 全局 Id（与 card_section_open 预算估算同一组），
+        // 折叠状态变化时高度分配下一帧即自适应。
+        egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            egui::Id::new(("detail_hex", is_key)),
+            true,
+        )
+        .show_header(ui, |ui| {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(t.section_hex).text_style(egui::TextStyle::Button),
+                )
+                .selectable(false),
+            );
+        })
+        .body(|ui| {
                 // 搜索命中先取（避免与下面 sel 的可变借用冲突）
                 let blob_hit = app.detail.blob_hit(is_key);
                 let scroll_to = app.detail.blob_scroll_take(is_key);
@@ -846,9 +1006,9 @@ fn kv_card(
                 }
                 egui::ScrollArea::vertical()
                     .id_salt(("detail_hex_scroll", is_key))
-                    // 宽度填满、高度随内容收缩；内容超过 max_height 才出现滚动条
+                    // 宽度填满、高度随内容收缩；超过卡片分到的预算才出现滚动条
                     .auto_shrink([false, true])
-                    .max_height(320.0)
+                    .max_height(hex_h)
                     .show(ui, |ui| {
                         super::hexview::hex_view(
                             ui,
