@@ -889,10 +889,15 @@ fn kv_card(
                         .hint_text(t.search_hint),
                 );
                 let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if ui.button("⬆").on_hover_text(t.search_prev_tip).clicked() {
+                let ctrl = ui.input(|i| i.modifiers.ctrl);
+                let prev =
+                    ui.button("⬆").on_hover_text(t.search_prev_tip).clicked() || (enter && ctrl);
+                let next =
+                    ui.button("⬇").on_hover_text(t.search_next_tip).clicked() || (enter && !ctrl);
+                if prev {
                     app.status = Status::leveled(app.detail.blob_search(is_key, bytes, false));
                 }
-                if ui.button("⬇").on_hover_text(t.search_next_tip).clicked() || enter {
+                if next {
                     app.status = Status::leveled(app.detail.blob_search(is_key, bytes, true));
                 }
                 // VSCode 风格命中计数：当前第 n 个 / 共 m 个
@@ -985,10 +990,15 @@ fn kv_card(
                             .hint_text(t.search_hint),
                     );
                     let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if ui.button("⬆").on_hover_text(t.search_prev_tip).clicked() {
+                    let ctrl = ui.input(|i| i.modifiers.ctrl);
+                    let prev =
+                        ui.button("⬆").on_hover_text(t.search_prev_tip).clicked() || (enter && ctrl);
+                    let next =
+                        ui.button("⬇").on_hover_text(t.search_next_tip).clicked() || (enter && !ctrl);
+                    if prev {
                         app.status = Status::leveled(app.detail.dup_search(&dctx, false));
                     }
-                    if ui.button("⬇").on_hover_text(t.search_next_tip).clicked() || enter {
+                    if next {
                         app.status = Status::leveled(app.detail.dup_search(&dctx, true));
                     }
                 });
@@ -1081,15 +1091,22 @@ fn kv_card(
                         .desired_rows(1);
                     // 命中区间琥珀色高亮（与 hex 视图同色半透明，深浅主题均可读）
                     // 闭包先绑定变量再取 &mut，否则临时量在 add(te) 前就被释放（E0716）
+                    // 必须与 egui 默认 multiline layouter 行为一致：wrap 宽度生效折行、
+                    // 逐段设行高、保留行尾空白——否则单行长内容不折行，文本区只剩一截
+                    // 横向被裁的"一行"，看起来就像详情内容消失
                     let mut hl_layouter =
-                        move |ui: &egui::Ui, s: &dyn egui::TextBuffer, _wrap: f32| {
+                        move |ui: &egui::Ui, s: &dyn egui::TextBuffer, wrap: f32| {
                             let s = s.as_str();
-                            let mut job = egui::text::LayoutJob::default();
+                            let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+                            let line_height = ui.fonts_mut(|f| f.row_height(&font_id))
+                                + ui.spacing().extra_text_line_spacing;
                             let base = egui::text::TextFormat {
-                                font_id: egui::TextStyle::Monospace.resolve(ui.style()),
+                                font_id,
                                 color: ui.visuals().text_color(),
+                                line_height: Some(line_height),
                                 ..Default::default()
                             };
+                            let mut job = egui::text::LayoutJob::default();
                             if let Some((hs, he)) = text_hit_range {
                                 job.append(&s[..hs], 0.0, base.clone());
                                 job.append(
@@ -1106,6 +1123,8 @@ fn kv_card(
                             } else {
                                 job.append(s, 0.0, base);
                             }
+                            job.wrap.max_width = wrap;
+                            job.keep_trailing_whitespace = true;
                             ui.fonts_mut(|f| f.layout_job(job))
                         };
                     if text_hit_range.is_some() {
