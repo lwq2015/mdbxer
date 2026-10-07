@@ -172,6 +172,11 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
         "超长的 Key（2000 字节，循环重复 long_key_）".as_bytes(),
         WriteFlags::default(),
     )?;
+    // Key 和 Value 都超长：Key 1500 字节 + Value 100000 字节可读英文，
+    // 测试 Key/Value 两张详情卡片同时挂大字段时的布局
+    // （各自独立滚动、分段导航、字段内搜索、另存导出）。
+    let long_both_key: Vec<u8> = b"keyval_long_".iter().copied().cycle().take(1500).collect();
+    txn.put(&t, &long_both_key, english_blob(100_000), WriteFlags::default())?;
 
     // 2) 多值表（DUPSORT）：一个 key 挂 300 个值，测试多值分页
     let t = txn.create_table(Some("dup_multi"), TableFlags::DUP_SORT)?;
