@@ -162,6 +162,16 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
     for (k, v) in entries {
         txn.put(&t, k, &v, WriteFlags::default())?;
     }
+    // 超长 Key：2000 字节，接近 MDBX 4KB 页的 Key 上限（约 2022）。
+    // 循环重复 "long_key_" 前缀，肉眼可辨位置；测试 Key 列截断、
+    // 详情卡片/hex、收藏跳转、导出对超长 Key 的表现。
+    let long_key: Vec<u8> = b"long_key_".iter().copied().cycle().take(2000).collect();
+    txn.put(
+        &t,
+        &long_key,
+        "超长的 Key（2000 字节，循环重复 long_key_）".as_bytes(),
+        WriteFlags::default(),
+    )?;
 
     // 2) 多值表（DUPSORT）：一个 key 挂 300 个值，测试多值分页
     let t = txn.create_table(Some("dup_multi"), TableFlags::DUP_SORT)?;
