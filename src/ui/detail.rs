@@ -55,6 +55,10 @@ pub struct DetailState {
     pub key_blob_hit: Option<(usize, usize)>,
     /// Value 卡片最近一次搜索命中区间
     pub val_blob_hit: Option<(usize, usize)>,
+    /// Key 卡片搜索命中序号与总数（1 起，VSCode 风格 n/m）
+    pub key_blob_matches: Option<(usize, usize)>,
+    /// Value 卡片搜索命中序号与总数
+    pub val_blob_matches: Option<(usize, usize)>,
     /// Key 卡片待滚动的命中字节位置（全局偏移，消费一次后清空）
     pub key_blob_scroll: Option<usize>,
     /// Value 卡片待滚动的命中字节位置
@@ -92,6 +96,8 @@ impl Default for DetailState {
             val_blob_input: String::new(),
             key_blob_hit: None,
             val_blob_hit: None,
+            key_blob_matches: None,
+            val_blob_matches: None,
             key_blob_scroll: None,
             val_blob_scroll: None,
             hex_key_fp: None,
@@ -133,6 +139,8 @@ impl DetailState {
         self.val_blob_input.clear();
         self.key_blob_hit = None;
         self.val_blob_hit = None;
+        self.key_blob_matches = None;
+        self.val_blob_matches = None;
         self.key_blob_scroll = None;
         self.val_blob_scroll = None;
     }
@@ -188,6 +196,7 @@ impl DetailState {
         self.val_seg_off = 0;
         self.val_seg_input.clear();
         self.val_blob_hit = None;
+        self.val_blob_matches = None;
         self.val_blob_scroll = None;
         Ok(())
     }
@@ -324,15 +333,28 @@ impl DetailState {
         }
     }
 
-    /// Key/Value 卡片大字段搜索状态（输入框 + 命中区间）的可变引用。
+    /// Key/Value 卡片大字段搜索状态（输入框 + 命中区间 + 序号/总数）的可变引用。
+    #[allow(clippy::type_complexity)]
     fn blob_state_mut(
         &mut self,
         is_key: bool,
-    ) -> (&mut String, &mut Option<(usize, usize)>) {
+    ) -> (
+        &mut String,
+        &mut Option<(usize, usize)>,
+        &mut Option<(usize, usize)>,
+    ) {
         if is_key {
-            (&mut self.key_blob_input, &mut self.key_blob_hit)
+            (
+                &mut self.key_blob_input,
+                &mut self.key_blob_hit,
+                &mut self.key_blob_matches,
+            )
         } else {
-            (&mut self.val_blob_input, &mut self.val_blob_hit)
+            (
+                &mut self.val_blob_input,
+                &mut self.val_blob_hit,
+                &mut self.val_blob_matches,
+            )
         }
     }
 
@@ -354,6 +376,24 @@ impl DetailState {
         }
     }
 
+    /// 只读待滚动的命中字节位置（不消费）：文本区先渲染、需要与 hex 区共享同一目标。
+    pub fn blob_scroll(&self, is_key: bool) -> Option<usize> {
+        if is_key {
+            self.key_blob_scroll
+        } else {
+            self.val_blob_scroll
+        }
+    }
+
+    /// Key/Value 卡片搜索命中序号与总数（只读，搜索行显示 n/m）。
+    pub fn blob_matches(&self, is_key: bool) -> Option<(usize, usize)> {
+        if is_key {
+            self.key_blob_matches
+        } else {
+            self.val_blob_matches
+        }
+    }
+
     /// 在卡片完整字节中做字节子串搜索：文本按 UTF-8，`hex(...)/0x...` 按字节。
     /// `forward=false` 向小偏移方向；以当前命中为起点跳过自身，主方向无命中回绕。
     /// 命中后对齐到所在段并记录高亮区间。返回状态栏消息。
@@ -361,6 +401,7 @@ impl DetailState {
         let t = tr();
         let s = self.blob_state_mut(is_key).0.trim().to_string();
         if s.is_empty() {
+            *self.blob_state_mut(is_key).2 = None;
             return t.blob_prompt.to_string();
         }
         let needle = match parse_bytes_input(&s) {
@@ -368,6 +409,7 @@ impl DetailState {
             Err(e) => return t.dup_bad_query(&e),
         };
         if needle.is_empty() || needle.len() > bytes.len() {
+            *self.blob_state_mut(is_key).2 = None;
             return t.blob_nomatch.to_string();
         }
         let cur = self.blob_hit(is_key);
@@ -387,10 +429,16 @@ impl DetailState {
                         .position(|w| w == needle)
                     {
                         Some(p) => (p, true),
-                        None => return t.blob_nomatch.to_string(),
+                        None => {
+                            *self.blob_state_mut(is_key).2 = None;
+                            return t.blob_nomatch.to_string();
+                        }
                     }
                 }
-                None => return t.blob_nomatch.to_string(),
+                None => {
+                    *self.blob_state_mut(is_key).2 = None;
+                    return t.blob_nomatch.to_string();
+                }
             }
         } else {
             // 从当前命中起点之前找；无命中则从末尾搜
@@ -407,15 +455,39 @@ impl DetailState {
                         .map(|i| start + i)
                     {
                         Some(p) => (p, true),
-                        None => return t.blob_nomatch.to_string(),
+                        None => {
+                            *self.blob_state_mut(is_key).2 = None;
+                            return t.blob_nomatch.to_string();
+                        }
                     }
                 }
-                None => return t.blob_nomatch.to_string(),
+                None => {
+                    *self.blob_state_mut(is_key).2 = None;
+                    return t.blob_nomatch.to_string();
+                }
             }
         };
+        // 统计全部命中（不重叠）与当前命中序号，供搜索行显示 VSCode 风格 n/m
+        let mut total = 0usize;
+        let mut cur_no = 0usize;
+        let mut scan = 0usize;
+        while scan + needle.len() <= bytes.len() {
+            match bytes[scan..].windows(needle.len()).position(|w| w == needle) {
+                Some(rel) => {
+                    let p = scan + rel;
+                    total += 1;
+                    if p == pos {
+                        cur_no = total;
+                    }
+                    scan = p + needle.len();
+                }
+                None => break,
+            }
+        }
         // 记录命中并跳到所在段；置滚动目标，内容区滚动组件本帧消费后把命中行滚到可见
-        let (_, hit) = self.blob_state_mut(is_key);
+        let (_, hit, matches) = self.blob_state_mut(is_key);
         *hit = Some((pos, needle.len()));
+        *matches = Some((cur_no.max(1), total));
         let off = self.seg_state_mut(is_key).0;
         *off = (pos / fmt::PAGE_BYTES) * fmt::PAGE_BYTES;
         if is_key {
@@ -823,6 +895,10 @@ fn kv_card(
                 if ui.button("⬇").on_hover_text(t.search_next_tip).clicked() || enter {
                     app.status = Status::Msg(app.detail.blob_search(is_key, bytes, true));
                 }
+                // VSCode 风格命中计数：当前第 n 个 / 共 m 个
+                if let Some((n, m)) = app.detail.blob_matches(is_key) {
+                    ui.weak(format!("{n}/{m}"));
+                }
             });
         }
 
@@ -948,6 +1024,13 @@ fn kv_card(
         } else {
             t.bytes(bytes.len())
         };
+        // 搜索命中联动：文本区也滚到命中附近。hex 展开时只看不取（留给 hex 区消费），
+        // hex 折叠时由文本区消费，避免滚动目标滞留导致每帧抢滚动
+        let text_scroll_to = if hex_open {
+            app.detail.blob_scroll(is_key)
+        } else {
+            app.detail.blob_scroll_take(is_key)
+        };
         egui::collapsing_header::CollapsingState::load_with_default_open(
             ui.ctx(),
             egui::Id::new(("detail_text", is_key, default_open)),
@@ -971,12 +1054,54 @@ fn kv_card(
                 .auto_shrink([false, true])
                 .max_height(text_h)
                 .show(ui, |ui| {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut text_owned)
-                            .font(egui::TextStyle::Monospace)
-                            .desired_width(f32::INFINITY)
-                            .desired_rows(1),
-                    );
+                    let content_top = ui.cursor().min.y;
+                    let te_rect = ui
+                        .add(
+                            egui::TextEdit::multiline(&mut text_owned)
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(1),
+                        )
+                        .rect;
+                    // 搜索命中：滚到命中所在行（UTF-8 窗口字节偏移直接可用，
+                    // 其它编码按字节比例估算后居中，误差不可见）
+                    if let Some(hit_abs) = text_scroll_to {
+                        if hit_abs >= off && hit_abs < off + window.len() {
+                            let hit_rel = hit_abs - off;
+                            let mut bp = (if std::str::from_utf8(window).is_ok() {
+                                hit_rel
+                            } else {
+                                text.len() * hit_rel / window.len().max(1)
+                            })
+                            .min(text.len());
+                            while bp > 0 && !text.is_char_boundary(bp) {
+                                bp -= 1;
+                            }
+                            let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+                            let wrap_w = (te_rect.width() - 16.0).max(40.0);
+                            let galley = ui.fonts_mut(|f| {
+                                f.layout(text.to_string(), font_id, egui::Color32::WHITE, wrap_w)
+                            });
+                            let pc = text[..bp].chars().count();
+                            // 按行累计字形数定位命中行（每字形 ≈ 一字符；
+                            // 居中滚动容忍近似，egui 0.36 无 from_ccursor）
+                            let mut acc = 0usize;
+                            let mut row_y =
+                                galley.rows.last().map(|r| r.rect().top()).unwrap_or(0.0);
+                            for row in &galley.rows {
+                                if acc + row.glyphs.len() > pc {
+                                    row_y = row.rect().top();
+                                    break;
+                                }
+                                acc += row.glyphs.len();
+                            }
+                            let rect = egui::Rect::from_min_size(
+                                egui::pos2(te_rect.left(), content_top + 8.0 + row_y),
+                                egui::vec2(4.0, line_h),
+                            );
+                            ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                        }
+                    }
                 });
         });
 
@@ -1119,6 +1244,35 @@ mod tests {
         let msg = st.blob_search(false, data, true);
         assert_eq!(st.blob_hit(false), Some((2, 3)));
         assert!(msg.contains("0x2"));
+    }
+
+    #[test]
+    fn blob_search_reports_match_count() {
+        // VSCode 风格 n/m：命中后记录（当前序号, 总数）；未命中/空输入时清除
+        let mut st = DetailState::default();
+        let data = b"ab--ab--ab";
+        st.val_blob_input = "ab".into();
+        st.blob_search(false, data, true);
+        assert_eq!(st.blob_matches(false), Some((1, 3)));
+        st.blob_search(false, data, true);
+        assert_eq!(st.blob_matches(false), Some((2, 3)));
+        st.blob_search(false, data, true);
+        st.blob_search(false, data, true); // 回绕到第 1 个
+        assert_eq!(st.blob_matches(false), Some((1, 3)));
+        st.blob_search(false, data, false); // 向前回绕到最后一个
+        assert_eq!(st.blob_matches(false), Some((3, 3)));
+        // 不重叠计数：aaaa 中搜 aa 应为 2 个
+        st.val_blob_input = "aa".into();
+        st.blob_search(false, b"aaaa", true);
+        assert_eq!(st.blob_matches(false), Some((1, 2)));
+        // 未命中清除计数
+        st.val_blob_input = "zz".into();
+        st.blob_search(false, data, true);
+        assert_eq!(st.blob_matches(false), None);
+        // 空输入清除计数
+        st.val_blob_input = String::new();
+        st.blob_search(false, data, true);
+        assert_eq!(st.blob_matches(false), None);
     }
 
     #[test]
