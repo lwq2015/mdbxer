@@ -100,6 +100,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         .id_salt("fav_keys")
                         .default_open(true)
                         .show(ui, |ui| {
+                            // 收紧行内间距：★/➡/× 按钮与文字贴紧，左右都不留多余空隙
+                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 1.0);
                             if app.fav_tables.is_empty() && app.fav_keys.is_empty() {
                                 ui.weak(t.fav_empty);
                             }
