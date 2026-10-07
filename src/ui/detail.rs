@@ -308,6 +308,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         0.0
     };
     let max_w = detail_max_width(ui, &app.detail, left_w);
+    // 行宽/列开关变化后按新配置内容宽度自动收放右栏（面板本体只会被超宽内容
+    // 撑到上限，内容变窄时不会自动缩回，需在 show 结束后改写 PanelState）
+    let mut hex_pref_changed = false;
     let resp = egui::Panel::right("detail_panel")
         .default_size(360.0)
         .size_range(240.0..=max_w)
@@ -335,7 +338,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     ui.label(t.hex_view);
                     // HEX 与 ASCII 至少保留一项：只剩一项时该项变灰、不可取消；
                     // 即只有另一项仍勾选时，才允许关掉这一项。
-                    let mut hex_pref_changed =
+                    hex_pref_changed =
                         ui.checkbox(&mut app.detail.show_addr, t.addr).changed()
                             | ui.add_enabled(
                                 app.detail.show_ascii,
@@ -384,6 +387,19 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             });
         });
     app.detail_panel_w = resp.response.rect.width();
+    if hex_pref_changed {
+        let limit = (ui.ctx().viewport_rect().width() - left_w - super::MIDDLE_MIN_WIDTH)
+            .max(240.0);
+        let target = detail_needed_width(ui, &app.detail).clamp(240.0, limit);
+        let rect =
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(target, 0.0));
+        ui.ctx().data_mut(|d| {
+            d.insert_persisted(
+                egui::Id::new("detail_panel"),
+                egui::PanelState { outer_rect: rect },
+            )
+        });
+    }
 }
 
 /// 一个 Key 或 Value 卡片。`is_key` 决定使用 key_mode 还是 val_mode；
@@ -656,11 +672,20 @@ fn text_of(bytes: &[u8], mode: DecodeMode, endian: fmt::Endian) -> String {
     fmt::decode(bytes, mode, endian, usize::MAX)
 }
 
-/// 右栏宽度上限：保证当前 hex 配置下最长一行（32 字节时最宽）
+/// 右栏宽度上限：保证当前 hex 配置下最长一行（16 字节时最宽）
 /// 在面板内不折行。按等宽字体实测字宽计算，再扣除各级边距；
 /// 同时不超过窗口宽度减去左栏与中央表格最小保留宽度，
 /// 窄窗口时下限放宽到右栏最小宽度 240，优先保证中央表格。
 fn detail_max_width(ui: &egui::Ui, d: &DetailState, left_w: f32) -> f32 {
+    let needed = detail_needed_width(ui, d);
+    let screen = ui.ctx().viewport_rect().width();
+    needed
+        .max(720.0)
+        .min((screen - left_w - super::MIDDLE_MIN_WIDTH).max(240.0))
+}
+
+/// 当前 hex 配置（行宽 + 地址/HEX/ASCII 开关）下内容实际所需宽度。
+fn detail_needed_width(ui: &egui::Ui, d: &DetailState) -> f32 {
     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
     let char_w = ui.fonts_mut(|f| f.glyph_width(&font_id, '0'));
 
@@ -679,10 +704,5 @@ fn detail_max_width(ui: &egui::Ui, d: &DetailState, left_w: f32) -> f32 {
     }
     // 面板边框/分组 frame/折叠缩进/文本框内边距与滚动条余量
     const CHROME: f32 = 100.0;
-    let needed = line_chars * char_w + CHROME;
-
-    let screen = ui.ctx().viewport_rect().width();
-    needed
-        .max(720.0)
-        .min((screen - left_w - super::MIDDLE_MIN_WIDTH).max(240.0))
+    line_chars * char_w + CHROME
 }

@@ -8,7 +8,7 @@
 pub const PAGE_BYTES: usize = 64 * 1024;
 
 /// 可选行宽（每行字节数）。
-pub const HEX_WIDTHS: [usize; 4] = [4, 8, 16, 32];
+pub const HEX_WIDTHS: [usize; 3] = [4, 8, 16 /*, 32*/];
 pub const DEFAULT_HEX_WIDTH: usize = 8;
 
 /// 地址列宽度（字符）：8 位十六进制 + 2 空格。
