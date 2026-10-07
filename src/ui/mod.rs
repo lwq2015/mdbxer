@@ -1540,18 +1540,16 @@ pub fn apply_theme(ctx: &egui::Context, dark: bool) {
         egui::Theme::Light
     };
     ctx.set_theme(theme);
-    // 全局滚动条：手柄用前景高亮色（深主题下白色/浅主题下黑色），
-    // 始终可见，不活动时淡显细条，拖拽时最亮——避免深主题默认纯黑手柄
-    // 在深色背景上几乎不可见、只有拖动时才突兀出现。
+    // 全局滚动条外观（行为保持原生浮动式：闲置淡出隐藏，滚动/悬停/拖拽时才出现）。
+    // 只改外观：手柄用前景高亮色（深主题白/浅主题黑），不再用深主题默认的
+    // 近黑 widgets.inactive.bg_fill——那种手柄在深色背景上拖动时是突兀的粗黑块。
     ctx.all_styles_mut(|style| {
         let scroll = &mut style.spacing.scroll;
         scroll.foreground_color = true;
-        scroll.bar_width = 7.0;
-        scroll.floating_allocated_width = 3.0;
-        scroll.dormant_handle_opacity = 0.25;
-        scroll.active_handle_opacity = 0.7;
-        scroll.interact_handle_opacity = 1.0;
-        scroll.dormant_background_opacity = 0.0;
+        scroll.bar_width = 7.0; // 悬停/拖拽时的宽度（默认 10，太粗）
+        scroll.floating_width = 4.0; // 滚动时细条宽度（默认 3）
+        scroll.active_handle_opacity = 0.75; // 滚动中淡显（默认 0.6 偏淡）
+        scroll.interact_handle_opacity = 0.95; // 悬停/拖拽接近实色
     });
     // 同步原生窗口标题栏（Windows 标题栏默认跟随系统，不设的话内容深、标题栏浅）
     ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(if dark {

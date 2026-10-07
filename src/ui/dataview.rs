@@ -223,8 +223,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             .sense(egui::Sense::click())
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(Column::exact(56.0))
-            .column(Column::initial(240.0).at_least(80.0).clip(true))
-            .column(Column::exact(80.0))
+            .column(Column::initial(160.0).at_least(80.0).clip(true))
+            .column(Column::exact(78.0))
             .column(Column::remainder().clip(true))
             .min_scrolled_height(0.0)
             .header(text_height, |mut header| {
