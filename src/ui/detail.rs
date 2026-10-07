@@ -4,7 +4,7 @@
 //! 右侧详情：Key / Value 卡片（格式下拉、复制、文本、hex dump、多值翻页），
 //! 以及右栏全部状态（[`DetailState`]）。
 
-use super::{MdbxerApp, Status, parse_bytes_input};
+use super::{MdbxerApp, MsgLevel, Status, parse_bytes_input};
 use crate::db;
 use crate::fmt::{self, DecodeMode};
 use crate::i18n::tr;
@@ -220,31 +220,31 @@ impl DetailState {
         }
     }
 
-    /// 序号跳转：输入为 1 起的十进制序号。返回状态栏消息。
-    pub fn dup_jump(&mut self, ctx: &DupCtx) -> String {
+    /// 序号跳转：输入为 1 起的十进制序号。返回（级别, 状态栏消息）。
+    pub fn dup_jump(&mut self, ctx: &DupCtx) -> (MsgLevel, String) {
         let t = tr();
         let s = self.dup_jump_input.trim();
         match s.parse::<usize>() {
             Ok(n) if n >= 1 && n <= self.dup_total => match self.dup_goto(ctx, n - 1) {
-                Ok(()) => t.dup_located(n, self.dup_total),
-                Err(e) => e,
+                Ok(()) => (MsgLevel::Info, t.dup_located(n, self.dup_total)),
+                Err(e) => (MsgLevel::Error, e),
             },
-            Ok(n) => t.dup_range(n, self.dup_total),
-            Err(_) => t.dup_bad_num.to_string(),
+            Ok(n) => (MsgLevel::Warn, t.dup_range(n, self.dup_total)),
+            Err(_) => (MsgLevel::Warn, t.dup_bad_num.to_string()),
         }
     }
 
     /// 在当前 Key 的值中按内容搜索：文本按 UTF-8，hex(...)/0x... 按字节；字节子串匹配。
-    /// `forward=false` 向小序号方向查找；主方向无命中时回绕。返回状态栏消息。
-    pub fn dup_search(&mut self, ctx: &DupCtx, forward: bool) -> String {
+    /// `forward=false` 向小序号方向查找；主方向无命中时回绕。返回（级别, 状态栏消息）。
+    pub fn dup_search(&mut self, ctx: &DupCtx, forward: bool) -> (MsgLevel, String) {
         let t = tr();
         let s = self.dup_search_input.trim();
         if s.is_empty() {
-            return t.dup_prompt.to_string();
+            return (MsgLevel::Warn, t.dup_prompt.to_string());
         }
         let needle = match parse_bytes_input(s) {
             Ok(b) => b,
-            Err(e) => return t.dup_bad_query(&e),
+            Err(e) => return (MsgLevel::Error, t.dup_bad_query(&e)),
         };
         // 向后从下一个值开始；向前从当前值之前开始
         let from = if forward {
@@ -258,16 +258,16 @@ impl DetailState {
                 match self.dup_goto(ctx, i) {
                     Ok(()) => {
                         if wrapped {
-                            t.dup_wrap(i + 1, self.dup_total)
+                            (MsgLevel::Info, t.dup_wrap(i + 1, self.dup_total))
                         } else {
-                            t.dup_located(i + 1, self.dup_total)
+                            (MsgLevel::Info, t.dup_located(i + 1, self.dup_total))
                         }
                     }
-                    Err(e) => e,
+                    Err(e) => (MsgLevel::Error, e),
                 }
             }
-            Ok(None) => t.dup_nomatch.to_string(),
-            Err(e) => t.dup_search_fail(&e),
+            Ok(None) => (MsgLevel::Warn, t.dup_nomatch.to_string()),
+            Err(e) => (MsgLevel::Error, t.dup_search_fail(&e)),
         }
     }
 
@@ -313,8 +313,8 @@ impl DetailState {
     }
 
     /// 跳至指定偏移：十进制或 0x 十六进制；向下对齐到段边界并夹到末尾段。
-    /// 返回状态栏消息。
-    pub fn seg_jump(&mut self, is_key: bool, total: usize) -> String {
+    /// 返回（级别, 状态栏消息）。
+    pub fn seg_jump(&mut self, is_key: bool, total: usize) -> (MsgLevel, String) {
         let t = tr();
         let (off, input) = self.seg_state_mut(is_key);
         let s = input.trim();
@@ -326,10 +326,10 @@ impl DetailState {
         match parsed {
             Ok(v) if v < total => {
                 *off = (v / fmt::PAGE_BYTES) * fmt::PAGE_BYTES;
-                t.seg_ok(*off)
+                (MsgLevel::Info, t.seg_ok(*off))
             }
-            Ok(v) => t.seg_range_msg(v, total),
-            Err(_) => t.seg_bad.to_string(),
+            Ok(v) => (MsgLevel::Warn, t.seg_range_msg(v, total)),
+            Err(_) => (MsgLevel::Warn, t.seg_bad.to_string()),
         }
     }
 
@@ -396,21 +396,21 @@ impl DetailState {
 
     /// 在卡片完整字节中做字节子串搜索：文本按 UTF-8，`hex(...)/0x...` 按字节。
     /// `forward=false` 向小偏移方向；以当前命中为起点跳过自身，主方向无命中回绕。
-    /// 命中后对齐到所在段并记录高亮区间。返回状态栏消息。
-    pub fn blob_search(&mut self, is_key: bool, bytes: &[u8], forward: bool) -> String {
+    /// 命中后对齐到所在段并记录高亮区间。返回（级别, 状态栏消息）。
+    pub fn blob_search(&mut self, is_key: bool, bytes: &[u8], forward: bool) -> (MsgLevel, String) {
         let t = tr();
         let s = self.blob_state_mut(is_key).0.trim().to_string();
         if s.is_empty() {
             *self.blob_state_mut(is_key).2 = None;
-            return t.blob_prompt.to_string();
+            return (MsgLevel::Warn, t.blob_prompt.to_string());
         }
         let needle = match parse_bytes_input(&s) {
             Ok(b) => b,
-            Err(e) => return t.dup_bad_query(&e),
+            Err(e) => return (MsgLevel::Error, t.dup_bad_query(&e)),
         };
         if needle.is_empty() || needle.len() > bytes.len() {
             *self.blob_state_mut(is_key).2 = None;
-            return t.blob_nomatch.to_string();
+            return (MsgLevel::Warn, t.blob_nomatch.to_string());
         }
         let cur = self.blob_hit(is_key);
         let (pos, wrapped) = if forward {
@@ -431,13 +431,13 @@ impl DetailState {
                         Some(p) => (p, true),
                         None => {
                             *self.blob_state_mut(is_key).2 = None;
-                            return t.blob_nomatch.to_string();
+                            return (MsgLevel::Warn, t.blob_nomatch.to_string());
                         }
                     }
                 }
                 None => {
                     *self.blob_state_mut(is_key).2 = None;
-                    return t.blob_nomatch.to_string();
+                    return (MsgLevel::Warn, t.blob_nomatch.to_string());
                 }
             }
         } else {
@@ -457,13 +457,13 @@ impl DetailState {
                         Some(p) => (p, true),
                         None => {
                             *self.blob_state_mut(is_key).2 = None;
-                            return t.blob_nomatch.to_string();
+                            return (MsgLevel::Warn, t.blob_nomatch.to_string());
                         }
                     }
                 }
                 None => {
                     *self.blob_state_mut(is_key).2 = None;
-                    return t.blob_nomatch.to_string();
+                    return (MsgLevel::Warn, t.blob_nomatch.to_string());
                 }
             }
         };
@@ -496,9 +496,9 @@ impl DetailState {
             self.val_blob_scroll = Some(pos);
         }
         if wrapped {
-            t.blob_wrap(pos)
+            (MsgLevel::Info, t.blob_wrap(pos))
         } else {
-            t.blob_located(pos)
+            (MsgLevel::Info, t.blob_located(pos))
         }
     }
 }
@@ -867,7 +867,7 @@ fn kv_card(
                         .hint_text(t.seg_input_hint),
                 );
                 if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    app.status = Status::Msg(app.detail.seg_jump(is_key, total));
+                    app.status = Status::leveled(app.detail.seg_jump(is_key, total));
                 }
                 let seg_no = off / fmt::PAGE_BYTES + 1;
                 let seg_cnt = (total + fmt::PAGE_BYTES - 1) / fmt::PAGE_BYTES;
@@ -890,10 +890,10 @@ fn kv_card(
                 );
                 let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if ui.button("⬆").on_hover_text(t.search_prev_tip).clicked() {
-                    app.status = Status::Msg(app.detail.blob_search(is_key, bytes, false));
+                    app.status = Status::leveled(app.detail.blob_search(is_key, bytes, false));
                 }
                 if ui.button("⬇").on_hover_text(t.search_next_tip).clicked() || enter {
-                    app.status = Status::Msg(app.detail.blob_search(is_key, bytes, true));
+                    app.status = Status::leveled(app.detail.blob_search(is_key, bytes, true));
                 }
                 // VSCode 风格命中计数：当前第 n 个 / 共 m 个
                 if let Some((n, m)) = app.detail.blob_matches(is_key) {
@@ -920,7 +920,7 @@ fn kv_card(
                         .clicked()
                     {
                         if let Err(e) = app.detail.dup_goto(&dctx, 0) {
-                            app.status = Status::Msg(e);
+                            app.status = Status::error(e);
                         }
                     }
                     if ui
@@ -929,7 +929,7 @@ fn kv_card(
                         .clicked()
                     {
                         if let Err(e) = app.detail.dup_page_step(&dctx, -1) {
-                            app.status = Status::Msg(e);
+                            app.status = Status::error(e);
                         }
                     }
                     if ui
@@ -938,7 +938,7 @@ fn kv_card(
                         .clicked()
                     {
                         if let Err(e) = app.detail.dup_step(&dctx, -1) {
-                            app.status = Status::Msg(e);
+                            app.status = Status::error(e);
                         }
                     }
                     if ui
@@ -947,7 +947,7 @@ fn kv_card(
                         .clicked()
                     {
                         if let Err(e) = app.detail.dup_step(&dctx, 1) {
-                            app.status = Status::Msg(e);
+                            app.status = Status::error(e);
                         }
                     }
                     if ui
@@ -956,7 +956,7 @@ fn kv_card(
                         .clicked()
                     {
                         if let Err(e) = app.detail.dup_page_step(&dctx, 1) {
-                            app.status = Status::Msg(e);
+                            app.status = Status::error(e);
                         }
                     }
                     if ui
@@ -965,7 +965,7 @@ fn kv_card(
                         .clicked()
                     {
                         if let Err(e) = app.detail.dup_goto(&dctx, total.saturating_sub(1)) {
-                            app.status = Status::Msg(e);
+                            app.status = Status::error(e);
                         }
                     }
                     ui.label(t.goto);
@@ -975,7 +975,7 @@ fn kv_card(
                             .hint_text("#"),
                     );
                     if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        app.status = Status::Msg(app.detail.dup_jump(&dctx));
+                        app.status = Status::leveled(app.detail.dup_jump(&dctx));
                     }
                 });
                 ui.horizontal(|ui| {
@@ -986,10 +986,10 @@ fn kv_card(
                     );
                     let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if ui.button("⬆").on_hover_text(t.search_prev_tip).clicked() {
-                        app.status = Status::Msg(app.detail.dup_search(&dctx, false));
+                        app.status = Status::leveled(app.detail.dup_search(&dctx, false));
                     }
                     if ui.button("⬇").on_hover_text(t.search_next_tip).clicked() || enter {
-                        app.status = Status::Msg(app.detail.dup_search(&dctx, true));
+                        app.status = Status::leveled(app.detail.dup_search(&dctx, true));
                     }
                 });
                 ui.add_space(2.0);
@@ -1290,7 +1290,7 @@ mod tests {
         let _ = st.blob_search(false, data, true);
         assert_eq!(st.blob_hit(false), Some((7, 3)));
         // 第三次：回绕到 2
-        let msg = st.blob_search(false, data, true);
+        let (_, msg) = st.blob_search(false, data, true);
         assert_eq!(st.blob_hit(false), Some((2, 3)));
         assert!(msg.contains("0x2"));
     }
@@ -1368,7 +1368,7 @@ mod tests {
     #[test]
     fn blob_search_empty_prompt() {
         let mut st = DetailState::default();
-        let msg = st.blob_search(false, b"abc", true);
+        let (_, msg) = st.blob_search(false, b"abc", true);
         assert!(!msg.is_empty());
         assert_eq!(st.blob_hit(false), None);
     }

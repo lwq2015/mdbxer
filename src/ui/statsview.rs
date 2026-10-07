@@ -20,7 +20,7 @@ pub fn show_table_stat(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         let flags_desc = tbl.flags_desc();
         match db::table_stat_view(&dbh.db, tbl.name.as_deref(), &flags_desc) {
             Ok(rows) => app.stat_cache = Some((index, rows)),
-            Err(e) => app.status = Status::Msg(t.stat_fail(&e)),
+            Err(e) => app.status = Status::error(t.stat_fail(&e)),
         }
     }
     let Some((_, rows)) = &app.stat_cache else {
@@ -55,7 +55,7 @@ pub fn show_env_info(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         let Some(dbh) = &app.db else { return };
         match db::env_info_view(&dbh.db) {
             Ok(rows) => app.env_cache = Some(rows),
-            Err(e) => app.status = Status::Msg(t.env_fail(&e)),
+            Err(e) => app.status = Status::error(t.env_fail(&e)),
         }
     }
     let Some(rows) = &app.env_cache else { return };

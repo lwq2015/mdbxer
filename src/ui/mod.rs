@@ -30,6 +30,17 @@ pub const LEFT_PANEL_MAX: f32 = 320.0;
 /// 中央数据表保留的最小宽度：两侧面板拖宽时不得把它挤得更窄
 pub const MIDDLE_MIN_WIDTH: f32 = 300.0;
 
+/// 状态栏一次性消息的级别：决定渲染颜色（信息=默认、警告=黄、错误=红）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MsgLevel {
+    /// 普通信息（操作成功/进行中）：默认文字色
+    Info,
+    /// 警告（未命中/输入为空/超出范围等，非致命）：warn_fg_color
+    Warn,
+    /// 错误（操作失败）：error_fg_color
+    Error,
+}
+
 /// 状态栏消息。
 /// 持久状态（就绪/已打开/已关闭等）每帧按当前语言渲染，切换语言即时跟随；
 /// 一次性提示（错误、跳转结果等）保留生成时的文本，下次操作自然被替换。
@@ -46,11 +57,39 @@ pub enum Status {
     NoTables(String),
     /// 已关闭
     Closed,
-    /// 一次性消息（沿用生成时的语言）
-    Msg(String),
+    /// 一次性消息（沿用生成时的语言），带级别用于着色
+    Msg(String, MsgLevel),
 }
 
 impl Status {
+    /// 信息级一次性消息（默认文字色）。
+    pub fn info(s: impl Into<String>) -> Self {
+        Status::Msg(s.into(), MsgLevel::Info)
+    }
+
+    /// 警告级一次性消息（黄色）。
+    pub fn warn(s: impl Into<String>) -> Self {
+        Status::Msg(s.into(), MsgLevel::Warn)
+    }
+
+    /// 错误级一次性消息（红色）。
+    pub fn error(s: impl Into<String>) -> Self {
+        Status::Msg(s.into(), MsgLevel::Error)
+    }
+
+    /// 由函数返回的 (级别, 文本) 构造。
+    pub fn leveled((lvl, s): (MsgLevel, String)) -> Self {
+        Status::Msg(s, lvl)
+    }
+
+    /// 当前消息级别（持久状态一律按信息级）。
+    pub fn level(&self) -> MsgLevel {
+        match self {
+            Status::Msg(_, lvl) => *lvl,
+            _ => MsgLevel::Info,
+        }
+    }
+
     /// 按当前语言渲染为状态栏文本。
     pub fn text(&self) -> String {
         let t = crate::i18n::tr();
@@ -62,7 +101,7 @@ impl Status {
             }
             Status::NoTables(path) => t.open_no_tables(path),
             Status::Closed => t.closed.to_string(),
-            Status::Msg(s) => s.clone(),
+            Status::Msg(s, _) => s.clone(),
         }
     }
 }
@@ -635,7 +674,7 @@ impl MdbxerApp {
                     let abs = absolutize_path(&path);
                     self.history.remove_path(&abs);
                 }
-                self.status = Status::Msg(e);
+                self.status = Status::error(e);
             }
         }
     }
@@ -716,7 +755,7 @@ impl MdbxerApp {
                 }
             }
             Some(Err(e)) => {
-                self.status = Status::Msg(e);
+                self.status = Status::error(e);
             }
             None => {}
         }
@@ -782,7 +821,7 @@ impl MdbxerApp {
                 Some((len, has_more))
             }
             Err(e) => {
-                self.status = Status::Msg(crate::i18n::tr().read_fail(&e));
+                self.status = Status::error(crate::i18n::tr().read_fail(&e));
                 None
             }
         }
@@ -895,7 +934,7 @@ impl MdbxerApp {
         let key = match parse_jump_input(&input, integer_key) {
             Ok(k) => k,
             Err(e) => {
-                self.status = Status::Msg(crate::i18n::tr().jump_bad(&e));
+                self.status = Status::error(crate::i18n::tr().jump_bad(&e));
                 return;
             }
         };
@@ -924,14 +963,14 @@ impl MdbxerApp {
                 self.at_end = !has_more;
                 self.base_index = None;
                 if found {
-                    self.status = Status::Msg(crate::i18n::tr().located.to_string());
+                    self.status = Status::info(crate::i18n::tr().located.to_string());
                 } else {
-                    self.status = Status::Msg(crate::i18n::tr().not_found_ge.to_string());
+                    self.status = Status::warn(crate::i18n::tr().not_found_ge.to_string());
                 }
                 self.after_load();
             }
             Err(e) => {
-                self.status = Status::Msg(crate::i18n::tr().jump_fail(&e));
+                self.status = Status::error(crate::i18n::tr().jump_fail(&e));
             }
         }
     }
@@ -954,7 +993,7 @@ impl MdbxerApp {
                 self.load_first_page();
             }
             Err(e) => {
-                self.status = Status::Msg(crate::i18n::tr().key_search_bad(&e));
+                self.status = Status::error(crate::i18n::tr().key_search_bad(&e));
             }
         }
     }
@@ -1072,7 +1111,7 @@ impl MdbxerApp {
         let val_text = crate::fmt::decode(&row.value, self.val_mode, self.endian, 65536);
         let text = format!("{}\t{}", key_text, val_text);
         ctx.copy_text(text);
-        self.status = Status::Msg(crate::i18n::tr().copied_row.to_string());
+        self.status = Status::info(crate::i18n::tr().copied_row.to_string());
     }
 
     /// 开始全表 Value 搜索：逐批扫描全表，找到第一个 Value 显示文本包含
@@ -1080,7 +1119,7 @@ impl MdbxerApp {
     pub fn start_full_value_search(&mut self) {
         let needle = self.search_input.trim().to_string();
         if needle.is_empty() {
-            self.status = Status::Msg(crate::i18n::tr().search_empty.to_string());
+            self.status = Status::warn(crate::i18n::tr().search_empty.to_string());
             return;
         }
         // 全表搜索结果自带定位，旧的页内过滤会干扰显示，一并清除
@@ -1090,7 +1129,7 @@ impl MdbxerApp {
             anchor: None,
             checked: 0,
         });
-        self.status = Status::Msg(crate::i18n::tr().searching_value.to_string());
+        self.status = Status::info(crate::i18n::tr().searching_value.to_string());
     }
 
     /// 取消进行中的全表 Value 搜索。
@@ -1128,7 +1167,7 @@ impl MdbxerApp {
         ) {
             Ok(b) => b,
             Err(e) => {
-                self.status = Status::Msg(e);
+                self.status = Status::error(e);
                 return;
             }
         };
@@ -1170,14 +1209,14 @@ impl MdbxerApp {
                     self.at_end = !p.has_more;
                     self.base_index = None;
                     self.after_load();
-                    self.status = Status::Msg(if located {
-                        crate::i18n::tr().value_found.to_string()
+                    self.status = if located {
+                        Status::info(crate::i18n::tr().value_found.to_string())
                     } else {
-                        crate::i18n::tr().value_not_found.to_string()
-                    });
+                        Status::warn(crate::i18n::tr().value_not_found.to_string())
+                    };
                 }
                 Err(e) => {
-                    self.status = Status::Msg(e);
+                    self.status = Status::error(e);
                 }
             }
             return;
@@ -1186,10 +1225,10 @@ impl MdbxerApp {
         // 未找到：续读或结束
         if batch.has_more {
             state.anchor = batch.rows.last().cloned();
-            self.status = Status::Msg(crate::i18n::tr().searching_value_progress(state.checked));
+            self.status = Status::info(crate::i18n::tr().searching_value_progress(state.checked));
             self.value_search = Some(state);
         } else {
-            self.status = Status::Msg(crate::i18n::tr().value_not_found.to_string());
+            self.status = Status::warn(crate::i18n::tr().value_not_found.to_string());
         }
     }
 
@@ -1229,7 +1268,7 @@ impl MdbxerApp {
     /// 切换上下文（换行/换表/翻页）时，把与旧上下文绑定的一次性消息
     /// （已导出/已定位/未找到等）恢复为持久的库状态，避免状态栏挂着旧消息。
     fn clear_transient_status(&mut self) {
-        if let Status::Msg(_) = self.status {
+        if let Status::Msg(..) = self.status {
             if let Some(h) = &self.db {
                 if let Some(path) = &self.opened_path {
                     self.status = Status::Opened {
@@ -1276,11 +1315,11 @@ impl MdbxerApp {
         };
         match std::fs::write(&path, bytes) {
             Ok(()) => {
-                self.status = Status::Msg(t.export_ok(bytes.len(), &path.display().to_string()));
+                self.status = Status::info(t.export_ok(bytes.len(), &path.display().to_string()));
                 true
             }
             Err(e) => {
-                self.status = Status::Msg(t.export_fail(&e.to_string()));
+                self.status = Status::error(t.export_fail(&e.to_string()));
                 false
             }
         }
@@ -1324,7 +1363,7 @@ impl MdbxerApp {
         self.export_anchor = None;
         self.export_count = 0;
         self.export_path = out.display().to_string();
-        self.status = Status::Msg(t.export_started.to_string());
+        self.status = Status::info(t.export_started.to_string());
     }
 
     /// 从当前表读取导出用的下一批原始 KV（多值表逐值展开）。
@@ -1369,7 +1408,7 @@ impl MdbxerApp {
                                 break;
                             }
                             if has_more {
-                                self.status = Status::Msg(t.export_progress(self.export_count));
+                                self.status = Status::info(t.export_progress(self.export_count));
                             }
                         }
                         Err(e) => {
@@ -1377,7 +1416,7 @@ impl MdbxerApp {
                             if let Some(tx) = &self.export_batch_tx {
                                 let _ = tx.send(crate::export::ExportBatch::Abort(e.clone()));
                             }
-                            self.status = Status::Msg(t.export_fail(&e));
+                            self.status = Status::error(t.export_fail(&e));
                             finished = true;
                             break;
                         }
@@ -1385,11 +1424,11 @@ impl MdbxerApp {
                 }
                 crate::export::ExportEvent::Done(n) => {
                     self.export_count = n;
-                    self.status = Status::Msg(t.export_done(n, &self.export_path));
+                    self.status = Status::info(t.export_done(n, &self.export_path));
                     finished = true;
                 }
                 crate::export::ExportEvent::Fail(e) => {
-                    self.status = Status::Msg(t.export_fail(&e));
+                    self.status = Status::error(t.export_fail(&e));
                     finished = true;
                 }
             }
@@ -1734,7 +1773,16 @@ impl MdbxerApp {
                     }
                 }
                 ui.separator();
-                ui.label(self.status.text());
+                // 一次性消息按级别着色：错误红 / 警告黄 / 信息默认
+                let msg_color = match self.status.level() {
+                    MsgLevel::Info => None,
+                    MsgLevel::Warn => Some(ui.visuals().warn_fg_color),
+                    MsgLevel::Error => Some(ui.visuals().error_fg_color),
+                };
+                match msg_color {
+                    Some(c) => ui.label(egui::RichText::new(self.status.text()).color(c)),
+                    None => ui.label(self.status.text()),
+                };
             });
         });
     }
