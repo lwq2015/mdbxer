@@ -778,8 +778,8 @@ fn kv_card(
         let window = &bytes[off..end];
 
         // 文本视图（可折叠；长文本默认折叠，方便直接看 hex）。
-        // 内容区用独立滚动条（限高 16 行），卡片头/搜索行不随内容滚走，
-        // 滚动中也能继续搜索。
+        // TextEdit 自身按内容行数自适应高度（clamp 1..16 行），超出时内部滚动，
+        // 不要再套 ScrollArea（会撑满剩余高度、把 hex 挤走）。
         let text = fmt::decode(
             window,
             app.detail.mode_of(is_key),
@@ -793,21 +793,17 @@ fn kv_card(
             .default_open(default_open)
             .show(ui, |ui| {
                 let mut text = text;
-                egui::ScrollArea::vertical()
-                    .id_salt(("detail_text_scroll", is_key))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut text)
-                                .font(egui::TextStyle::Monospace)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(text_rows),
-                        );
-                    });
+                ui.add(
+                    egui::TextEdit::multiline(&mut text)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(text_rows),
+                );
             });
 
         // 十六进制视图：自绘交互组件（悬停整行/单字节联动、拖拽选区 HEX↔ASCII 同步）。
-        // 独立滚动区（限高），搜索命中后自动把命中行滚到可视区。
+        // 独立滚动区：高度随内容自适应（auto_shrink 高度方向），只有超过上限才出滚动条；
+        // 卡片头/搜索行固定在外面，滚动中也能继续搜索；命中后自动滚到可视区。
         egui::CollapsingHeader::new(t.section_hex)
             .id_salt(("detail_hex", is_key))
             .default_open(true)
@@ -827,7 +823,8 @@ fn kv_card(
                 }
                 egui::ScrollArea::vertical()
                     .id_salt(("detail_hex_scroll", is_key))
-                    .auto_shrink([false, false])
+                    // 宽度填满、高度随内容收缩；内容超过 max_height 才出现滚动条
+                    .auto_shrink([false, true])
                     .max_height(320.0)
                     .show(ui, |ui| {
                         super::hexview::hex_view(
