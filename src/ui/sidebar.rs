@@ -26,11 +26,27 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
             // 表列表折叠状态决定收藏区高度上限：展开时限 70%（表列表要占大头），
             // 折叠后整个左栏只剩折叠头一行，收藏区可占满剩余高度
-            let tables_open = egui::collapsing_header::CollapsingState::load(
-                ui.ctx(),
-                egui::Id::new("tables_fold"),
-            )
-            .is_some_and(|s| s.is_open());
+            let tables_fold_id = egui::Id::new("tables_fold");
+            let tables_open = egui::collapsing_header::CollapsingState::load(ui.ctx(), tables_fold_id)
+                .is_some_and(|s| s.is_open());
+            // 折叠→展开切换时清掉收藏区持久化的 PanelState：
+            // 折叠时面板被 exact_size 填满大高度并写回，展开后若不清会顶在
+            // 大高度把表列表挤出（见用户截图 bug）。
+            // 注意：PanelState 用 insert_persisted 存，remove 默认清 temp 区域，
+            // 但 get_persisted 读 persisted；用 get_persisted 判断是否存过，
+            // 再 remove 清掉（remove 对 persisted 也有效，只是 remove_persisted 不存在）。
+            let was_open = ui.ctx().memory(|m| {
+                m.data.get_temp::<bool>(egui::Id::new("prev_tables_open"))
+            });
+            if was_open == Some(false) && tables_open {
+                ui.ctx().memory_mut(|m| {
+                    let _ = m.data.get_persisted::<egui::PanelState>(egui::Id::new("fav_panel"));
+                    m.data.remove::<egui::PanelState>(egui::Id::new("fav_panel"));
+                });
+            }
+            ui.ctx().memory_mut(|m| {
+                m.data.insert_temp(egui::Id::new("prev_tables_open"), tables_open)
+            });
             let avail_h = ui.available_height();
             let fav_max_h = if tables_open {
                 avail_h * 0.7
