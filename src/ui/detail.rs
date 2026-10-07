@@ -334,26 +334,32 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let (dup_index, dup_total) = (app.detail.dup_index, app.detail.dup_total);
 
             egui::ScrollArea::vertical().show(ui, |ui| {
+                // 单行紧凑：三个列开关 + 行宽下拉，文字说明全部走 hover 提示
                 ui.horizontal(|ui| {
-                    ui.label(t.hex_view);
                     // HEX 与 ASCII 至少保留一项：只剩一项时该项变灰、不可取消；
                     // 即只有另一项仍勾选时，才允许关掉这一项。
-                    hex_pref_changed =
-                        ui.checkbox(&mut app.detail.show_addr, t.addr).changed()
-                            | ui.add_enabled(
+                    hex_pref_changed = ui
+                        .checkbox(&mut app.detail.show_addr, t.addr)
+                        .on_hover_text(t.hex_addr_tip)
+                        .changed()
+                        | ui
+                            .add_enabled(
                                 app.detail.show_ascii,
                                 egui::Checkbox::new(&mut app.detail.show_hex, "HEX"),
                             )
+                            .on_hover_text(t.hex_col_tip)
                             .changed()
-                            | ui.add_enabled(
+                        | ui
+                            .add_enabled(
                                 app.detail.show_hex,
                                 egui::Checkbox::new(&mut app.detail.show_ascii, "ASCII"),
                             )
+                            .on_hover_text(t.hex_ascii_tip)
                             .changed();
                     ui.separator();
-                    ui.label(t.width);
                     let mut w = app.detail.hex_width;
                     let ir = egui::ComboBox::from_id_salt("hex_width")
+                        .width(52.0)
                         .selected_text(w.to_string())
                         .show_ui(ui, |ui| {
                             for v in fmt::HEX_WIDTHS {
@@ -361,6 +367,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             }
                         });
                     super::wheel_cycle(ui.ctx(), &ir.response, &fmt::HEX_WIDTHS, &mut w);
+                    ir.response.on_hover_text(t.hex_width_tip);
                     if w != app.detail.hex_width {
                         app.detail.hex_width = w;
                         hex_pref_changed = true;
