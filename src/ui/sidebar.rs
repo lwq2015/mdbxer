@@ -45,14 +45,22 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let mut fav_key_action: Option<(usize, bool)> = None; // (下标, true=跳转)
             // 可拖拽高度：拖动面板顶边调整，egui 持久化到 PanelState（重启保持）。
             // default_size 是首帧初始高度（无持久化状态时 egui 默认只有一行高，
-            // 且 ScrollArea 垂直自适应会随之收缩、永远撑不开，必须显式给定）
-            egui::Panel::bottom("fav_panel")
+            // 且 ScrollArea 垂直自适应会随之收缩、永远撑不开，必须显式给定）。
+            // 表列表折叠时直接填满：否则面板沿用折叠前持久化的较小高度，
+            // 折叠就失去"把空间让给收藏区"的意义
+            let fav_p = egui::Panel::bottom("fav_panel")
                 .resizable(true)
                 .min_size(28.0)
                 .default_size(180.0)
-                .max_size(fav_max_h)
-                // 只清左右内边距（默认 symmetric(8,2) 与父面板 padding 叠加显得太宽），
-                // 保留 panel_fill 背景与顶部分隔线
+                .max_size(fav_max_h);
+            let fav_p = if tables_open {
+                fav_p
+            } else {
+                fav_p.exact_size(fav_max_h)
+            };
+            // 只清左右内边距（默认 symmetric(8,2) 与父面板 padding 叠加显得太宽），
+            // 保留 panel_fill 背景与顶部分隔线
+            fav_p
                 .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(0, 2)))
                 .show(ui, |ui| {
                     // 不在此再加 ui.separator()：bottom 面板自身已在顶边画分隔线
