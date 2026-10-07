@@ -252,6 +252,8 @@ pub struct I18n {
     pub fav_rm_k_tip: &'static str,
     pub fav_jump_tip: &'static str,
     pub fav_empty: &'static str,
+    /// 收藏表行后缀：该表下收藏的 Key 数量，如 "（收藏 3 条）"
+    pub fav_count_t: &'static str,
 
     // ── 应用状态消息（模板）──
     /// {mode} {n} {path}
@@ -444,6 +446,11 @@ impl I18n {
     /// 多值分组行 Value 列后缀，如 "〔5 个值〕"。
     pub fn dup_n_values(&self, n: usize) -> String {
         fill(self.dup_n_values_t, &[("n", &n.to_string())])
+    }
+
+    /// 收藏区表行后缀：该表下收藏的 Key 数量，如 "（收藏 3 条）"。
+    pub fn fav_count(&self, n: usize) -> String {
+        fill(self.fav_count_t, &[("n", &n.to_string())])
     }
 
     /// 大字段分段导航行。
@@ -728,6 +735,7 @@ const ZH: I18n = I18n {
     fav_rm_k_tip: "取消收藏该 Key",
     fav_jump_tip: "跳转到该 Key",
     fav_empty: "（暂无收藏）",
+    fav_count_t: "（收藏 {n} 条）",
 
     open_ok_t: "已打开（{mode}模式，{n} 个表）：{path}",
     open_no_tables_t: "已打开但没有任何数据表：{path}",
@@ -965,6 +973,7 @@ const EN: I18n = I18n {
     fav_rm_k_tip: "Remove this key from favorites",
     fav_jump_tip: "Jump to this key",
     fav_empty: "(no favorites yet)",
+    fav_count_t: "({n} saved)",
 
     open_ok_t: "Opened ({mode} mode, {n} tables): {path}",
     open_no_tables_t: "Opened, but it contains no data tables: {path}",
@@ -1202,6 +1211,7 @@ const RU: I18n = I18n {
     fav_rm_k_tip: "Убрать ключ из избранного",
     fav_jump_tip: "Перейти к этому ключу",
     fav_empty: "(избранное пусто)",
+    fav_count_t: "({n} сохран.)",
 
     open_ok_t: "Открыто (режим: {mode}, таблиц: {n}): {path}",
     open_no_tables_t: "Открыто, но таблиц данных нет: {path}",
@@ -1439,6 +1449,7 @@ mod tests {
             assert!(!table.fav_rm_k_tip.is_empty());
             assert!(!table.fav_jump_tip.is_empty());
             assert!(!table.fav_empty.is_empty());
+            assert!(!table.fav_count_t.is_empty());
         }
     }
 

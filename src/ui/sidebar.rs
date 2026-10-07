@@ -146,17 +146,23 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                     //    头内 ★ 取消收藏（级联删其 Key 收藏）、点表名跳转；
                                     //    body 缩进渲染该表的 Key 收藏子列表
                                     for fname in &app.fav_tables {
-                                        // 表名后带条目数（与表列表同模板，不带标志描述）
-                                        let display = dbh
+                                        // 表名 + 该表下收藏的 Key 数量（不是表条目总数）
+                                        let mut display = dbh
                                             .tables
                                             .iter()
                                             .find(|ti| &ti.name == fname)
-                                            .map(|ti| t.table_entry(&ti.display(), ti.entries, ""))
+                                            .map(|ti| ti.display())
                                             .unwrap_or_else(|| {
                                                 fname
                                                     .clone()
                                                     .unwrap_or_else(|| t.main_table.to_string())
                                             });
+                                        let n_fav_keys = app
+                                            .fav_keys
+                                            .iter()
+                                            .filter(|f| &f.table == fname)
+                                            .count();
+                                        display.push_str(&t.fav_count(n_fav_keys));
                                         let selected =
                                             app.cur_table().map(|ti| &ti.name) == Some(fname);
                                         // 该表的 Key 收藏（保持全局下标供动作分发）
