@@ -36,6 +36,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             if app.db.is_some() && ui.button(t.btn_close).clicked() {
                 app.close_db();
             }
+            // 重新加载库：仅重枚举表列表/条目数（复用环境句柄，不重开环境）
+            if app.db.is_some()
+                && ui
+                    .button("↻")
+                    .on_hover_text(t.btn_reload_tip)
+                    .clicked()
+            {
+                app.reload_db();
+            }
 
             // 历史记录
             let mut pick = None;

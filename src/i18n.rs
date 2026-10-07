@@ -94,6 +94,7 @@ pub struct I18n {
     pub btn_file: &'static str,
     pub btn_dir: &'static str,
     pub btn_close: &'static str,
+    pub btn_reload_tip: &'static str,
     pub history: &'static str,
     pub history_empty: &'static str,
     pub history_del_tip: &'static str,
@@ -201,6 +202,11 @@ pub struct I18n {
     pub seg_ok_t: &'static str,
     pub seg_range_t: &'static str,
     pub seg_bad: &'static str,
+    /// 大字段内字节搜索
+    pub blob_prompt: &'static str,
+    pub blob_nomatch: &'static str,
+    pub blob_located_t: &'static str,
+    pub blob_wrap_t: &'static str,
 
     // ── 搜索工具条（Key/Value 共享输入框） ──
     pub toolbar_search_hint: &'static str,
@@ -520,6 +526,14 @@ impl I18n {
         )
     }
 
+    pub fn blob_located(&self, off: usize) -> String {
+        fill(self.blob_located_t, &[("hex", &format!("{off:X}"))])
+    }
+
+    pub fn blob_wrap(&self, off: usize) -> String {
+        fill(self.blob_wrap_t, &[("hex", &format!("{off:X}"))])
+    }
+
     pub fn page_keys(&self, n: usize) -> String {
         fill(self.page_keys_t, &[("n", &n.to_string())])
     }
@@ -579,6 +593,7 @@ const ZH: I18n = I18n {
     btn_file: "文件",
     btn_dir: "目录",
     btn_close: "关闭",
+    btn_reload_tip: "重新加载库：刷新表列表与条目数（保留当前表）",
     history: "历史",
     history_empty: "（暂无历史记录）",
     history_del_tip: "从历史记录中删除该条",
@@ -668,6 +683,10 @@ const ZH: I18n = I18n {
     seg_ok_t: "已跳至偏移 {off}（0x{hex}）",
     seg_range_t: "偏移超出范围：{v}（共 {total} 字节）",
     seg_bad: "请输入十进制偏移，或 0x 开头的十六进制偏移",
+    blob_prompt: "请先输入要查找的内容（文本或 hex(...)）",
+    blob_nomatch: "未找到匹配内容",
+    blob_located_t: "已定位到偏移 0x{hex}",
+    blob_wrap_t: "已回绕定位到偏移 0x{hex}",
 
     toolbar_search_hint: "搜索：文本或 hex(...)",
     key_mode_tip_off: "切换到过滤模式：K 键只显示以输入开头的 Key（回车生效）",
@@ -808,6 +827,7 @@ const EN: I18n = I18n {
     btn_file: "File",
     btn_dir: "Folder",
     btn_close: "Close",
+    btn_reload_tip: "Reload database: refresh table list and row counts (keep current table)",
     history: "History",
     history_empty: "(no history)",
     history_del_tip: "Remove this entry from history",
@@ -897,6 +917,10 @@ const EN: I18n = I18n {
     seg_ok_t: "Jumped to offset {off} (0x{hex})",
     seg_range_t: "Offset out of range: {v} ({total} bytes)",
     seg_bad: "Enter a decimal offset, or hexadecimal prefixed with 0x",
+    blob_prompt: "Enter text or hex(...) to search for",
+    blob_nomatch: "No match found",
+    blob_located_t: "At offset 0x{hex}",
+    blob_wrap_t: "Wrapped to offset 0x{hex}",
 
     toolbar_search_hint: "Search: text or hex(...)",
     key_mode_tip_off: "Switch to filter mode: K shows only keys starting with the input (Enter to apply)",
@@ -1037,6 +1061,7 @@ const RU: I18n = I18n {
     btn_file: "Файл",
     btn_dir: "Папка",
     btn_close: "Закрыть",
+    btn_reload_tip: "Перезагрузить базу: обновить список таблиц и число записей (текущая таблица сохраняется)",
     history: "История",
     history_empty: "(история пуста)",
     history_del_tip: "Удалить эту запись из истории",
@@ -1126,6 +1151,10 @@ const RU: I18n = I18n {
     seg_ok_t: "Переход к смещению {off} (0x{hex})",
     seg_range_t: "Смещение вне диапазона: {v} ({total} байт)",
     seg_bad: "Введите десятичное смещение или шестнадцатеричное с префиксом 0x",
+    blob_prompt: "Введите текст или hex(...) для поиска",
+    blob_nomatch: "Совпадений не найдено",
+    blob_located_t: "Смещение 0x{hex}",
+    blob_wrap_t: "С переходом к смещению 0x{hex}",
 
     toolbar_search_hint: "Поиск: текст или hex(...)",
     key_mode_tip_off: "Переключиться в режим фильтра: K показывает только ключи, начинающиеся с ввода (Enter — применить)",
@@ -1336,6 +1365,7 @@ mod tests {
             assert!(!table.ready.is_empty());
             assert!(!table.btn_file.is_empty());
             assert!(!table.btn_close.is_empty());
+            assert!(!table.btn_reload_tip.is_empty());
             assert!(!table.tables_title.is_empty());
             assert!(!table.detail_select_hint.is_empty());
             assert!(!table.dup_tip_first.is_empty());

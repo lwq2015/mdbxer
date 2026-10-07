@@ -28,7 +28,7 @@ pub const EXPORT_BATCH: usize = 2000;
 pub const LEFT_PANEL_MIN: f32 = 120.0;
 pub const LEFT_PANEL_MAX: f32 = 320.0;
 /// 中央数据表保留的最小宽度：两侧面板拖宽时不得把它挤得更窄
-pub const MIDDLE_MIN_WIDTH: f32 = 360.0;
+pub const MIDDLE_MIN_WIDTH: f32 = 300.0;
 
 /// 状态栏消息。
 /// 持久状态（就绪/已打开/已关闭等）每帧按当前语言渲染，切换语言即时跟随；
@@ -664,6 +664,62 @@ impl MdbxerApp {
         self.fav_keys.clear();
         self.detail.clear();
         self.status = Status::Closed;
+    }
+
+    /// 重新加载当前库：复用环境句柄重新枚举表列表/条目数（不触发 MDBX_BUSY），
+    /// 保留当前选中表（按名字重新定位，表已被删则回退主表）并回到首页。
+    pub fn reload_db(&mut self) {
+        let Some(path) = self.opened_path.clone() else {
+            return;
+        };
+        // 先记下当前表名（主表为 None）
+        let cur_name = self
+            .db
+            .as_ref()
+            .zip(self.selected_table)
+            .and_then(|(h, i)| h.tables.get(i))
+            .and_then(|t| t.name.clone());
+        let refresh = self.db.as_mut().map(|h| h.refresh_tables());
+        match refresh {
+            Some(Ok(())) => {
+                let n = self.db.as_ref().map(|h| h.tables.len()).unwrap_or(0);
+                let file_mode = self.db.as_ref().is_some_and(|h| h.no_sub_dir);
+                // 当前表按名字重新定位；找不到（被删/主表）回退主表
+                self.selected_table = cur_name
+                    .and_then(|name| {
+                        self.db
+                            .as_ref()?
+                            .tables
+                            .iter()
+                            .position(|t| t.name.as_ref() == Some(&name))
+                    })
+                    .or(if n > 0 { Some(0) } else { None });
+                self.stat_cache = None;
+                self.env_cache = None;
+                self.search_input.clear();
+                self.key_filter = None;
+                self.value_filter = None;
+                self.value_search = None;
+                if self.selected_table.is_some() {
+                    self.status = Status::Opened {
+                        file_mode,
+                        n,
+                        path: path.clone(),
+                    };
+                    self.load_first_page();
+                } else {
+                    self.rows.clear();
+                    self.base_index = None;
+                    self.selected_row = None;
+                    self.detail.clear();
+                    self.status = Status::NoTables(path);
+                }
+            }
+            Some(Err(e)) => {
+                self.status = Status::Msg(e);
+            }
+            None => {}
+        }
     }
 
     /// 检测 `opened_path` 变化，同步更新窗口标题。

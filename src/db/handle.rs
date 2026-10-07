@@ -142,4 +142,13 @@ impl DbHandle {
 
         Ok(tables)
     }
+
+    /// 重新枚举子表与条目数（不重新打开环境）。
+    ///
+    /// libmdbx 禁止同进程二次 open 同一环境（MDBX_BUSY），因此刷新只能复用现有
+    /// 句柄在新只读事务里重跑 `list_tables`；数据读取本就每次新建事务，天然最新。
+    pub fn refresh_tables(&mut self) -> Result<(), String> {
+        self.tables = Self::list_tables(&self.db)?;
+        Ok(())
+    }
 }
