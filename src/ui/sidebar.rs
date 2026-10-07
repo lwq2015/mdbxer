@@ -94,12 +94,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let mut fav_key_action: Option<(usize, bool)> = None; // (下标, true=跳转)
             egui::Panel::bottom("fav_panel")
                 .resizable(false)
+                // 只清左右内边距（默认 symmetric(8,2) 与父面板 padding 叠加显得太宽），
+                // 保留 panel_fill 背景与顶部分隔线
+                .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(0, 2)))
                 .show(ui, |ui| {
                     // 不在此再加 ui.separator()：bottom 面板自身已在顶边画分隔线
                     egui::CollapsingHeader::new(t.favorites_title)
                         .id_salt("fav_keys")
                         .default_open(true)
-                        .show(ui, |ui| {
+                        .show_unindented(ui, |ui| {
                             // 收紧行内间距：★/➡/× 按钮与文字贴紧，左右都不留多余空隙
                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 1.0);
                             if app.fav_tables.is_empty() && app.fav_keys.is_empty() {
