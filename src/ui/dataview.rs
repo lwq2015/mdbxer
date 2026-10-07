@@ -135,12 +135,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
         // 共享搜索框：Key（跳转/前缀过滤）和 Value（全表/页内文本搜索）共用
         // 符号取自 egui 内置字体 emoji-icon/NotoEmoji，跨平台不依赖系统字体
-        let sresp = ui.add(
-            egui::TextEdit::singleline(&mut app.search_input)
-                .id_salt("search_box")
-                .desired_width(160.0)
-                .hint_text(t.toolbar_search_hint),
-        );
+        let sresp = ui
+            .add(
+                egui::TextEdit::singleline(&mut app.search_input)
+                    .id_salt("search_box")
+                    .desired_width(160.0)
+                    .hint_text(t.toolbar_search_hint),
+            )
+            .on_hover_text(t.search_box_tip);
         // Ctrl+F 的延迟聚焦：在实际控件上 request_focus（对猜测的 ID 直接
         // request_focus 会因 ID 不存在触发 accesskit panic）
         if app.focus_search {
@@ -152,9 +154,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         if sresp.gained_focus() {
             app.row_copy_pending = false;
         }
-        // 回车默认执行 Key 搜索（跳转或前缀过滤，取决于模式）
+        // 回车 = Key 搜索（跳转或前缀过滤，取决于模式）；
+        // Ctrl+回车 = Value 搜索（行为同 V 按钮，由"全表"开关决定）
         if sresp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            app.apply_key_search();
+            if ui.input(|i| i.modifiers.ctrl) {
+                if app.value_search_full {
+                    app.start_full_value_search();
+                } else {
+                    app.apply_value_search();
+                }
+            } else {
+                app.apply_key_search();
+            }
         }
         // 搜索 Key
         if ui.button("K").on_hover_text(t.key_search_btn_tip).clicked() {
