@@ -96,8 +96,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let mut fav_table_pick: Option<usize> = None;
             let mut fav_table_toggle: Option<Option<String>> = None;
             let mut fav_key_action: Option<(usize, bool)> = None; // (下标, true=跳转)
+            // 可拖拽高度：拖动面板顶边调整，egui 持久化到 PanelState（重启保持）。
+            // default_size 是首帧初始高度（无持久化状态时 egui 默认只有一行高，
+            // 且 ScrollArea 垂直自适应会随之收缩、永远撑不开，必须显式给定）；
+            // 上限 0.7 倍左栏可用高度，保证表列表始终有至少 ~30% 空间
             egui::Panel::bottom("fav_panel")
-                .resizable(false)
+                .resizable(true)
+                .min_size(28.0)
+                .default_size(180.0)
+                .max_size(ui.available_height() * 0.7)
                 // 只清左右内边距（默认 symmetric(8,2) 与父面板 padding 叠加显得太宽），
                 // 保留 panel_fill 背景与顶部分隔线
                 .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(0, 2)))
@@ -109,34 +116,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         .show_unindented(ui, |ui| {
                             // 收紧行内间距：★/➡/× 按钮与文字贴紧，左右都不留多余空隙
                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 1.0);
-                            // 收藏区高度 = 内容自然行数 × 行高，再封顶左栏可用高度 60%
-                            //（保证表列表始终有空间；内容少时紧凑显示，超出才内部滚动）
-                            let row_h = ui
-                                .spacing()
-                                .interact_size
-                                .y
-                                .max(ui.text_style_height(&egui::TextStyle::Body))
-                                + ui.spacing().item_spacing.y;
-                            let mut n_rows = if app.fav_tables.is_empty() { 1 } else { 0 };
-                            for fname in &app.fav_tables {
-                                n_rows += 1;
-                                let open = ui.ctx().memory(|m| {
-                                    m.data
-                                        .get_temp::<bool>(egui::Id::new(("fav_fold", fname.clone())))
-                                        .unwrap_or(true)
-                                });
-                                if open {
-                                    n_rows +=
-                                        app.fav_keys.iter().filter(|f| &f.table == fname).count();
-                                }
-                            }
-                            let content_h = n_rows as f32 * row_h;
-                            let max_h =
-                                content_h.min((ui.available_height() * 0.6).max(row_h * 3.0));
                             // 宽度方向必须占满：否则内容水平不设限，行按钮 truncate 失效
                             // 反而逐帧撑宽左栏（见 JSON 左栏变胖 bug）
                             egui::ScrollArea::vertical()
-                                .max_height(max_h)
                                 .auto_shrink([false, true])
                                 .show(ui, |ui| {
                                     if app.fav_tables.is_empty() {
