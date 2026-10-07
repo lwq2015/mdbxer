@@ -241,7 +241,6 @@ pub struct I18n {
     pub fav_add_k_tip: &'static str,
     pub fav_rm_k_tip: &'static str,
     pub fav_jump_tip: &'static str,
-    pub fav_del_tip: &'static str,
     pub fav_empty: &'static str,
 
     // ── 应用状态消息（模板）──
@@ -695,7 +694,6 @@ const ZH: I18n = I18n {
     fav_add_k_tip: "收藏该 Key",
     fav_rm_k_tip: "取消收藏该 Key",
     fav_jump_tip: "跳转到该 Key",
-    fav_del_tip: "从收藏中删除",
     fav_empty: "（暂无收藏）",
 
     open_ok_t: "已打开（{mode}模式，{n} 个表）：{path}",
@@ -923,7 +921,6 @@ const EN: I18n = I18n {
     fav_add_k_tip: "Add this key to favorites",
     fav_rm_k_tip: "Remove this key from favorites",
     fav_jump_tip: "Jump to this key",
-    fav_del_tip: "Remove from favorites",
     fav_empty: "(no favorites yet)",
 
     open_ok_t: "Opened ({mode} mode, {n} tables): {path}",
@@ -1151,7 +1148,6 @@ const RU: I18n = I18n {
     fav_add_k_tip: "Добавить ключ в избранное",
     fav_rm_k_tip: "Убрать ключ из избранного",
     fav_jump_tip: "Перейти к этому ключу",
-    fav_del_tip: "Удалить из избранного",
     fav_empty: "(избранное пусто)",
 
     open_ok_t: "Открыто (режим: {mode}, таблиц: {n}): {path}",
@@ -1384,7 +1380,6 @@ mod tests {
             assert!(!table.fav_add_k_tip.is_empty());
             assert!(!table.fav_rm_k_tip.is_empty());
             assert!(!table.fav_jump_tip.is_empty());
-            assert!(!table.fav_del_tip.is_empty());
             assert!(!table.fav_empty.is_empty());
         }
     }

@@ -145,10 +145,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                     }
                                 });
                             }
-                            // ── 收藏的 Key：× 删除，点标签直接跳转 ──
+                            // ── 收藏的 Key：★ 取消收藏，点标签直接跳转 ──
                             for (i, fk) in app.fav_keys.iter().enumerate() {
                                 ui.horizontal(|ui| {
-                                    if ui.small_button("×").on_hover_text(t.fav_del_tip).clicked()
+                                    // 与表收藏统一：★ 取消收藏
+                                    if ui
+                                        .small_button("★")
+                                        .on_hover_text(t.fav_rm_k_tip)
+                                        .clicked()
                                     {
                                         fav_key_action = Some((i, false));
                                     }
