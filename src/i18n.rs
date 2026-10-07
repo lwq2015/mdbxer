@@ -317,6 +317,8 @@ pub struct I18n {
     pub guess_empty_label: &'static str,
     pub guess_empty_sym: &'static str,
     pub guess_utf8: &'static str,
+    pub guess_utf16_le: &'static str,
+    pub guess_utf16_be: &'static str,
     pub guess_binary: &'static str,
 
     // ── 跳转/搜索输入解析错误 ──
@@ -749,6 +751,8 @@ const ZH: I18n = I18n {
     guess_empty_label: "空",
     guess_empty_sym: "空",
     guess_utf8: "UTF-8 文本",
+    guess_utf16_le: "UTF-16 文本 (LE)",
+    guess_utf16_be: "UTF-16 文本 (BE)",
     guess_binary: "二进制",
 
     int_key_hint: "整数键表请输入十进制数字，或 hex(...)/0x... 形式的字节",
@@ -976,6 +980,8 @@ const EN: I18n = I18n {
     guess_empty_label: "Empty",
     guess_empty_sym: "empty",
     guess_utf8: "UTF-8 text",
+    guess_utf16_le: "UTF-16 text (LE)",
+    guess_utf16_be: "UTF-16 text (BE)",
     guess_binary: "Binary",
 
     int_key_hint: "For integer-key tables enter a decimal number, or bytes as hex(...)/0x...",
@@ -1203,6 +1209,8 @@ const RU: I18n = I18n {
     guess_empty_label: "Пусто",
     guess_empty_sym: "пусто",
     guess_utf8: "Текст UTF-8",
+    guess_utf16_le: "Текст UTF-16 (LE)",
+    guess_utf16_be: "Текст UTF-16 (BE)",
     guess_binary: "Бинарный",
 
     int_key_hint: "Для таблиц с целочисленными ключами введите десятичное число или байты в виде hex(...)/0x...",

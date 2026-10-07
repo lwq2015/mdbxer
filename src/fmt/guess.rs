@@ -23,6 +23,10 @@ pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
             return (t.guess_utf8.to_string(), s.to_string());
         }
     }
+    // 再试 UTF-16：BOM 直接定字节序，无 BOM 按字节模式启发式
+    if let Some(r) = try_utf16(bytes) {
+        return r;
+    }
     let sfx = endian.suffix();
     // match 保证长度后 try_into 必然成功
     match bytes.len() {
@@ -52,6 +56,121 @@ pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
         }
         _ => (t.guess_binary.to_string(), value::hex_spaced(bytes)),
     }
+}
+
+/// 尝试把字节识别为 UTF-16 文本。
+///
+/// - 开头 BOM（`FF FE` / `FE FF`）直接确定字节序；
+/// - 无 BOM 时 LE/BE 各解一次：拒绝未配对代理、控制字符（`\t \n \r` 除外）与内嵌 NUL，
+///   容忍单个结尾 NUL（Windows NUL 结尾串常见）；按可打印 ASCII 与字母占比打分选字节序。
+///   无 ASCII 时要求至少 4 个字母字符，避免把 4 字节整数的两个 CJK 码位误判为文本。
+fn try_utf16(bytes: &[u8]) -> Option<(String, String)> {
+    let t = crate::i18n::tr();
+    if bytes.len() < 4 || bytes.len() % 2 != 0 {
+        return None;
+    }
+
+    // BOM 定序（BOM 后剩余长度也须为偶）
+    let bom_big = match &bytes[..2] {
+        [0xFF, 0xFE] => Some(false),
+        [0xFE, 0xFF] => Some(true),
+        _ => None,
+    };
+    if let Some(big) = bom_big {
+        if bytes.len() == 2 || (bytes.len() - 2) % 2 != 0 {
+            return None;
+        }
+        let units = utf16_units(&bytes[2..], big);
+        let text = utf16_validate(&units)?;
+        let label = if big { t.guess_utf16_be } else { t.guess_utf16_le };
+        return Some((label.to_string(), text));
+    }
+
+    // 无 BOM：两种字节序打分，优先 ASCII 含量高的；同分取 LE（Windows 数据占多数）
+    let mut best: Option<(bool, u32, u32, String)> = None; // (big, ascii, alpha, text)
+    for big in [false, true] {
+        let units = utf16_units(bytes, big);
+        let Some(text) = utf16_validate(&units) else {
+            continue;
+        };
+        let chars: Vec<char> = text.chars().collect();
+        if chars.len() < 2 {
+            continue;
+        }
+        let mut ascii = 0u32;
+        let mut alpha = 0u32;
+        for c in &chars {
+            if matches!(c, '\t' | '\n' | '\r' | ' '..='~') {
+                ascii += 1;
+            }
+            if c.is_alphabetic() {
+                alpha += 1;
+            }
+        }
+        let n = chars.len() as u32;
+        let ascii_ok = ascii >= 2 && ascii * 3 >= n * 2; // ASCII 占比 ≥ 2/3
+        let cjk_ok = ascii + alpha >= n * 2 / 3 && alpha >= 4; // 无 ASCII 的字母文本（如中文）
+        if ascii_ok || cjk_ok {
+            let replace = best
+                .as_ref()
+                .is_some_and(|(_, a, al, _)| (ascii, alpha) > (*a, *al));
+            if best.is_none() || replace {
+                best = Some((big, ascii, alpha, text));
+            }
+        }
+    }
+    best.map(|(big, _, _, text)| {
+        let label = if big { t.guess_utf16_be } else { t.guess_utf16_le };
+        (label.to_string(), text)
+    })
+}
+
+/// 按字节序把字节切成 u16 单元。
+fn utf16_units(bytes: &[u8], big: bool) -> Vec<u16> {
+    bytes
+        .chunks_exact(2)
+        .map(|c| {
+            if big {
+                u16::from_be_bytes([c[0], c[1]])
+            } else {
+                u16::from_le_bytes([c[0], c[1]])
+            }
+        })
+        .collect()
+}
+
+/// 校验并解码 UTF-16 单元：拒绝未配对代理与控制字符（`\t \n \r` 除外）、内嵌 NUL；
+/// 容忍并剥掉单个结尾 NUL。全部合法才返回文本。
+fn utf16_validate(units: &[u16]) -> Option<String> {
+    let mut n = units.len();
+    if n > 0 && units[n - 1] == 0 {
+        n -= 1;
+    }
+    let mut s = String::with_capacity(n);
+    let mut i = 0;
+    while i < n {
+        let u = units[i];
+        let c = if (0xD800..=0xDBFF).contains(&u) {
+            let lo = *units.get(i + 1)?;
+            if !(0xDC00..=0xDFFF).contains(&lo) {
+                return None;
+            }
+            i += 1;
+            char::decode_utf16([u, lo])
+                .next()?
+                .ok()?
+        } else if (0xDC00..=0xDFFF).contains(&u) || u == 0 {
+            return None; // 低位代理 / 内嵌 NUL
+        } else {
+            char::from_u32(u as u32)?
+        };
+        if c.is_control() && !matches!(c, '\t' | '\n' | '\r') {
+            return None;
+        }
+        s.push(c);
+        i += 1;
+    }
+    Some(s)
 }
 
 #[cfg(test)]
@@ -135,5 +254,97 @@ mod tests {
         let t = crate::i18n::tr();
         assert_eq!(label, t.guess_binary);
         assert_eq!(text, "80");
+    }
+
+    #[test]
+    fn guess_utf16le_bom() {
+        // BOM + "Ab"（LE）
+        let bytes = [0xFF, 0xFE, 0x41, 0x00, 0x62, 0x00];
+        let (label, text) = guess(&bytes, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_eq!(label, t.guess_utf16_le);
+        assert_eq!(text, "Ab");
+    }
+
+    #[test]
+    fn guess_utf16be_bom() {
+        let bytes = [0xFE, 0xFF, 0x00, 0x41, 0x00, 0x62];
+        let (label, text) = guess(&bytes, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_eq!(label, t.guess_utf16_be);
+        assert_eq!(text, "Ab");
+    }
+
+    #[test]
+    fn guess_utf16le_no_bom() {
+        // 无 BOM 的 "hello"（LE），典型 Windows 字符串
+        let bytes = b"h\x00e\x00l\x00l\x00o\x00";
+        let (label, text) = guess(bytes, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_eq!(label, t.guess_utf16_le);
+        assert_eq!(text, "hello");
+    }
+
+    #[test]
+    fn guess_utf16le_trailing_nul() {
+        let bytes = b"h\x00i\x00\x00\x00"; // NUL 结尾
+        let (label, text) = guess(bytes, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_eq!(label, t.guess_utf16_le);
+        assert_eq!(text, "hi");
+    }
+
+    #[test]
+    fn guess_utf16_cjk_no_bom() {
+        // "中文测试"（LE）无 BOM，4 个字母字符门槛
+        let s: Vec<u8> = "中文测试".encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        let (label, text) = guess(&s, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_eq!(label, t.guess_utf16_le);
+        assert_eq!(text, "中文测试");
+    }
+
+    #[test]
+    fn guess_utf16_surrogate_pair() {
+        // "😀" U+1F600，代理对 D83D DE00（LE）
+        let bytes = [0xFF, 0xFE, 0x3D, 0xD8, 0x00, 0xDE];
+        let (label, text) = guess(&bytes, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_eq!(label, t.guess_utf16_le);
+        assert_eq!(text, "😀");
+    }
+
+    #[test]
+    fn no_guess_utf16_for_interior_nul() {
+        // 内嵌 NUL：更像整数/二进制，不猜 UTF-16
+        let bytes = [0x41, 0x00, 0x00, 0x00, 0x42, 0x00]; // A NUL NUL B
+        let (label, _) = guess(&bytes, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_ne!(label, t.guess_utf16_le);
+        assert_ne!(label, t.guess_utf16_be);
+    }
+
+    #[test]
+    fn no_guess_utf16_for_u32_integer() {
+        // 常见 u32（高两字节为 0）不被误判
+        let bytes = [0x78, 0x56, 0x34, 0x12];
+        let (label, _) = guess(&bytes, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_ne!(label, t.guess_utf16_le);
+        assert_ne!(label, t.guess_utf16_be);
+        assert!(label.contains("u32"));
+    }
+
+    #[test]
+    fn no_guess_utf16_two_cjk_units() {
+        // 两个 CJK 码位 = 4 字节，可能是 u32 整数，无 BOM 不猜文本
+        let bytes = [0x78, 0x56, 0x34, 0x12];
+        let s: Vec<u8> = "中文".encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        // 同样的字节模式不应被判为 UTF-16（4 字母门槛保护）
+        debug_assert_eq!(s.len(), 4);
+        let (label, _) = guess(&s, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_ne!(label, t.guess_utf16_le);
+        let _ = bytes;
     }
 }
