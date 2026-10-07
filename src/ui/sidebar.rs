@@ -144,10 +144,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                     {
                                         fav_key_action = Some((i, true));
                                     }
-                                    if ui.small_button("×").on_hover_text(t.fav_del_tip).clicked()
-                                    {
-                                        fav_key_action = Some((i, false));
-                                    }
                                     let table_name = fk.table.as_deref().unwrap_or(t.main_table);
                                     // Key 显示解码后的可读文本（自动猜测），hex 全文放 hover
                                     let key_text = crate::ui::parse_hex(&fk.key_hex)
@@ -165,8 +161,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                     } else {
                                         format!("{table_name} · {} · {key_text}", fk.note)
                                     };
-                                    ui.label(egui::RichText::new(label).monospace().small())
+                                    ui.label(egui::RichText::new(label).monospace())
                                         .on_hover_text(format!("{table_name} · {}", fk.key_hex));
+                                    if ui.small_button("×").on_hover_text(t.fav_del_tip).clicked()
+                                    {
+                                        fav_key_action = Some((i, false));
+                                    }
                                 });
                             }
                         });
