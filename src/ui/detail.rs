@@ -766,13 +766,6 @@ fn kv_card(
             }
         }
 
-        // 自动模式时显示猜测的类型
-        if app.detail.mode_of(is_key) == DecodeMode::Auto {
-            ui.weak(t.guess_line(&fmt::guess(bytes, app.endian).0, bytes.len()));
-        } else {
-            ui.weak(t.bytes(bytes.len()));
-        }
-
         // 分段窗口（导航条固定在卡片标题行正下方）
         let end = (off + fmt::PAGE_BYTES).min(total);
         let window = &bytes[off..end];
@@ -811,6 +804,13 @@ fn kv_card(
                         );
                     });
             });
+
+        // 自动模式时显示猜测的类型（放在文本视图之后、hex 之前）
+        if app.detail.mode_of(is_key) == DecodeMode::Auto {
+            ui.weak(t.guess_line(&fmt::guess(bytes, app.endian).0, bytes.len()));
+        } else {
+            ui.weak(t.bytes(bytes.len()));
+        }
 
         // 十六进制视图：自绘交互组件（悬停整行/单字节联动、拖拽选区 HEX↔ASCII 同步）。
         // 独立滚动区：高度随内容自适应（auto_shrink 高度方向），只有超过上限才出滚动条；
