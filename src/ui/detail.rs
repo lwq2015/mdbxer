@@ -893,10 +893,11 @@ fn kv_card(
                 let (ctrl, shift) =
                     ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
                 // Enter=下一个；Shift+Enter 或 Ctrl+Enter=上一个
+                // ⬇(下一个)在左、⬆(上一个)在右：主操作（Enter）优先的习惯顺序
+                let next = ui.button("⬇").on_hover_text(t.search_next_tip).clicked()
+                    || (enter && !shift && !ctrl);
                 let prev = ui.button("⬆").on_hover_text(t.search_prev_tip).clicked()
                     || (enter && (shift || ctrl));
-                let next =
-                    ui.button("⬇").on_hover_text(t.search_next_tip).clicked() || (enter && !shift && !ctrl);
                 if prev || next {
                     app.last_search = if is_key {
                         super::SearchContext::DetailKeyBlob
@@ -1008,10 +1009,11 @@ fn kv_card(
                     let (ctrl, shift) =
                         ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
                     // Enter=下一个；Shift+Enter 或 Ctrl+Enter=上一个
-                    let prev = ui.button("⬆").on_hover_text(t.search_prev_tip).clicked()
-                        || (enter && (shift || ctrl));
+                    // ⬇(下一个)在左、⬆(上一个)在右，与大字段搜索行一致
                     let next = ui.button("⬇").on_hover_text(t.search_next_tip).clicked()
                         || (enter && !shift && !ctrl);
+                    let prev = ui.button("⬆").on_hover_text(t.search_prev_tip).clicked()
+                        || (enter && (shift || ctrl));
                     if prev || next {
                         app.last_search = super::SearchContext::DetailDup;
                     }
