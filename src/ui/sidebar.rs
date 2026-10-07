@@ -149,11 +149,21 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                         fav_key_action = Some((i, false));
                                     }
                                     let table_name = fk.table.as_deref().unwrap_or(t.main_table);
-                                    let short_hex: String = fk.key_hex.chars().take(16).collect();
+                                    // Key 显示解码后的可读文本（自动猜测），hex 全文放 hover
+                                    let key_text = crate::ui::parse_hex(&fk.key_hex)
+                                        .map(|b| {
+                                            crate::fmt::decode(
+                                                &b,
+                                                crate::fmt::DecodeMode::Auto,
+                                                app.endian,
+                                                24,
+                                            )
+                                        })
+                                        .unwrap_or_else(|_| fk.key_hex.chars().take(16).collect());
                                     let label = if fk.note.is_empty() {
-                                        format!("{table_name} · {short_hex}")
+                                        format!("{table_name} · {key_text}")
                                     } else {
-                                        format!("{table_name} · {} · {short_hex}", fk.note)
+                                        format!("{table_name} · {} · {key_text}", fk.note)
                                     };
                                     ui.label(egui::RichText::new(label).monospace().small())
                                         .on_hover_text(format!("{table_name} · {}", fk.key_hex));
