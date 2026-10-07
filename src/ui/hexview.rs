@@ -415,8 +415,10 @@ pub(crate) fn hex_view(
 
     // egui 在按下/拖拽期间只把"被拖拽控件"标记为 hovered（interaction.rs），指针移出后
     // 提示仍会跟随指针显示、盖住其他面板区域；仅悬停且未拖拽时才显示本提示。
-    if resp.hovered() && !resp.dragged() {
-        resp.on_hover_text(crate::i18n::tr().hex_hint);
-    }
+    let resp = if resp.hovered() && !resp.dragged() {
+        resp.on_hover_text(crate::i18n::tr().hex_hint)
+    } else {
+        resp
+    };
     resp
 }
