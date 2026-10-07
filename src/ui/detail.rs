@@ -782,35 +782,47 @@ fn kv_card(
         );
         let text_rows = text.lines().count().clamp(1, 16);
         let default_open = total <= 512;
-        egui::CollapsingHeader::new(t.section_text)
-            .id_salt(("detail_text", is_key, default_open))
-            .default_open(default_open)
-            .show(ui, |ui| {
-                let mut text = text;
-                let line_h = ui
-                    .fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())))
-                    + ui.spacing().extra_text_line_spacing;
-                // + 12 ≈ TextEdit frame 上下内边距，保证 16 行整内容恰好不滚
-                egui::ScrollArea::vertical()
-                    .id_salt(("detail_text_scroll", is_key))
-                    .auto_shrink([false, true])
-                    .max_height(16.0 * line_h + 12.0)
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut text)
-                                .font(egui::TextStyle::Monospace)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(text_rows),
-                        );
-                    });
-            });
-
-        // 自动模式时显示猜测的类型（放在文本视图之后、hex 之前）
-        if app.detail.mode_of(is_key) == DecodeMode::Auto {
-            ui.weak(t.guess_line(&fmt::guess(bytes, app.endian).0, bytes.len()));
+        // 猜测/字节数信息紧跟"文本"标题文字同一行右侧（自定义标题行），
+        // 不再单列一行占据文本框与 hex 之间的位置
+        let guess_text = if app.detail.mode_of(is_key) == DecodeMode::Auto {
+            t.guess_line(&fmt::guess(bytes, app.endian).0, bytes.len())
         } else {
-            ui.weak(t.bytes(bytes.len()));
-        }
+            t.bytes(bytes.len())
+        };
+        egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            ui.make_persistent_id(("detail_text", is_key, default_open)),
+            default_open,
+        )
+        .show_header(ui, |ui| {
+            // 与 CollapsingHeader 默认一致：标题用 Button 样式文本
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(t.section_text).text_style(egui::TextStyle::Button),
+                )
+                .selectable(false),
+            );
+            ui.weak(guess_text);
+        })
+        .body(|ui| {
+            let mut text = text;
+            let line_h = ui
+                .fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())))
+                + ui.spacing().extra_text_line_spacing;
+            // + 12 ≈ TextEdit frame 上下内边距，保证 16 行整内容恰好不滚
+            egui::ScrollArea::vertical()
+                .id_salt(("detail_text_scroll", is_key))
+                .auto_shrink([false, true])
+                .max_height(16.0 * line_h + 12.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut text)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(text_rows),
+                    );
+                });
+        });
 
         // 十六进制视图：自绘交互组件（悬停整行/单字节联动、拖拽选区 HEX↔ASCII 同步）。
         // 独立滚动区：高度随内容自适应（auto_shrink 高度方向），只有超过上限才出滚动条；
