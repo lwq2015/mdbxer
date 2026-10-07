@@ -24,59 +24,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         .show(ui, |ui| {
             let Some(dbh) = &app.db else { return };
 
-            // 表列表折叠状态决定收藏区高度上限：展开时限 70%（表列表要占大头），
-            // 折叠后整个左栏只剩折叠头一行，收藏区可占满剩余高度
-            let tables_fold_id = egui::Id::new("tables_fold");
-            let tables_open = egui::collapsing_header::CollapsingState::load(ui.ctx(), tables_fold_id)
-                .is_some_and(|s| s.is_open());
-            // 折叠→展开切换时清掉收藏区持久化的 PanelState：
-            // 折叠时面板被 exact_size 填满大高度并写回，展开后若不清会顶在
-            // 大高度把表列表挤出（见用户截图 bug）。
-            // 注意：PanelState 用 insert_persisted 存，remove 默认清 temp 区域，
-            // 但 get_persisted 读 persisted；用 get_persisted 判断是否存过，
-            // 再 remove 清掉（remove 对 persisted 也有效，只是 remove_persisted 不存在）。
-            let was_open = ui.ctx().memory(|m| {
-                m.data.get_temp::<bool>(egui::Id::new("prev_tables_open"))
-            });
-            if was_open == Some(false) && tables_open {
-                ui.ctx().memory_mut(|m| {
-                    let _ = m.data.get_persisted::<egui::PanelState>(egui::Id::new("fav_panel"));
-                    m.data.remove::<egui::PanelState>(egui::Id::new("fav_panel"));
-                });
-            }
-            ui.ctx().memory_mut(|m| {
-                m.data.insert_temp(egui::Id::new("prev_tables_open"), tables_open)
-            });
-            let avail_h = ui.available_height();
-            let fav_max_h = if tables_open {
-                avail_h * 0.7
-            } else {
-                avail_h - 30.0
-            };
-
             // ── 底部固定收藏区（先登记面板，剩余空间才全部分给表列表）──
             // 动作在不可变收集区记录，闭包结束后统一应用（规避借用）
             let mut fav_table_pick: Option<usize> = None;
             let mut fav_table_toggle: Option<Option<String>> = None;
             let mut fav_key_action: Option<(usize, bool)> = None; // (下标, true=跳转)
-            // 可拖拽高度：拖动面板顶边调整，egui 持久化到 PanelState（重启保持）。
-            // default_size 是首帧初始高度（无持久化状态时 egui 默认只有一行高，
-            // 且 ScrollArea 垂直自适应会随之收缩、永远撑不开，必须显式给定）。
-            // 表列表折叠时直接填满：否则面板沿用折叠前持久化的较小高度，
-            // 折叠就失去"把空间让给收藏区"的意义
-            let fav_p = egui::Panel::bottom("fav_panel")
-                .resizable(true)
-                .min_size(28.0)
-                .default_size(180.0)
-                .max_size(fav_max_h);
-            let fav_p = if tables_open {
-                fav_p
-            } else {
-                fav_p.exact_size(fav_max_h)
-            };
-            // 只清左右内边距（默认 symmetric(8,2) 与父面板 padding 叠加显得太宽），
-            // 保留 panel_fill 背景与顶部分隔线
-            fav_p
+            // 收藏区面板：固定底部，高度由内部 CollapsingHeader 自然决定
+            // （折叠时只剩标题一行，展开时显示内容）。不需要手动算高度，
+            // 也不需要拖拽调整——折叠状态即"高度开关"。
+            egui::Panel::bottom("fav_panel")
+                .resizable(false)
+                // 只清左右内边距（默认 symmetric(8,2) 与父面板 padding 叠加显得太宽），
+                // 保留 panel_fill 背景与顶部分隔线
                 .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(0, 2)))
                 .show(ui, |ui| {
                     // 不在此再加 ui.separator()：bottom 面板自身已在顶边画分隔线
@@ -84,11 +43,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         .id_salt("fav_keys")
                         .default_open(true)
                         .show_unindented(ui, |ui| {
-                            // 收紧行内间距：★/➡/× 按钮与文字贴紧，左右都不留多余空隙
-                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 1.0);
+                            // 收藏区内容用 ScrollArea 限高：展开时最多占可用高度的 40%，
+                            // 折叠时只剩标题一行。不需要拖拽调整——折叠状态即"高度开关"。
                             // 宽度方向必须占满：否则内容水平不设限，行按钮 truncate 失效
                             // 反而逐帧撑宽左栏（见 JSON 左栏变胖 bug）
+                            let avail_h = ui.available_height();
                             egui::ScrollArea::vertical()
+                                .max_height((avail_h * 0.4).max(120.0))
                                 .auto_shrink([false, true])
                                 .show(ui, |ui| {
                                     if app.fav_tables.is_empty() {
