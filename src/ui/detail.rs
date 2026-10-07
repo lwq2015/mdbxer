@@ -778,8 +778,9 @@ fn kv_card(
         let window = &bytes[off..end];
 
         // 文本视图（可折叠；长文本默认折叠，方便直接看 hex）。
-        // TextEdit 自身按内容行数自适应高度（clamp 1..16 行），超出时内部滚动，
-        // 不要再套 ScrollArea（会撑满剩余高度、把 hex 挤走）。
+        // egui TextEdit 自身无内部滚动、高度随内容无限增长（desired_rows 只是下限），
+        // 故必须包一层 ScrollArea：内容 ≤16 行时 auto_shrink 收缩到内容高度（无滚动条），
+        // 超过 16 行才出现内部滚动条，卡片头/搜索行不随内容滚走。
         let text = fmt::decode(
             window,
             app.detail.mode_of(is_key),
@@ -793,12 +794,22 @@ fn kv_card(
             .default_open(default_open)
             .show(ui, |ui| {
                 let mut text = text;
-                ui.add(
-                    egui::TextEdit::multiline(&mut text)
-                        .font(egui::TextStyle::Monospace)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(text_rows),
-                );
+                let line_h = ui
+                    .fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())))
+                    + ui.spacing().extra_text_line_spacing;
+                // + 12 ≈ TextEdit frame 上下内边距，保证 16 行整内容恰好不滚
+                egui::ScrollArea::vertical()
+                    .id_salt(("detail_text_scroll", is_key))
+                    .auto_shrink([false, true])
+                    .max_height(16.0 * line_h + 12.0)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut text)
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(text_rows),
+                        );
+                    });
             });
 
         // 十六进制视图：自绘交互组件（悬停整行/单字节联动、拖拽选区 HEX↔ASCII 同步）。
