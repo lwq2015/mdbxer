@@ -435,8 +435,14 @@ fn kv_card(
             ui.strong(title);
             // Key 卡片：收藏 ☆/★（点击切换，立即持久化）
             if is_key {
-                let star = if app.is_fav_key(key) { "★" } else { "☆" };
-                if ui.small_button(star).on_hover_text(t.fav_key_tip).clicked() {
+                let is_fav = app.is_fav_key(key);
+                let star = if is_fav { "★" } else { "☆" };
+                let star_tip = if is_fav {
+                    t.fav_rm_k_tip
+                } else {
+                    t.fav_add_k_tip
+                };
+                if ui.small_button(star).on_hover_text(star_tip).clicked() {
                     app.toggle_fav_key(key);
                 }
             }

@@ -122,7 +122,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                 ui.horizontal(|ui| {
                                     if ui
                                         .small_button("★")
-                                        .on_hover_text(t.fav_table_tip)
+                                        .on_hover_text(t.fav_rm_t_tip)
                                         .clicked()
                                     {
                                         fav_table_toggle = Some(fname.clone());
@@ -220,9 +220,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     let is_fav = app.fav_tables.contains(&tbl.name);
                     ui.horizontal(|ui| {
                         let star = if is_fav { "★" } else { "☆" };
+                        let star_tip = if is_fav {
+                            t.fav_rm_t_tip
+                        } else {
+                            t.fav_add_t_tip
+                        };
                         if ui
                             .small_button(star)
-                            .on_hover_text(t.fav_table_tip)
+                            .on_hover_text(star_tip)
                             .clicked()
                         {
                             row_fav_toggled = Some(tbl.name.clone());

@@ -236,8 +236,10 @@ pub struct I18n {
     /// 浅色主题下：切换到深色
     pub theme_to_dark: &'static str,
     pub favorites_title: &'static str,
-    pub fav_table_tip: &'static str,
-    pub fav_key_tip: &'static str,
+    pub fav_add_t_tip: &'static str,
+    pub fav_rm_t_tip: &'static str,
+    pub fav_add_k_tip: &'static str,
+    pub fav_rm_k_tip: &'static str,
     pub fav_jump_tip: &'static str,
     pub fav_del_tip: &'static str,
     pub fav_empty: &'static str,
@@ -688,8 +690,10 @@ const ZH: I18n = I18n {
     theme_to_light: "切换到浅色主题",
     theme_to_dark: "切换到深色主题",
     favorites_title: "收藏",
-    fav_table_tip: "收藏 / 取消收藏该表",
-    fav_key_tip: "收藏 / 取消收藏该 Key",
+    fav_add_t_tip: "收藏该表",
+    fav_rm_t_tip: "取消收藏该表",
+    fav_add_k_tip: "收藏该 Key",
+    fav_rm_k_tip: "取消收藏该 Key",
     fav_jump_tip: "跳转到该 Key",
     fav_del_tip: "从收藏中删除",
     fav_empty: "（暂无收藏）",
@@ -914,8 +918,10 @@ const EN: I18n = I18n {
     theme_to_light: "Switch to light theme",
     theme_to_dark: "Switch to dark theme",
     favorites_title: "Favorites",
-    fav_table_tip: "Add/remove this table from favorites",
-    fav_key_tip: "Add/remove this key from favorites",
+    fav_add_t_tip: "Add this table to favorites",
+    fav_rm_t_tip: "Remove this table from favorites",
+    fav_add_k_tip: "Add this key to favorites",
+    fav_rm_k_tip: "Remove this key from favorites",
     fav_jump_tip: "Jump to this key",
     fav_del_tip: "Remove from favorites",
     fav_empty: "(no favorites yet)",
@@ -1140,8 +1146,10 @@ const RU: I18n = I18n {
     theme_to_light: "Переключиться на светлую тему",
     theme_to_dark: "Переключиться на тёмную тему",
     favorites_title: "Избранное",
-    fav_table_tip: "Добавить/убрать таблицу из избранного",
-    fav_key_tip: "Добавить/убрать ключ из избранного",
+    fav_add_t_tip: "Добавить таблицу в избранное",
+    fav_rm_t_tip: "Убрать таблицу из избранного",
+    fav_add_k_tip: "Добавить ключ в избранное",
+    fav_rm_k_tip: "Убрать ключ из избранного",
     fav_jump_tip: "Перейти к этому ключу",
     fav_del_tip: "Удалить из избранного",
     fav_empty: "(избранное пусто)",
@@ -1371,8 +1379,10 @@ mod tests {
             assert!(!table.theme_to_light.is_empty());
             assert!(!table.theme_to_dark.is_empty());
             assert!(!table.favorites_title.is_empty());
-            assert!(!table.fav_table_tip.is_empty());
-            assert!(!table.fav_key_tip.is_empty());
+            assert!(!table.fav_add_t_tip.is_empty());
+            assert!(!table.fav_rm_t_tip.is_empty());
+            assert!(!table.fav_add_k_tip.is_empty());
+            assert!(!table.fav_rm_k_tip.is_empty());
             assert!(!table.fav_jump_tip.is_empty());
             assert!(!table.fav_del_tip.is_empty());
             assert!(!table.fav_empty.is_empty());
