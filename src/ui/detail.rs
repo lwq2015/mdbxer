@@ -1031,6 +1031,26 @@ fn kv_card(
         } else {
             app.detail.blob_scroll_take(is_key)
         };
+        // 文本区命中高亮区间（文本字节坐标）：仅当窗口是合法 UTF-8 且解码长度一致
+        // （解码即原文，字节偏移 1:1）时可靠；hex/数值等重编码显示不映射，只滚动不高亮
+        let text_hit_range: Option<(usize, usize)> = (|| {
+            let (hit_abs, hit_len) = app.detail.blob_hit(is_key)?;
+            if hit_abs < off || hit_abs >= off + window.len() {
+                return None;
+            }
+            if text.len() != window.len() || std::str::from_utf8(window).is_err() {
+                return None;
+            }
+            let mut hs = hit_abs - off;
+            let mut he = (hs + hit_len).min(text.len());
+            while hs > 0 && !text.is_char_boundary(hs) {
+                hs -= 1;
+            }
+            while he < text.len() && !text.is_char_boundary(he) {
+                he += 1;
+            }
+            (hs < he).then_some((hs, he))
+        })();
         egui::collapsing_header::CollapsingState::load_with_default_open(
             ui.ctx(),
             egui::Id::new(("detail_text", is_key, default_open)),
@@ -1055,14 +1075,43 @@ fn kv_card(
                 .max_height(text_h)
                 .show(ui, |ui| {
                     let content_top = ui.cursor().min.y;
-                    let te_rect = ui
-                        .add(
-                            egui::TextEdit::multiline(&mut text_owned)
-                                .font(egui::TextStyle::Monospace)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(1),
-                        )
-                        .rect;
+                    let mut te = egui::TextEdit::multiline(&mut text_owned)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(1);
+                    // 命中区间琥珀色高亮（与 hex 视图同色半透明，深浅主题均可读）
+                    // 闭包先绑定变量再取 &mut，否则临时量在 add(te) 前就被释放（E0716）
+                    let mut hl_layouter =
+                        move |ui: &egui::Ui, s: &dyn egui::TextBuffer, _wrap: f32| {
+                            let s = s.as_str();
+                            let mut job = egui::text::LayoutJob::default();
+                            let base = egui::text::TextFormat {
+                                font_id: egui::TextStyle::Monospace.resolve(ui.style()),
+                                color: ui.visuals().text_color(),
+                                ..Default::default()
+                            };
+                            if let Some((hs, he)) = text_hit_range {
+                                job.append(&s[..hs], 0.0, base.clone());
+                                job.append(
+                                    &s[hs..he],
+                                    0.0,
+                                    egui::text::TextFormat {
+                                        background: egui::Color32::from_rgba_unmultiplied(
+                                            0xF5, 0xA6, 0x23, 0x66,
+                                        ),
+                                        ..base.clone()
+                                    },
+                                );
+                                job.append(&s[he..], 0.0, base);
+                            } else {
+                                job.append(s, 0.0, base);
+                            }
+                            ui.fonts_mut(|f| f.layout_job(job))
+                        };
+                    if text_hit_range.is_some() {
+                        te = te.layouter(&mut hl_layouter);
+                    }
+                    let te_rect = ui.add(te).rect;
                     // 搜索命中：滚到命中所在行（UTF-8 窗口字节偏移直接可用，
                     // 其它编码按字节比例估算后居中，误差不可见）
                     if let Some(hit_abs) = text_scroll_to {
