@@ -243,7 +243,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(Column::exact(56.0))
             .column(Column::initial(160.0).at_least(80.0).clip(true))
-            .column(Column::exact(80.0))
+            // .column(Column::exact(80.0))
+            .column(Column::initial(80.0).at_most(120.))
             .column(Column::remainder().clip(true))
             .min_scrolled_height(0.0);
         if let Some(di) = scroll_to {
@@ -281,6 +282,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     let is_sel = selected == Some(i);
                     row_ui.set_selected(is_sel);
                     // 文字保持默认色：选中行底色已改浅色，无需反白
+                    // 单元格 Label 一律不带 click sense：hit-test 中可交互的 Label 会
+                    // 抢走整行 cell 的 hover，导致"悬停文字无高亮、悬停空白才高亮"。
+                    // 点击统一由行末 row_ui.response()（各 cell 响应的并集）承担。
                     row_ui.col(|ui| {
                         let abs = match app.base_index {
                             Some(b) => b + i + 1,
@@ -292,28 +296,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         let resp = ui.add(
                             egui::Label::new(rt)
                                 .selectable(false)
-                                .show_tooltip_when_elided(false)
-                                .sense(egui::Sense::click()),
+                                .show_tooltip_when_elided(false),
                         );
-                        elide_tooltip(ui, resp.clone(), &abs.to_string());
-                        if resp.clicked() {
-                            clicked_row = Some(i);
-                            app.row_copy_pending = true;
-                        }
+                        elide_tooltip(ui, resp, &abs.to_string());
                     });
                     row_ui.col(|ui| {
                         let rt = egui::RichText::new(&view.key_text).monospace();
                         let resp = ui.add(
                             egui::Label::new(rt)
                                 .selectable(false)
-                                .show_tooltip_when_elided(false)
-                                .sense(egui::Sense::click()),
+                                .show_tooltip_when_elided(false),
                         );
-                        elide_tooltip(ui, resp.clone(), &view.key_text);
-                        if resp.clicked() {
-                            clicked_row = Some(i);
-                            app.row_copy_pending = true;
-                        }
+                        elide_tooltip(ui, resp, &view.key_text);
                     });
                     row_ui.col(|ui| {
                         // Value 指定了解码类型时，类型标签用强调色并加 hover 说明，
@@ -326,8 +320,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         let resp = ui.add(
                             egui::Label::new(rt)
                                 .selectable(false)
-                                .show_tooltip_when_elided(false)
-                                .sense(egui::Sense::click()),
+                                .show_tooltip_when_elided(false),
                         );
                         if forced {
                             // 标签被列宽截断时在 tooltip 里补全全名，再附指定类型说明
@@ -342,13 +335,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             } else {
                                 t.type_forced_tip.to_string()
                             };
-                            resp.clone().on_hover_text(tip);
+                            resp.on_hover_text(tip);
                         } else {
-                            elide_tooltip(ui, resp.clone(), &view.type_label);
-                        }
-                        if resp.clicked() {
-                            clicked_row = Some(i);
-                            app.row_copy_pending = true;
+                            elide_tooltip(ui, resp, &view.type_label);
                         }
                     });
                     row_ui.col(|ui| {
@@ -361,17 +350,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         let resp = ui.add(
                             egui::Label::new(rt)
                                 .selectable(false)
-                                .show_tooltip_when_elided(false)
-                                .sense(egui::Sense::click()),
+                                .show_tooltip_when_elided(false),
                         );
-                        elide_tooltip(ui, resp.clone(), &text);
-                        if resp.clicked() {
-                            clicked_row = Some(i);
-                            app.row_copy_pending = true;
-                        }
+                        elide_tooltip(ui, resp, &text);
                     });
                     if row_ui.response().clicked() {
                         clicked_row = Some(i);
+                        app.row_copy_pending = true;
                     }
                 });
             });
