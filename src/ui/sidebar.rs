@@ -98,16 +98,17 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     app.left_panel_w = resp.response.rect.width();
 }
 
-/// 表列表：排序下拉 + 滚动列表
-/// 导出按钮和过滤框已迁移：导出移到顶栏、过滤表名框已删除。
+/// 表列表：排序下拉 + 过滤框 + 滚动列表
+/// 导出按钮已迁移到顶栏。
 fn show_tables(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n) {
     let Some(dbh) = &app.db else { return };
     // 动作收集区
     let mut sort = app.table_sort;
+    let mut filter_s = app.table_filter.clone();
     let mut clicked = None;
     let mut row_fav_toggled = None;
 
-    // 排序下拉
+    // 排序下拉 + 过滤表名（同行）
     ui.horizontal(|ui| {
         let ir = egui::ComboBox::from_id_salt("table_sort")
             .width(80.0)
@@ -118,11 +119,21 @@ fn show_tables(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n) {
                 }
             });
         super::wheel_cycle(ui.ctx(), &ir.response, &TableSort::ALL, &mut sort);
+        let filter_w = ui.available_width().max(80.0);
+        ui.add(
+            egui::TextEdit::singleline(&mut filter_s)
+                .hint_text(t.filter_hint)
+                .desired_width(filter_w),
+        );
     });
     ui.separator();
 
-    // 排序 + 收藏表稳定置顶
+    // 过滤 + 排序 + 收藏表稳定置顶
+    let filter = filter_s.to_lowercase();
     let mut idx: Vec<usize> = (0..dbh.tables.len()).collect();
+    idx.retain(|&i| {
+        filter.is_empty() || dbh.tables[i].display().to_lowercase().contains(&filter)
+    });
     match sort {
         TableSort::NameAsc => {
             idx.sort_by(|&a, &b| dbh.tables[a].display().cmp(&dbh.tables[b].display()))
@@ -173,6 +184,9 @@ fn show_tables(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n) {
     if sort != app.table_sort {
         app.table_sort = sort;
         app.save_ui_prefs();
+    }
+    if filter_s != app.table_filter {
+        app.table_filter = filter_s;
     }
     if let Some(i) = clicked {
         app.select_table(i);

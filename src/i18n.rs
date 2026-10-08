@@ -115,6 +115,7 @@ pub struct I18n {
 
     // ── 左栏 ──
     pub tables_title: &'static str,
+    pub filter_hint: &'static str,
     pub sort_name_asc: &'static str,
     pub sort_name_desc: &'static str,
     pub sort_count_asc: &'static str,
@@ -627,6 +628,7 @@ const ZH: I18n = I18n {
     mode_auto: "自动",
 
     tables_title: "表 (subDB)",
+    filter_hint: "过滤表名",
     sort_name_asc: "名称 ⬆",
     sort_name_desc: "名称 ⬇",
     sort_count_asc: "条数 ⬆",
@@ -864,6 +866,7 @@ const EN: I18n = I18n {
     mode_auto: "Auto",
 
     tables_title: "Tables (subDB)",
+    filter_hint: "Filter tables",
     sort_name_asc: "Name ⬆",
     sort_name_desc: "Name ⬇",
     sort_count_asc: "Entries ⬆",
@@ -1101,6 +1104,7 @@ const RU: I18n = I18n {
     mode_auto: "Авто",
 
     tables_title: "Таблицы (subDB)",
+    filter_hint: "Фильтр таблиц",
     sort_name_asc: "Имя ⬆",
     sort_name_desc: "Имя ⬇",
     sort_count_asc: "Записи ⬆",
