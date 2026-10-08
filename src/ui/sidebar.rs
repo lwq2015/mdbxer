@@ -65,15 +65,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             ui.horizontal(|ui| {
                 // 折叠三角（与详情区同款矢量三角，egui 内置绘制）
                 let openness = tables_state.openness(ui.ctx());
-                let (rect, tri_resp) = ui.allocate_exact_size(
-                    egui::vec2(12.0, ui.spacing().interact_size.y),
-                    egui::Sense::click(),
-                );
+                let tri_size = egui::vec2(ui.spacing().indent, ui.spacing().icon_width);
+                let (_rect, tri_resp) = ui.allocate_exact_size(tri_size, egui::Sense::click());
                 egui::collapsing_header::paint_default_icon(ui, openness, &tri_resp);
                 if tri_resp.clicked() {
                     tables_state.toggle(ui);
-                }
-                let _ = rect; // rect 已被 paint 使用
+                } // rect 已被 paint 使用
                 // 标题（点击折叠，和 CollapsingHeader 一致）
                 let title_resp = ui.add(
                     egui::Button::new(
@@ -189,15 +186,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             // ── 收藏区：三角 + 标题（可点击折叠），同一行 ──
             ui.horizontal(|ui| {
                 let openness = fav_state.openness(ui.ctx());
-                let (rect, tri_resp) = ui.allocate_exact_size(
-                    egui::vec2(12.0, ui.spacing().interact_size.y),
-                    egui::Sense::click(),
-                );
+                let tri_size = egui::vec2(ui.spacing().indent, ui.spacing().icon_width);
+                let (_rect, tri_resp) = ui.allocate_exact_size(tri_size, egui::Sense::click());
                 egui::collapsing_header::paint_default_icon(ui, openness, &tri_resp);
                 if tri_resp.clicked() {
                     fav_state.toggle(ui);
                 }
-                let _ = rect;
                 let title_resp = ui.add(
                     egui::Button::new(
                         egui::RichText::new(t.favorites_title).strong(),
