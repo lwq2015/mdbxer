@@ -28,37 +28,33 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let tab_id = egui::Id::new("left_tab_fav");
             let is_fav = ui.ctx().memory(|m| m.data.get_temp::<bool>(tab_id)).unwrap_or(false);
 
-            // ── 内容区：占满除 Tab 栏外的所有空间（固定高度，Tab 栏不跳）──
-            let tab_bar_h = ui.spacing().interact_size.y + 4.0; // 按钮+separator
-            let content_h = (ui.available_height() - tab_bar_h).max(60.0);
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), content_h),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    if is_fav {
-                        show_favorites(ui, app, &t);
-                    } else {
-                        show_tables(ui, app, &t);
+            // ── 底部 Tab 栏（锚定左栏最底部）──
+            egui::Panel::bottom("left_tab_bar")
+                .resizable(false)
+                .show_separator_line(true)
+                .show_inside(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let w = ui.available_width() / 2.0;
+                    if ui.add(
+                        egui::Button::selectable(!is_fav, egui::RichText::new(t.tables_title).strong())
+                            .min_size(egui::vec2(w, 0.0)),
+                    ).clicked() {
+                        ui.ctx().memory_mut(|m| m.data.insert_temp(tab_id, false));
                     }
-                },
-            );
+                    if ui.add(
+                        egui::Button::selectable(is_fav, egui::RichText::new(t.favorites_title).strong())
+                            .min_size(egui::vec2(w, 0.0)),
+                    ).clicked() {
+                        ui.ctx().memory_mut(|m| m.data.insert_temp(tab_id, true));
+                    }
+                });
 
-            // ── 底部 Tab 栏 ──
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                let w = ui.available_width() / 2.0;
-                if ui.add(
-                    egui::Button::selectable(!is_fav, egui::RichText::new(t.tables_title).strong())
-                        .min_size(egui::vec2(w, 0.0)),
-                ).clicked() {
-                    ui.ctx().memory_mut(|m| m.data.insert_temp(tab_id, false));
-                }
-                if ui.add(
-                    egui::Button::selectable(is_fav, egui::RichText::new(t.favorites_title).strong())
-                        .min_size(egui::vec2(w, 0.0)),
-                ).clicked() {
-                    ui.ctx().memory_mut(|m| m.data.insert_temp(tab_id, true));
+            // ── 内容区：占满 Tab 栏以上所有空间 ──
+            ui.push_id("left_content", |ui| {
+                if is_fav {
+                    show_favorites(ui, app, &t);
+                } else {
+                    show_tables(ui, app, &t);
                 }
             });
         });
