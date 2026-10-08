@@ -252,9 +252,9 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                                 fav_table_pick = Some(pos);
                             }
                         }
-                        // 右端 ✕ 取消表收藏
+                        // 右端 x 取消表收藏
                         if ui
-                            .small_button("✕")
+                            .small_button("x")
                             .on_hover_text(t.fav_rm_t_tip)
                             .clicked()
                         {
@@ -296,9 +296,9 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                                 {
                                     fav_key_action = Some((i, true));
                                 }
-                                // 右端 ✕ 取消 Key 收藏
+                                // 右端 x 取消 Key 收藏
                                 if ui
-                                    .small_button("✕")
+                                    .small_button("x")
                                     .on_hover_text(t.fav_rm_k_tip)
                                     .clicked()
                                 {
