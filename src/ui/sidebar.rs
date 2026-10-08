@@ -239,13 +239,6 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                     )
                     .show_header(ui, |ui| {
                         if ui
-                            .small_button("★")
-                            .on_hover_text(t.fav_rm_t_tip)
-                            .clicked()
-                        {
-                            fav_table_toggle = Some(fname.clone());
-                        }
-                        if ui
                             .add(
                                 egui::Button::selectable(
                                     selected,
@@ -263,36 +256,37 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                                 fav_table_pick = Some(pos);
                             }
                         }
+                        // 右端 ✕ 取消表收藏
+                        if ui
+                            .small_button("✕")
+                            .on_hover_text(t.fav_rm_t_tip)
+                            .clicked()
+                        {
+                            fav_table_toggle = Some(fname.clone());
+                        }
                     })
                     .body_unindented(|ui| {
                         for i in key_idx {
                             let fk = &app.fav_keys[i];
+                            let key_text =
+                                crate::ui::parse_hex(&fk.key_hex)
+                                    .map(|b| {
+                                        crate::fmt::decode(
+                                            &b,
+                                            crate::fmt::DecodeMode::Auto,
+                                            app.endian,
+                                            24,
+                                        )
+                                    })
+                                    .unwrap_or_else(|_| {
+                                        fk.key_hex.chars().take(16).collect()
+                                    });
+                            let label = if fk.note.is_empty() {
+                                key_text
+                            } else {
+                                format!("{} · {key_text}", fk.note)
+                            };
                             ui.horizontal(|ui| {
-                                if ui
-                                    .small_button("★")
-                                    .on_hover_text(t.fav_rm_k_tip)
-                                    .clicked()
-                                {
-                                    fav_key_action = Some((i, false));
-                                }
-                                let key_text =
-                                    crate::ui::parse_hex(&fk.key_hex)
-                                        .map(|b| {
-                                            crate::fmt::decode(
-                                                &b,
-                                                crate::fmt::DecodeMode::Auto,
-                                                app.endian,
-                                                24,
-                                            )
-                                        })
-                                        .unwrap_or_else(|_| {
-                                            fk.key_hex.chars().take(16).collect()
-                                        });
-                                let label = if fk.note.is_empty() {
-                                    key_text
-                                } else {
-                                    format!("{} · {key_text}", fk.note)
-                                };
                                 if ui
                                     .add(
                                         egui::Button::selectable(
@@ -305,6 +299,14 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                                     .clicked()
                                 {
                                     fav_key_action = Some((i, true));
+                                }
+                                // 右端 ✕ 取消 Key 收藏
+                                if ui
+                                    .small_button("✕")
+                                    .on_hover_text(t.fav_rm_k_tip)
+                                    .clicked()
+                                {
+                                    fav_key_action = Some((i, false));
                                 }
                             });
                         }
