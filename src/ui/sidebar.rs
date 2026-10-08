@@ -22,31 +22,68 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         .resizable(true)
         .size_range(LEFT_PANEL_MIN..=max_w)
         .show(ui, |ui| {
-            let Some(dbh) = &app.db else { return };
+            let Some(_dbh) = &app.db else { return };
 
             // Tab 状态（持久化到 egui Memory）
             let tab_id = egui::Id::new("left_tab_fav");
             let is_fav = ui.ctx().memory(|m| m.data.get_temp::<bool>(tab_id)).unwrap_or(false);
 
-            // ── 底部 Tab 栏（锚定左栏最底部）──
+            // ── 底部 Tab 栏（VS 风格扁平 Tab，横向排列，锚定左栏最底部）──
             egui::Panel::bottom("left_tab_bar")
                 .resizable(false)
                 .show_separator_line(true)
-                .show_inside(ui, |ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
+                .show(ui, |ui| {
+                    let h = ui.spacing().interact_size.y;
                     let w = ui.available_width() / 2.0;
-                    if ui.add(
-                        egui::Button::selectable(!is_fav, egui::RichText::new(t.tables_title).strong())
-                            .min_size(egui::vec2(w, 0.0)),
-                    ).clicked() {
-                        ui.ctx().memory_mut(|m| m.data.insert_temp(tab_id, false));
-                    }
-                    if ui.add(
-                        egui::Button::selectable(is_fav, egui::RichText::new(t.favorites_title).strong())
-                            .min_size(egui::vec2(w, 0.0)),
-                    ).clicked() {
-                        ui.ctx().memory_mut(|m| m.data.insert_temp(tab_id, true));
-                    }
+                    let painter = ui.painter().clone();
+                    let vis = ui.visuals().clone();
+                    // 横向布局（左→右），让两个 Tab 并排
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), h),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            let tab1_resp =
+                                ui.allocate_response(egui::vec2(w, h), egui::Sense::click());
+                            let tab2_resp =
+                                ui.allocate_response(egui::vec2(w, h), egui::Sense::click());
+                            let tabs = [
+                                (tab1_resp.rect, !is_fav, t.tables_title),
+                                (tab2_resp.rect, is_fav, t.favorites_title),
+                            ];
+                            for (rect, active, label) in tabs {
+                                // 选中态：顶部彩色线 + 略深背景
+                                if active {
+                                    painter.line_segment(
+                                        [rect.left_top(), rect.right_top()],
+                                        egui::Stroke::new(2.5, vis.selection.bg_fill),
+                                    );
+                                    painter.rect_filled(rect, 0.0, vis.panel_fill);
+                                }
+                                // hover 态背景
+                                // 文字
+                                let color = if active {
+                                    vis.text_color()
+                                } else {
+                                    vis.weak_text_color()
+                                };
+                                painter.text(
+                                    rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    label,
+                                    egui::FontId::proportional(14.0),
+                                    color,
+                                );
+                            }
+                            if tab1_resp.clicked() {
+                                ui.ctx()
+                                    .memory_mut(|m| m.data.insert_temp(tab_id, false));
+                            }
+                            if tab2_resp.clicked() {
+                                ui.ctx()
+                                    .memory_mut(|m| m.data.insert_temp(tab_id, true));
+                            }
+                        },
+                    );
                 });
 
             // ── 内容区：占满 Tab 栏以上所有空间 ──
@@ -61,18 +98,16 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     app.left_panel_w = resp.response.rect.width();
 }
 
-/// 表列表：排序下拉 + 过滤框 + 导出 + 滚动列表
+/// 表列表：排序下拉 + 滚动列表
+/// 导出按钮和过滤框已迁移：导出移到顶栏、过滤表名框已删除。
 fn show_tables(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n) {
     let Some(dbh) = &app.db else { return };
     // 动作收集区
     let mut sort = app.table_sort;
-    let mut ef = app.export_format;
-    let mut filter_s = app.table_filter.clone();
-    let mut export_clicked = false;
     let mut clicked = None;
     let mut row_fav_toggled = None;
 
-    // 排序下拉 + 导出
+    // 排序下拉
     ui.horizontal(|ui| {
         let ir = egui::ComboBox::from_id_salt("table_sort")
             .width(80.0)
@@ -84,43 +119,10 @@ fn show_tables(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n) {
             });
         super::wheel_cycle(ui.ctx(), &ir.response, &TableSort::ALL, &mut sort);
     });
-    // 过滤表名 + 导出（right_to_left 布局）
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .add_enabled(
-                    app.db.is_some() && app.export_ev_rx.is_none(),
-                    egui::Button::new("⬇"),
-                )
-                .on_hover_text(t.export_tip)
-                .clicked()
-            {
-                export_clicked = true;
-            }
-            egui::ComboBox::from_id_salt("export_format")
-                .width(52.0)
-                .selected_text(ef.label())
-                .show_ui(ui, |ui| {
-                    for f in crate::export::ExportFormat::ALL {
-                        ui.selectable_value(&mut ef, f, f.label());
-                    }
-                });
-            let filter_w = ui.available_width().max(40.0);
-            ui.add(
-                egui::TextEdit::singleline(&mut filter_s)
-                    .hint_text(t.filter_hint)
-                    .desired_width(filter_w),
-            );
-        });
-    });
     ui.separator();
 
-    // 过滤 + 排序 + 收藏表稳定置顶
-    let filter = filter_s.to_lowercase();
+    // 排序 + 收藏表稳定置顶
     let mut idx: Vec<usize> = (0..dbh.tables.len()).collect();
-    idx.retain(|&i| {
-        filter.is_empty() || dbh.tables[i].display().to_lowercase().contains(&filter)
-    });
     match sort {
         TableSort::NameAsc => {
             idx.sort_by(|&a, &b| dbh.tables[a].display().cmp(&dbh.tables[b].display()))
@@ -172,16 +174,6 @@ fn show_tables(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n) {
         app.table_sort = sort;
         app.save_ui_prefs();
     }
-    if ef != app.export_format {
-        app.export_format = ef;
-        app.save_ui_prefs();
-    }
-    if filter_s != app.table_filter {
-        app.table_filter = filter_s;
-    }
-    if export_clicked {
-        app.start_export();
-    }
     if let Some(i) = clicked {
         app.select_table(i);
     }
@@ -198,6 +190,7 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
     let mut fav_key_action: Option<(usize, bool)> = None;
 
     ui.spacing_mut().item_spacing = egui::vec2(4.0, 1.0);
+    let bar_w = ui.spacing().scroll.bar_width;
     egui::ScrollArea::vertical()
         .auto_shrink([false, true])
         .show(ui, |ui| {
@@ -235,6 +228,8 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                     )
                     .show_header(ui, |ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            // 预留滚动条宽度，避免 x 按钮被挡
+                            ui.allocate_space(egui::vec2(bar_w, 0.0));
                             // 右端 x 取消表收藏
                             if ui
                                 .small_button("x")
@@ -287,6 +282,8 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                             };
                             ui.horizontal(|ui| {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    // 预留滚动条宽度
+                                    ui.allocate_space(egui::vec2(bar_w, 0.0));
                                     // 右端 x 取消 Key 收藏
                                     if ui
                                         .small_button("x")

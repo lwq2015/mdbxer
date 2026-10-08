@@ -335,8 +335,6 @@ pub struct MdbxerApp {
     /// 主窗口是否已完成首帧居中（启动时 winit 默认位置偏左上）
     pub centered: bool,
     // ── 左栏 ──
-    /// 表名过滤输入框
-    pub table_filter: String,
     /// 表列表排序方式
     pub table_sort: TableSort,
     /// 左栏（表列表）是否显示
@@ -510,7 +508,6 @@ impl MdbxerApp {
             db: None,
             opened_path: None,
             centered: false,
-            table_filter: String::new(),
             table_sort,
             left_visible: prefs.left_visible.unwrap_or(true),
             left_panel_w: 220.0,

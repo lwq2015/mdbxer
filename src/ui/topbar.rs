@@ -188,6 +188,33 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 app.save_ui_prefs();
             }
 
+            // 导出按钮 + 格式下拉（从左栏迁移过来，更紧凑、不占左栏空间）
+            let mut ef = app.export_format;
+            let ef_resp = egui::ComboBox::from_id_salt("export_format")
+                .width(52.0)
+                .selected_text(ef.label())
+                .show_ui(ui, |ui| {
+                    for f in crate::export::ExportFormat::ALL {
+                        ui.selectable_value(&mut ef, f, f.label());
+                    }
+                })
+                .response;
+            let _ = ef_resp.on_hover_text(t.export_tip);
+            if ui
+                .add_enabled(
+                    app.db.is_some() && app.export_ev_rx.is_none(),
+                    egui::Button::new("⬇"),
+                )
+                .on_hover_text(t.export_tip)
+                .clicked()
+            {
+                app.start_export();
+            }
+            if ef != app.export_format {
+                app.export_format = ef;
+                app.save_ui_prefs();
+            }
+
             ui.separator();
 
             let mut lv = app.left_visible;
