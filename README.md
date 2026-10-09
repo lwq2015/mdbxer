@@ -71,7 +71,9 @@ cargo test
 
 构建产物：`target/release/mdbxer`（Linux）或 `target\release\mdbxer.exe`（Windows）。
 
-> 注意：`mdbx-sys` 编译时需目标平台原生 C 头文件，**不支持交叉编译**，Linux 构建须在 Linux 环境进行。
+> 注意1：`mdbx-sys` 编译时需目标平台原生 C 头文件，**不支持交叉编译**，Linux 构建须在 Linux 环境进行。
+
+> 注意2（Windows）：默认以 `+crt-static` 静态链接 MSVC 运行时（见 `.cargo/config.toml`），产物**不依赖 `vcruntime140.dll` / `ucrtbase.dll`** 等 VC 运行时，可直接拷到任意 Win10/11 上运行，无需安装 VC++ Redistributable。
 
 ## 测试数据
 

@@ -17,15 +17,18 @@ use crate::db::{self, Anchor, DbHandle, Direction, JumpKey, OpenMode, Row, Table
 use crate::fmt::DecodeMode;
 use crate::history::History;
 
+/// 可选的每页条数档位（中央数据表翻页下拉）
 pub const PAGE_SIZES: [usize; 5] = [50, 100, 200, 500, 1000];
+/// 默认每页条数（未在偏好里保存时用）
 pub const DEFAULT_PAGE_SIZE: usize = 200;
+/// 默认单单元格最多显示的字符数（超出的截断，用户可在设置里改）
 pub const DEFAULT_CELL_MAX: usize = 256;
 /// 导出时 UI 线程每批读取的原始 KV 条数（一帧一批，兼顾流畅与吞吐）
 pub const EXPORT_BATCH: usize = 2000;
 
-/// 左栏宽度范围（点）
-/// 下限取内部最宽一行（过滤框 40 + 导出下拉 52 + ⬇钮 26 + 间距/边距）能正常交互的尺寸
+/// 左栏宽度下限（点）：内部最宽一行（过滤框 40 + 导出下拉 52 + ⬇钮 26 + 间距/边距）能正常交互的尺寸
 pub const LEFT_PANEL_MIN: f32 = 120.0;
+/// 左栏宽度上限（点）
 pub const LEFT_PANEL_MAX: f32 = 320.0;
 /// 中央数据表保留的最小宽度：两侧面板拖宽时不得把它挤得更窄
 pub const MIDDLE_MIN_WIDTH: f32 = 300.0;

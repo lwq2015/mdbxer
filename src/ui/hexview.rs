@@ -21,26 +21,38 @@ use crate::fmt::{ADDR_CHARS, hex_line, mid_gap_index};
 /// Galley 缓存：内容指纹变化时整体作废。
 #[derive(Default, Clone)]
 struct GalleyCache {
+    /// 内容/配置/主题指纹（见 hex_view 内 tag 计算），不符时整表作废重建
     tag: u64,
+    /// 行号 → 已排版的行文本，仅缓存当前可见行
     rows: HashMap<usize, Arc<egui::Galley>>,
 }
 
-/// 拖拽过程状态（锚点字节序号 + 是否实际移动过）。
+/// 拖拽过程状态。
 #[derive(Clone, Copy)]
 struct Drag {
+    /// 起手锚点字节全局序号，选区另一端跟随指针
     anchor: usize,
+    /// 指针是否真的移出过锚点字节——区分"单击"（清选区）与"拖选"
     moved: bool,
 }
 
-/// 渲染几何（点坐标）。
+/// 渲染几何（点坐标）：三列布局与字节单元格换算的基准。
 struct Geom {
+    /// 内容区左缘 = 地址列起点
     x0: f32,
+    /// 内容区顶缘 = 第 0 行顶部
     top: f32,
+    /// 等宽字体单字符宽度
     cw: f32,
+    /// 行高
     rh: f32,
+    /// HEX 列左缘（地址列右侧）
     hex_x: f32,
+    /// HEX 列总宽（含字节间空格与 mid gap）
     hex_w: f32,
+    /// ASCII 列左缘
     ascii_x: f32,
+    /// ASCII 列总宽
     ascii_w: f32,
 }
 
@@ -113,6 +125,7 @@ impl Geom {
     }
 }
 
+/// 主题色 → 指定 alpha 的半透明版（行悬停/字节悬停/选区背景的低透明度叠加）。
 fn with_alpha(c: egui::Color32, a: u8) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
 }
@@ -210,8 +223,12 @@ pub(crate) fn hex_view(
         bytes.hash(&mut h);
         h.finish()
     };
+    // HEX/ASCII 文本基色：取非交互控件前景色，不随 hover/选中态变化，
+    // 保证选区高亮叠加时字节文字颜色稳定（高亮只改背景不改前景）
     let text_color = ui.visuals().widgets.noninteractive.fg_stroke.color;
 
+    // 指针坐标 → (行号, 行内字节序号)；落在行外空白、mid gap 或超出
+    // 本段实际数据（末行截断部分）时返回 None，交互一律以此为准
     let hit_at = |p: egui::Pos2| -> Option<(usize, usize)> {
         let (r, i) = geom.hit(p, n, n)?;
         if r >= rows {
