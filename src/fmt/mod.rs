@@ -10,6 +10,7 @@ mod hexdump;
 mod value;
 
 pub use guess::guess;
+pub(crate) use guess::is_structured_json;
 pub(crate) use hexdump::{
     ADDR_CHARS, hex_copy_selection, hex_line, hex_section_chars, mid_gap_index,
 };

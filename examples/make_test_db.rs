@@ -155,6 +155,21 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
             br#"{"name":"mdbx","version":1,"tags":["fast","embedded"]}"#.to_vec(),
         ),
         (b"json_array", br#"[1,2,3,{"nested":true}]"#.to_vec()),
+        // 复杂 JSON：嵌套对象/对象数组、空容器、整数/负数/小数/科学计数法、
+        // bool/null、引号/反斜杠/控制符/unicode 转义、中文键值。
+        // 切到 Json 排版时应 pretty-print 且按类型语法着色。
+        (
+            b"json_complex",
+            concat!(
+                r#"{"id":42,"neg":-7,"pi":3.14159,"ratio":1.5e-3,"zero":0,"#,
+                r#""active":true,"disabled":false,"missing":null,"#,
+                r#""tags":["db","gui","rust"],"empty_obj":{},"empty_arr":[],"#,
+                r#""meta":{"version":"1.0.0","deep":[{"x":1},{"x":-2.5}],"#,
+                r#""esc":"a\"b\\c\n\t\u4e2d"},"中文键":"值"}"#
+            )
+            .as_bytes()
+            .to_vec(),
+        ),
         // 非法 JSON：手动 Json 排版时应原样回退为文本
         (b"json_invalid", b"not a json string".to_vec()),
     ];

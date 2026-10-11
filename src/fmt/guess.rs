@@ -15,6 +15,14 @@ pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
             t.guess_empty_sym.to_string(),
         );
     }
+    // 对象/数组形态的 JSON 优先识别为 JSON（在普通 UTF-8 之前，否则会被可打印
+    // UTF-8 分支直接截走）。这里文本仍返回紧凑原文，pretty/着色交给详情层：
+    // 表格 Value 是单行预览，若返回多行缩进会只剩一个 "{"。
+    if is_structured_json(bytes) {
+        // 已通过 serde 解析，必然是合法 UTF-8
+        let s = std::str::from_utf8(bytes).unwrap_or_default();
+        return ("JSON".to_string(), s.to_string());
+    }
     // 优先可打印 UTF-8 文本（允许 \t \n \r）
     if let Ok(s) = std::str::from_utf8(bytes) {
         if s.chars()
@@ -56,6 +64,20 @@ pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
         }
         _ => (t.guess_binary.to_string(), value::hex_spaced(bytes)),
     }
+}
+
+/// 判断字节是否为"结构化"JSON（对象或数组），用于 Auto 自动识别与详情着色。
+///
+/// 仅当去掉前导 ASCII 空白后以 `{` 或 `[` 开头、且能被整体解析为 JSON 时成立。
+/// 刻意排除 `123`、`true`、`"str"`、`null` 这类同样合法但属于标量的 JSON，
+/// 否则普通数字串、单词都会被误判成 JSON。
+pub fn is_structured_json(bytes: &[u8]) -> bool {
+    let first = bytes
+        .iter()
+        .copied()
+        .find(|c| !c.is_ascii_whitespace());
+    matches!(first, Some(b'{') | Some(b'['))
+        && serde_json::from_slice::<serde_json::Value>(bytes).is_ok()
 }
 
 /// 尝试把字节识别为 UTF-16 文本。
@@ -251,6 +273,65 @@ mod tests {
         let (label, _) = guess(b"a\x00b", Endian::Little);
         let t = crate::i18n::tr();
         assert_ne!(label, t.guess_utf8);
+    }
+
+    #[test]
+    fn guess_structured_json_object_and_array() {
+        // 对象/数组形态 JSON：标签识别为 JSON，但文本保持紧凑原文（不 pretty）
+        let raw = br#"{"a":1,"b":[2,3]}"#;
+        let (label, text) = guess(raw, Endian::Little);
+        assert_eq!(label, "JSON");
+        assert_eq!(text.as_bytes(), raw.as_slice());
+        assert!(!text.contains('\n'), "Auto 猜测不应返回多行 pretty");
+
+        let (label2, _) = guess(b"[1,2,3]", Endian::Little);
+        assert_eq!(label2, "JSON");
+
+        // 允许前导空白
+        let (label3, _) = guess(b"  {\"x\": 1}", Endian::Little);
+        assert_eq!(label3, "JSON");
+
+        // 中文键值
+        let (label4, _) = guess(" {\"名\":\"值\"}".as_bytes(), Endian::Little);
+        assert_eq!(label4, "JSON");
+    }
+
+    #[test]
+    fn guess_json_scalars_are_not_special() {
+        // 合法 JSON 标量不应被识别为 JSON：字符串/非整数字节串走 UTF-8
+        let t = crate::i18n::tr();
+        for scalar in [r#""abc""#, "123"] {
+            let (label, _) = guess(scalar.as_bytes(), Endian::Little);
+            assert_eq!(label, t.guess_utf8, "标量 {scalar} 不应判为 JSON");
+        }
+        // true/null 是 4 字节会落到 u32 分支，但同样绝不应是 JSON 标签
+        for scalar in ["true", "null"] {
+            let (label, _) = guess(scalar.as_bytes(), Endian::Little);
+            assert_ne!(label, "JSON");
+        }
+    }
+
+    #[test]
+    fn guess_invalid_or_truncated_json_falls_back_to_utf8() {
+        let t = crate::i18n::tr();
+        // 以 { 开头但不可解析：仍是普通可打印 UTF-8
+        let (label, _) = guess(b"{not json", Endian::Little);
+        assert_eq!(label, t.guess_utf8);
+        // 截断的对象：解析失败，回退 UTF-8
+        let (label, _) = guess(br#"{"a": "#, Endian::Little);
+        assert_eq!(label, t.guess_utf8);
+    }
+
+    #[test]
+    fn structured_json_predicate() {
+        assert!(is_structured_json(br#"{"a":1}"#));
+        assert!(is_structured_json(b" [1, 2] "));
+        assert!(!is_structured_json(b"123"));
+        assert!(!is_structured_json(b"true"));
+        assert!(!is_structured_json(br#""str""#));
+        assert!(!is_structured_json(b"null"));
+        assert!(!is_structured_json(b"{broken"));
+        assert!(!is_structured_json(b""));
     }
 
     #[test]
