@@ -351,6 +351,15 @@ pub struct I18n {
     pub path_missing_t: &'static str,
     /// {e}
     pub open_env_fail_t: &'static str,
+    // ── 只读打开失败 → 恢复确认 ──
+    pub recover_title: &'static str,
+    /// {e}
+    pub recover_msg_t: &'static str,
+    pub recover_btn: &'static str,
+    pub recover_backup_btn: &'static str,
+    pub cancel: &'static str,
+    /// {e}
+    pub backup_fail_t: &'static str,
 
     // ── 统计页 ──
     pub refresh: &'static str,
@@ -587,6 +596,16 @@ impl I18n {
         fill(self.open_env_fail_t, &[("e", e)])
     }
 
+    /// 只读打开失败后的恢复确认说明。
+    pub fn recover_msg(&self, e: &str) -> String {
+        fill(self.recover_msg_t, &[("e", e)])
+    }
+
+    /// 恢复前备份失败。
+    pub fn backup_fail(&self, e: &str) -> String {
+        fill(self.backup_fail_t, &[("e", e)])
+    }
+
     pub fn key_search_bad(&self, e: &str) -> String {
         fill(self.key_search_bad_t, &[("e", e)])
     }
@@ -807,6 +826,12 @@ const ZH: I18n = I18n {
     flag_reverse_dup: "反序值",
     path_missing_t: "路径不存在：{p}",
     open_env_fail_t: "打开环境失败：{e}",
+    recover_title: "需要恢复数据库",
+    recover_msg_t: "该库无法以只读方式打开：{e}\n可能上次未正常关闭，需要恢复后才能访问。\n以读写模式打开将让 MDBX 自动恢复（会修改库文件）。",
+    recover_btn: "直接恢复",
+    recover_backup_btn: "备份后恢复",
+    cancel: "取消",
+    backup_fail_t: "备份失败：{e}",
 
     refresh: "刷新",
     g_geometry: "几何",
@@ -1045,6 +1070,12 @@ const EN: I18n = I18n {
     flag_reverse_dup: "reverse dup",
     path_missing_t: "Path not found: {p}",
     open_env_fail_t: "Failed to open environment: {e}",
+    recover_title: "Database recovery required",
+    recover_msg_t: "The database cannot be opened read-only: {e}\nIt may not have been closed properly and needs recovery.\nOpening read-write lets MDBX recover it automatically (the file will be modified).",
+    recover_btn: "Recover",
+    recover_backup_btn: "Backup then recover",
+    cancel: "Cancel",
+    backup_fail_t: "Backup failed: {e}",
 
     refresh: "Refresh",
     g_geometry: "Geometry",
@@ -1283,6 +1314,12 @@ const RU: I18n = I18n {
     flag_reverse_dup: "обр. значения",
     path_missing_t: "Путь не найден: {p}",
     open_env_fail_t: "Не удалось открыть среду: {e}",
+    recover_title: "Требуется восстановление базы",
+    recover_msg_t: "Базу нельзя открыть только для чтения: {e}\nВозможно, она не была корректно закрыта и требует восстановления.\nОткрытие в режиме записи позволит MDBX восстановить её автоматически (файл будет изменён).",
+    recover_btn: "Восстановить",
+    recover_backup_btn: "Копия, затем восстановить",
+    cancel: "Отмена",
+    backup_fail_t: "Ошибка резервного копирования: {e}",
 
     refresh: "Обновить",
     g_geometry: "Геометрия",

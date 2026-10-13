@@ -3,7 +3,7 @@
 
 //! 环境打开与 subDB 枚举。
 
-use libmdbx::{Database, DatabaseOptions, Mode, NoWriteMap, TableFlags};
+use libmdbx::{Database, DatabaseOptions, Mode, NoWriteMap, ReadWriteOptions, TableFlags};
 use std::path::Path;
 
 use super::OpenMode;
@@ -80,6 +80,19 @@ impl TableInfo {
 impl DbHandle {
     /// 以只读 + ACCEDE 方式打开环境（可查看正被其他进程使用的库）。
     pub fn open(path: &Path, mode: OpenMode) -> Result<Self, String> {
+        Self::open_with(path, mode, false)
+    }
+
+    /// 以读写模式打开环境以触发 MDBX 自动恢复（针对上次未正常关闭的库），
+    /// 成功后立即关闭写句柄并重新以只读打开，回到纯只读语义。
+    ///
+    /// ⚠️ 仅在用户明确确认后调用：恢复会修改库文件。
+    pub fn open_recover(path: &Path, mode: OpenMode) -> Result<Self, String> {
+        Self::open_with(path, mode, true)?;
+        Self::open(path, mode)
+    }
+
+    fn open_with(path: &Path, mode: OpenMode, rw: bool) -> Result<Self, String> {
         if !path.exists() {
             return Err(crate::i18n::tr().path_missing(&path.display().to_string()));
         }
@@ -92,7 +105,12 @@ impl DbHandle {
             max_tables: Some(4096),
             no_sub_dir,
             accede: true,
-            mode: Mode::ReadOnly,
+            mode: if rw {
+                // 读写打开即触发 MDBX 对未干净关闭环境的自动恢复
+                Mode::ReadWrite(ReadWriteOptions::default())
+            } else {
+                Mode::ReadOnly
+            },
             ..Default::default()
         };
         let db = Database::<NoWriteMap>::open_with_options(path, options)

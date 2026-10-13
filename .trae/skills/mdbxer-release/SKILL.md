@@ -87,4 +87,4 @@ $rel.assets | Select-Object name, size, browser_download_url
 - **版本号必须递增**：用户明确要求，见 Cargo.toml
 - macOS 只有 ARM 包（GitHub 无 Intel macOS runner），Intel Mac 走 Rosetta 2
 - GitHub Actions runner 访问 Gitee API 经常超时，`gitee-release` 已设为可选，失败不影响整体发布
-- 若需紧急补发 Gitee Release，用新 Gitee 令牌本地调 API 建 Release 并传附件（产物可从 GitHub Release 下载）
+- 若需紧急补发 Gitee Release（用户说"回传 Gitee"）：令牌在用户环境变量 `GITEE_TOKEN`（未设置时向用户要）。流程：① `curl.exe -sL` 从 GitHub Release 下三附件到 `%TEMP%\gitee_upload`（GitHub 直连慢，用 `--retry`，校验字节数）② POST `/api/v5/repos/lwq_yu/mdbxer/releases?access_token=` 建 Release（JSON 无 BOM、必带 target_commitish=master）③ `curl.exe -F access_token= -F file=@` 传到 `/releases/{id}/attach_files` ④ 验证用 GET `/releases` 列表过滤 tag_name（按 tag 单查返回空）；Gitee 会自动附 2 个源码包（v*.zip/tar.gz），共 5 个 assets 属正常

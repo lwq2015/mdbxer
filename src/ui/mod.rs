@@ -323,6 +323,14 @@ struct ValueSearchState {
     wrapped: bool,
 }
 
+/// 只读打开失败、等待用户确认恢复的库信息
+#[derive(Clone)]
+pub struct PendingRecover {
+    pub path: String,
+    pub mode: OpenMode,
+    pub err: String,
+}
+
 pub struct MdbxerApp {
     // ── 顶栏 ──
     /// 打开模式（自动/单文件/目录）
@@ -334,6 +342,8 @@ pub struct MdbxerApp {
     pub db: Option<DbHandle>,
     /// 当前打开的数据库路径（用于窗口标题）；None 表示未打开
     pub opened_path: Option<String>,
+    /// 只读打开失败待用户确认恢复的库（Some 时显示恢复确认 Modal）
+    pub pending_recover: Option<PendingRecover>,
     // ── 窗口 ──
     /// 主窗口是否已完成首帧居中（启动时 winit 默认位置偏左上）
     pub centered: bool,
@@ -512,6 +522,7 @@ impl MdbxerApp {
             history: History::load(),
             db: None,
             opened_path: None,
+            pending_recover: None,
             centered: false,
             table_filter: String::new(),
             table_sort,
@@ -667,6 +678,7 @@ impl MdbxerApp {
                 let path = normalize_path(&path);
                 let n = handle.tables.len();
                 let file_mode = handle.no_sub_dir;
+                self.pending_recover = None;
                 self.history.add(&path, self.open_mode.as_str());
                 // 每库记录：恢复收藏与最后打开的表（表已被删则回退主表）
                 let rec = crate::config::load_per_db(&path);
@@ -718,8 +730,81 @@ impl MdbxerApp {
                     let abs = absolutize_path(&path);
                     self.history.remove_path(&abs);
                 }
+                // 非空文件只读打开失败：提供"读写恢复"确认入口。空文件绝不提供——
+                // 对空文件做写打开会被 MDBX 初始化成新库，绝不能误触发。
+                let recoverable = std::fs::metadata(&path)
+                    .map(|m| m.len() > 0)
+                    .unwrap_or(false);
+                if recoverable {
+                    self.pending_recover = Some(PendingRecover {
+                        path: path.clone(),
+                        mode: self.open_mode,
+                        err: e.clone(),
+                    });
+                }
                 self.status = Status::error(e);
             }
+        }
+    }
+
+    /// 恢复确认 Modal：只读打开失败时询问是否以读写模式打开以触发 MDBX 自动恢复。
+    ///
+    /// 恢复会修改库文件，必须用户显式点击；目录模式无备份按钮（递归拷贝不友好）。
+    fn show_recover_modal(&mut self, ctx: &egui::Context) {
+        #[derive(PartialEq)]
+        enum RecoverAction {
+            None,
+            Recover,
+            BackupRecover,
+            Cancel,
+        }
+        let Some(p) = self.pending_recover.as_ref() else {
+            return;
+        };
+        let t = crate::i18n::tr();
+        let single_file = std::path::Path::new(&p.path).is_file();
+        let mut action = RecoverAction::None;
+        egui::Modal::new(egui::Id::new("recover_modal")).show(ctx, |ui| {
+            ui.set_width(460.0);
+            ui.strong(t.recover_title);
+            ui.add_space(4.0);
+            ui.label(t.recover_msg(&p.err));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if single_file && ui.button(t.recover_backup_btn).clicked() {
+                    action = RecoverAction::BackupRecover;
+                }
+                if ui.button(t.recover_btn).clicked() {
+                    action = RecoverAction::Recover;
+                }
+                if ui.button(t.cancel).clicked() {
+                    action = RecoverAction::Cancel;
+                }
+            });
+        });
+        match action {
+            RecoverAction::None => {}
+            RecoverAction::Cancel => self.pending_recover = None,
+            RecoverAction::Recover => self.run_recover(false),
+            RecoverAction::BackupRecover => self.run_recover(true),
+        }
+    }
+
+    /// 执行恢复（可选备份）：恢复成功后走正常只读打开路径。
+    fn run_recover(&mut self, backup: bool) {
+        let Some(p) = self.pending_recover.take() else {
+            return;
+        };
+        if backup {
+            let bak = std::path::PathBuf::from(format!("{}.bak-recover", p.path));
+            if let Err(e) = std::fs::copy(&p.path, &bak) {
+                self.status = Status::error(crate::i18n::tr().backup_fail(&e.to_string()));
+                return;
+            }
+        }
+        match crate::db::DbHandle::open_recover(std::path::Path::new(&p.path), p.mode) {
+            Ok(_) => self.open_db(&p.path),
+            Err(e) => self.status = Status::error(e),
         }
     }
 
@@ -2008,6 +2093,8 @@ impl eframe::App for MdbxerApp {
         self.poll_export(ctx);
         self.poll_value_search();
         self.handle_shortcuts(ctx);
+        // 只读打开失败 → 恢复确认对话框（用户授权后才写库）
+        self.show_recover_modal(ctx);
 
         topbar::show(ui, self);
         // 底部状态栏先于左右栏声明：egui 面板按声明顺序从可用区域切割，
