@@ -55,6 +55,7 @@ impl TableInfo {
     pub fn flags_desc(&self) -> String {
         let t = crate::i18n::tr();
         let mut desc: Vec<&str> = Vec::new();
+
         if self.flags.contains(TableFlags::DUP_SORT) {
             desc.push(t.flag_dup_sort);
         }
@@ -73,6 +74,7 @@ impl TableInfo {
         if self.flags.contains(TableFlags::REVERSE_DUP) {
             desc.push(t.flag_reverse_dup);
         }
+
         desc.join(", ")
     }
 }
@@ -96,11 +98,13 @@ impl DbHandle {
         if !path.exists() {
             return Err(crate::i18n::tr().path_missing(&path.display().to_string()));
         }
+
         let no_sub_dir = match mode {
             OpenMode::Auto => path.is_file(),
             OpenMode::SingleFile => true,
             OpenMode::Directory => false,
         };
+
         let options = DatabaseOptions {
             max_tables: Some(4096),
             no_sub_dir,
@@ -113,9 +117,11 @@ impl DbHandle {
             },
             ..Default::default()
         };
+
         let db = Database::<NoWriteMap>::open_with_options(path, options)
             .map_err(|e| crate::i18n::tr().open_env_fail(&e.to_string()))?;
         let tables = Self::list_tables(&db)?;
+
         Ok(Self {
             db,
             no_sub_dir,

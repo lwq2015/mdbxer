@@ -6,15 +6,18 @@
 use super::{Endian, value};
 
 /// 猜测字节内容的类型，返回 (类型标签, 显示文本)。
-/// 多字节整数按 endian 解释。标签随当前界面语言。
+/// 1 字节按 u8 解释（无字节序），多字节整数按 endian 解释。标签随当前界面语言。
 pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
     let t = crate::i18n::tr();
+
+    // 空值：专有标签
     if bytes.is_empty() {
         return (
             t.guess_empty_label.to_string(),
             t.guess_empty_sym.to_string(),
         );
     }
+
     // 对象/数组形态的 JSON 优先识别为 JSON（在普通 UTF-8 之前，否则会被可打印
     // UTF-8 分支直接截走）。这里文本仍返回紧凑原文，pretty/着色交给详情层：
     // 表格 Value 是单行预览，若返回多行缩进会只剩一个 "{"。
@@ -23,6 +26,7 @@ pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
         let s = std::str::from_utf8(bytes).unwrap_or_default();
         return ("JSON".to_string(), s.to_string());
     }
+
     // 优先可打印 UTF-8 文本（允许 \t \n \r）
     if let Ok(s) = std::str::from_utf8(bytes) {
         if s.chars()
@@ -31,20 +35,27 @@ pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
             return (t.guess_utf8.to_string(), s.to_string());
         }
     }
+
     // 再试 UTF-16：BOM 直接定字节序，无 BOM 按字节模式启发式
     if let Some(r) = try_utf16(bytes) {
         return r;
     }
+
+    // 最后按 1/2/4/8 字节解释为整数，其余一律按二进制展示
     let sfx = endian.suffix();
     // match 保证长度后 try_into 必然成功
     match bytes.len() {
-        8 => {
-            let arr: [u8; 8] = bytes.try_into().unwrap_or_else(|_| unreachable!());
+        1 => {
+            // 单字节无字节序，标签不带 LE/BE；可打印 ASCII 已被上面的 UTF-8 分支截走
+            ("u8".to_string(), value::with_sep(bytes[0].to_string()))
+        }
+        2 => {
+            let arr: [u8; 2] = bytes.try_into().unwrap_or_else(|_| unreachable!());
             let v = match endian {
-                Endian::Little => u64::from_le_bytes(arr),
-                Endian::Big => u64::from_be_bytes(arr),
+                Endian::Little => u16::from_le_bytes(arr),
+                Endian::Big => u16::from_be_bytes(arr),
             };
-            (format!("u64 {sfx}"), value::u64_text(v))
+            (format!("u16 {sfx}"), value::with_sep(v.to_string()))
         }
         4 => {
             let arr: [u8; 4] = bytes.try_into().unwrap_or_else(|_| unreachable!());
@@ -54,13 +65,13 @@ pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
             };
             (format!("u32 {sfx}"), value::with_sep(v.to_string()))
         }
-        2 => {
-            let arr: [u8; 2] = bytes.try_into().unwrap_or_else(|_| unreachable!());
+        8 => {
+            let arr: [u8; 8] = bytes.try_into().unwrap_or_else(|_| unreachable!());
             let v = match endian {
-                Endian::Little => u16::from_le_bytes(arr),
-                Endian::Big => u16::from_be_bytes(arr),
+                Endian::Little => u64::from_le_bytes(arr),
+                Endian::Big => u64::from_be_bytes(arr),
             };
-            (format!("u16 {sfx}"), value::with_sep(v.to_string()))
+            (format!("u64 {sfx}"), value::u64_text(v))
         }
         _ => (t.guess_binary.to_string(), value::hex_spaced(bytes)),
     }
@@ -92,16 +103,13 @@ fn try_utf16(bytes: &[u8]) -> Option<(String, String)> {
         return None;
     }
 
-    // BOM 定序（BOM 后剩余长度也须为偶）
+    // BOM 定序：入口已保证 len ≥ 4 且为偶，BOM 后必有余量且能切齐 u16 单元
     let bom_big = match &bytes[..2] {
         [0xFF, 0xFE] => Some(false),
         [0xFE, 0xFF] => Some(true),
         _ => None,
     };
     if let Some(big) = bom_big {
-        if bytes.len() == 2 || (bytes.len() - 2) % 2 != 0 {
-            return None;
-        }
         let units = utf16_units(&bytes[2..], big);
         let text = utf16_validate(&units)?;
         let label = if big { t.guess_utf16_be } else { t.guess_utf16_le };
@@ -201,10 +209,13 @@ fn utf16_validate(units: &[u16]) -> Option<String> {
     if n > 0 && units[n - 1] == 0 {
         n -= 1;
     }
+
     let mut s = String::with_capacity(n);
     let mut i = 0;
     while i < n {
         let u = units[i];
+
+        // 代理对解码
         let c = if (0xD800..=0xDBFF).contains(&u) {
             let lo = *units.get(i + 1)?;
             if !(0xDC00..=0xDFFF).contains(&lo) {
@@ -219,9 +230,12 @@ fn utf16_validate(units: &[u16]) -> Option<String> {
         } else {
             char::from_u32(u as u32)?
         };
+
+        // 控制字符拒绝
         if c.is_control() && !matches!(c, '\t' | '\n' | '\r') {
             return None;
         }
+
         // 拒绝私用区（PUA）：真实文本几乎不含 PUA，而 GBK/GB18030 等传统编码
         // 字节按 UTF-16 误读时经常落入 U+E000–U+F8FF（如 gbk_text 曾误判出
         // "譬需□□□□"），命中私用区即说明这更像二进制/其他编码，不猜 UTF-16。
@@ -232,6 +246,7 @@ fn utf16_validate(units: &[u16]) -> Option<String> {
         {
             return None;
         }
+
         s.push(c);
         i += 1;
     }
@@ -372,12 +387,20 @@ mod tests {
     }
 
     #[test]
-    fn guess_single_byte_binary() {
-        let bytes = [0x80]; // 非法 UTF-8，1 字节走 binary 分支
-        let (label, text) = guess(&bytes, Endian::Little);
+    fn guess_u8_single_byte() {
+        // 非法 UTF-8 的单字节按 u8 数值显示（0x80 = 128）
+        let (label, text) = guess(&[0x80], Endian::Little);
+        assert_eq!(label, "u8");
+        assert_eq!(text, "128");
+    }
+
+    #[test]
+    fn guess_single_printable_byte_is_utf8_not_u8() {
+        // 可打印单字节优先走 UTF-8 文本，不落 u8 分支
+        let (label, text) = guess(b"A", Endian::Little);
         let t = crate::i18n::tr();
-        assert_eq!(label, t.guess_binary);
-        assert_eq!(text, "80");
+        assert_eq!(label, t.guess_utf8);
+        assert_eq!(text, "A");
     }
 
     #[test]

@@ -23,6 +23,7 @@ mod ui;
 fn main() -> eframe::Result<()> {
     // 语言必须在任何界面文本产生前确定（含命令行直接打开时的状态消息）
     i18n::set_lang(config::startup_lang());
+
     let title = app_title();
     let app_title = title.clone();
     let options = eframe::NativeOptions {
@@ -32,6 +33,7 @@ fn main() -> eframe::Result<()> {
             .with_drag_and_drop(true),
         ..Default::default()
     };
+
     eframe::run_native(
         &title,
         options,
@@ -41,6 +43,7 @@ fn main() -> eframe::Result<()> {
                 crate::config::load_theme() == crate::config::Theme::Dark,
             );
             load_cjk_fonts(&cc.egui_ctx);
+
             let mut app = ui::MdbxerApp::new(app_title);
             // 支持命令行传入路径直接打开（也便于拖文件到 exe）；
             // 无参数时自动重开上次查看的库（每库记忆 LRU 第一条）
@@ -49,6 +52,7 @@ fn main() -> eframe::Result<()> {
             } else {
                 app.reopen_last_db();
             }
+
             Ok(Box::new(app))
         }),
     )
@@ -71,9 +75,11 @@ fn load_cjk_fonts(ctx: &egui::Context) {
         eprintln!("未找到系统 CJK 字体，中文可能显示为方框（可安装 微软雅黑/苹方/Noto CJK）");
         return;
     };
+
     let Ok(data) = std::fs::read(&path) else {
         return;
     };
+
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "cjk".to_string(),
@@ -99,6 +105,7 @@ fn cjk_font_candidates() -> Vec<PathBuf> {
         "simsun.ttc", // 宋体
         "Deng.tt",    // 等线
     ];
+
     let mut dirs = Vec::new();
     if let Some(windir) = std::env::var_os("WINDIR") {
         dirs.push(PathBuf::from(windir).join("Fonts"));
@@ -111,6 +118,7 @@ fn cjk_font_candidates() -> Vec<PathBuf> {
                 .join("Fonts"),
         );
     }
+
     let mut paths = Vec::new();
     for dir in &dirs {
         for name in NAMES {
@@ -154,6 +162,7 @@ fn cjk_font_candidates() -> Vec<PathBuf> {
         "truetype/droid/DroidSansFallback.ttf",
         "truetype/arphic/uming.ttc",
     ];
+
     let mut dirs: Vec<PathBuf> = vec![
         PathBuf::from("/usr/share/fonts"),
         PathBuf::from("/usr/local/share/fonts"),
@@ -166,12 +175,14 @@ fn cjk_font_candidates() -> Vec<PathBuf> {
         dirs.push(home.join(".local").join("share").join("fonts"));
         dirs.push(home.join(".fonts"));
     }
+
     let mut paths = Vec::new();
     for dir in &dirs {
         for rel in RELATIVE {
             paths.push(dir.join(rel));
         }
     }
+
     if let Some(p) = fontconfig_cjk() {
         paths.push(p);
     }

@@ -327,12 +327,14 @@ struct ValueSearchState {
 fn edge_toggle_btn(ui: &mut egui::Ui, sym: &str, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(10.0, 44.0), egui::Sense::click());
     let hover = resp.hovered();
+
     let st = if hover {
         &ui.style().visuals.widgets.hovered
     } else {
         &ui.style().visuals.widgets.inactive
     };
     let alpha = if hover { 1.0 } else { 0.5 };
+
     let p = ui.painter();
     p.rect_filled(rect, 3.0, st.bg_fill.gamma_multiply(alpha));
     p.text(
@@ -488,6 +490,7 @@ impl MdbxerApp {
     /// `title_base` 为基础窗口标题（版本+日期），打开库后前缀库路径。
     pub fn new(title_base: String) -> Self {
         let prefs = crate::config::load_ui_prefs();
+
         let page_size = prefs
             .page_size
             .filter(|p| PAGE_SIZES.contains(p))
@@ -496,6 +499,7 @@ impl MdbxerApp {
             Some(false) => crate::fmt::Endian::Big,
             _ => crate::fmt::Endian::Little,
         };
+
         let key_mode = prefs
             .key_mode
             .map(|s| DecodeMode::from_str(&s))
@@ -504,9 +508,11 @@ impl MdbxerApp {
             .val_mode
             .map(|s| DecodeMode::from_str(&s))
             .unwrap_or_default();
+
         if let Some(ts) = prefs.thousands_sep {
             crate::fmt::set_thousands_sep(ts);
         }
+
         let cell_max = prefs
             .cell_max
             .filter(|v| [64usize, 128, 256, 512, 1024, 4096].contains(v))
@@ -515,6 +521,7 @@ impl MdbxerApp {
             .hex_width
             .filter(|w| crate::fmt::HEX_WIDTHS.contains(w))
             .unwrap_or(crate::fmt::DEFAULT_HEX_WIDTH);
+
         let mut detail = DetailState::default();
         detail.show_addr = prefs.show_addr.unwrap_or(true);
         detail.show_hex = prefs.show_hex.unwrap_or(true);
@@ -524,6 +531,7 @@ impl MdbxerApp {
             detail.show_hex = true;
         }
         detail.hex_width = hex_width;
+
         // 详情卡片排版独立，启动默认 Auto（不跟随表格排版偏好）。
         let table_sort = prefs
             .table_sort
@@ -539,6 +547,7 @@ impl MdbxerApp {
                     .find(|f| f.ext() == s)
             })
             .unwrap_or_default();
+
         Self {
             open_mode: OpenMode::Auto,
             history: History::load(),
@@ -546,6 +555,7 @@ impl MdbxerApp {
             opened_path: None,
             pending_recover: None,
             centered: false,
+
             table_filter: String::new(),
             table_sort,
             left_visible: prefs.left_visible.unwrap_or(true),
@@ -554,6 +564,7 @@ impl MdbxerApp {
             selected_table: None,
             sort_desc: false,
             col_sort: None,
+
             page_size,
             rows: Vec::new(),
             base_index: None,
@@ -561,37 +572,46 @@ impl MdbxerApp {
             at_end: true,
             selected_row: None,
             pending_scroll: None,
+
             search_input: String::new(),
             key_filter: None,
             key_filter_mode: false,
             value_filter: None,
+
             key_mode,
             val_mode,
             endian,
             cell_max,
+
             views: Vec::new(),
             views_key: None,
+
             detail_visible: prefs.detail_visible.unwrap_or(true),
             detail,
             detail_panel_w: 360.0,
             stat_cache: None,
             env_cache: None,
+
             status: Status::Ready,
+
             export_ev_rx: None,
             export_batch_tx: None,
             export_anchor: None,
             export_count: 0,
             export_path: String::new(),
             export_format,
+
             value_search: None,
             focus_search: false,
             search_box_id: None,
             row_copy_pending: false,
             value_search_full: false,
             last_search: SearchContext::None,
+
             dark_theme: crate::config::load_theme() == crate::config::Theme::Dark,
             fav_tables: Vec::new(),
             fav_keys: Vec::new(),
+
             title: title_base.clone(),
             title_base,
             build_date: build_date().unwrap_or_else(|| "—".to_string()),
@@ -610,14 +630,17 @@ impl MdbxerApp {
     pub fn display_order(&mut self) -> Vec<usize> {
         self.refresh_views();
         let mut order: Vec<usize> = (0..self.rows.len()).collect();
+
         // Value 页内搜索：按 Value 显示文本大小写不敏感包含过滤
         if let Some(filter) = &self.value_filter {
             let needle = filter.to_lowercase();
             order.retain(|&i| self.views[i].val_text.to_lowercase().contains(&needle));
         }
+
         let Some((col, asc)) = self.col_sort else {
             return order;
         };
+
         match col {
             SortCol::Index => {}
             SortCol::Type => {
@@ -635,9 +658,11 @@ impl MdbxerApp {
                 }
             }),
         }
+
         if !asc {
             order.reverse();
         }
+
         order
     }
 
@@ -651,9 +676,11 @@ impl MdbxerApp {
             crate::fmt::thousands_sep(),
             crate::i18n::lang() as u8,
         );
+
         if self.views_key == Some(key) && self.views.len() == self.rows.len() {
             return;
         }
+
         self.views = self
             .rows
             .iter()
@@ -672,6 +699,7 @@ impl MdbxerApp {
                 }
             })
             .collect();
+
         self.views_key = Some(key);
     }
 
@@ -694,6 +722,7 @@ impl MdbxerApp {
         if path.is_empty() {
             return;
         }
+
         match DbHandle::open(std::path::Path::new(&path), self.open_mode) {
             Ok(handle) => {
                 // 打开成功后规范化路径（canonicalize 要求路径存在，故放在此处）
@@ -702,6 +731,7 @@ impl MdbxerApp {
                 let file_mode = handle.no_sub_dir;
                 self.pending_recover = None;
                 self.history.add(&path, self.open_mode.as_str());
+
                 // 每库记录：恢复收藏与最后打开的表（表已被删则回退主表）
                 let rec = crate::config::load_per_db(&path);
                 self.fav_tables = rec.fav_tables.clone();
@@ -719,6 +749,7 @@ impl MdbxerApp {
                 } else {
                     None
                 };
+
                 self.db = Some(handle);
                 self.opened_path = Some(path.clone());
                 self.tab = CenterTab::Data;
@@ -734,6 +765,7 @@ impl MdbxerApp {
                 };
                 // 刷新 LRU 的 last_use
                 self.save_per_db();
+
                 if self.selected_table.is_some() {
                     self.load_first_page();
                 } else {
@@ -752,6 +784,7 @@ impl MdbxerApp {
                     let abs = absolutize_path(&path);
                     self.history.remove_path(&abs);
                 }
+
                 // 非空文件只读打开失败：提供"读写恢复"确认入口。空文件绝不提供——
                 // 对空文件做写打开会被 MDBX 初始化成新库，绝不能误触发。
                 let recoverable = std::fs::metadata(&path)
@@ -764,6 +797,7 @@ impl MdbxerApp {
                         err: e.clone(),
                     });
                 }
+
                 self.status = Status::error(e);
             }
         }
@@ -780,12 +814,15 @@ impl MdbxerApp {
             BackupRecover,
             Cancel,
         }
+
         let Some(p) = self.pending_recover.as_ref() else {
             return;
         };
+
         let t = crate::i18n::tr();
         let single_file = std::path::Path::new(&p.path).is_file();
         let mut action = RecoverAction::None;
+
         egui::Modal::new(egui::Id::new("recover_modal")).show(ctx, |ui| {
             ui.set_width(460.0);
             ui.strong(t.recover_title);
@@ -804,6 +841,7 @@ impl MdbxerApp {
                 }
             });
         });
+
         match action {
             RecoverAction::None => {}
             RecoverAction::Cancel => self.pending_recover = None,
@@ -837,6 +875,7 @@ impl MdbxerApp {
         if self.db.is_none() {
             return;
         }
+
         let t = crate::i18n::tr();
         let ctx = ui.ctx().clone();
         let area = ui.available_rect_before_wrap();
@@ -851,6 +890,7 @@ impl MdbxerApp {
                     left_clicked = true;
                 }
             });
+
         let mut right_clicked = false;
         egui::Area::new(egui::Id::new("right_edge_toggle"))
             .order(egui::Order::Middle)
@@ -861,6 +901,7 @@ impl MdbxerApp {
                     right_clicked = true;
                 }
             });
+
         if left_clicked {
             self.left_visible = !self.left_visible;
             self.save_ui_prefs();
@@ -875,10 +916,12 @@ impl MdbxerApp {
     pub fn close_db(&mut self) {
         // 关库前保存最后打开的表与收藏
         self.save_per_db();
+
         // 导出流水线依赖本线程持有的环境句柄：断开通道，worker 自然结束
         self.export_batch_tx = None;
         self.export_ev_rx = None;
         self.export_anchor = None;
+
         self.value_search = None;
         self.db = None;
         self.opened_path = None;
@@ -895,6 +938,7 @@ impl MdbxerApp {
         self.fav_tables.clear();
         self.fav_keys.clear();
         self.detail.clear();
+
         self.status = Status::Closed;
     }
 
@@ -904,6 +948,7 @@ impl MdbxerApp {
         let Some(path) = self.opened_path.clone() else {
             return;
         };
+
         // 先记下当前表名（主表为 None）
         let cur_name = self
             .db
@@ -911,11 +956,13 @@ impl MdbxerApp {
             .zip(self.selected_table)
             .and_then(|(h, i)| h.tables.get(i))
             .and_then(|t| t.name.clone());
+
         let refresh = self.db.as_mut().map(|h| h.refresh_tables());
         match refresh {
             Some(Ok(())) => {
                 let n = self.db.as_ref().map(|h| h.tables.len()).unwrap_or(0);
                 let file_mode = self.db.as_ref().is_some_and(|h| h.no_sub_dir);
+
                 // 当前表按名字重新定位；找不到（被删/主表）回退主表
                 self.selected_table = cur_name
                     .and_then(|name| {
@@ -926,12 +973,14 @@ impl MdbxerApp {
                             .position(|t| t.name.as_ref() == Some(&name))
                     })
                     .or(if n > 0 { Some(0) } else { None });
+
                 self.stat_cache = None;
                 self.env_cache = None;
                 self.search_input.clear();
                 self.key_filter = None;
                 self.value_filter = None;
                 self.value_search = None;
+
                 if self.selected_table.is_some() {
                     self.status = Status::Opened {
                         file_mode,
@@ -1078,9 +1127,11 @@ impl MdbxerApp {
         let Some(anchor) = self.rows.last().map(|r| self.anchor_of(r)) else {
             return;
         };
+
         let old_base = self.base_index;
         let old_len = self.rows.len();
         let dir = self.sort_dir();
+
         if let Some((_len, has_more)) = self.fetch(dir, Some(&anchor), true) {
             if self.rows.is_empty() {
                 self.at_end = true;
@@ -1098,9 +1149,11 @@ impl MdbxerApp {
         let Some(anchor) = self.rows.first().map(|r| self.anchor_of(r)) else {
             return;
         };
+
         let old_base = self.base_index;
         let page_size = self.page_size;
         let opp = opposite(self.sort_dir());
+
         if let Some((_len, has_more)) = self.fetch(opp, Some(&anchor), true) {
             if self.rows.is_empty() {
                 self.at_start = true;
@@ -1126,6 +1179,7 @@ impl MdbxerApp {
         if input.is_empty() {
             return;
         }
+
         let integer_key = self.cur_table().map(|t| t.integer_key).unwrap_or(false);
         let key = match parse_jump_input(&input, integer_key) {
             Ok(k) => k,
@@ -1134,12 +1188,14 @@ impl MdbxerApp {
                 return;
             }
         };
+
         // 跳转是在全表任意定位，与前缀过滤互斥：跳转即清除过滤
         self.key_filter = None;
         let Some(dbh) = self.db.as_ref() else { return };
         let Some(table) = self.cur_table() else {
             return;
         };
+
         let name = table.name.clone();
         let dir = self.sort_dir();
         let page_size = self.page_size;
@@ -1178,12 +1234,14 @@ impl MdbxerApp {
         if input.is_empty() {
             return;
         }
+
         self.last_search = SearchContext::MainKey;
         if !self.key_filter_mode {
             // 跳转模式：语义与跳转框一致（INTEGER_KEY 表接受十进制），但不写跳转框
             self.jump_with(&input);
             return;
         }
+
         match parse_bytes_input(&input) {
             Ok(bytes) => {
                 self.key_filter = Some(bytes);
@@ -1224,11 +1282,13 @@ impl MdbxerApp {
         if self.value_search.is_some() {
             return;
         }
+
         match self.last_search {
             SearchContext::None => {}
             SearchContext::MainKey => self.apply_key_search(),
             SearchContext::MainValue => self.move_in_page_filter(forward),
             SearchContext::MainValueFull => self.continue_full_value_search(forward),
+
             SearchContext::DetailKeyBlob | SearchContext::DetailValBlob => {
                 let is_key = self.last_search == SearchContext::DetailKeyBlob;
                 let bytes = if is_key {
@@ -1242,6 +1302,7 @@ impl MdbxerApp {
                 self.status =
                     Status::leveled(self.detail.blob_search(is_key, &bytes, forward));
             }
+
             SearchContext::DetailDup => {
                 let Some(i) = self.selected_row else { return };
                 let Some(row) = self.rows.get(i) else { return };
@@ -1369,6 +1430,7 @@ impl MdbxerApp {
             self.status = Status::warn(crate::i18n::tr().search_empty.to_string());
             return;
         }
+
         self.last_search = SearchContext::MainValueFull;
         // 全表搜索结果自带定位，旧的页内过滤会干扰显示，一并清除
         self.value_filter = None;
@@ -1380,6 +1442,7 @@ impl MdbxerApp {
             // 从头发起的搜索本来就是完整一遍，无需再回绕
             wrapped: true,
         });
+
         self.status = Status::info(crate::i18n::tr().searching_value.to_string());
     }
 
@@ -1391,6 +1454,7 @@ impl MdbxerApp {
             self.status = Status::warn(crate::i18n::tr().search_empty.to_string());
             return;
         }
+
         // 以当前选中记录（多值表为当前值）作为续扫锚点，扫描时跳过锚点本身
         let anchor = (|| {
             let i = self.selected_row?;
@@ -1402,6 +1466,7 @@ impl MdbxerApp {
             self.start_full_value_search();
             return;
         };
+
         self.last_search = SearchContext::MainValueFull;
         self.value_filter = None;
         self.value_search = Some(ValueSearchState {
@@ -1411,6 +1476,7 @@ impl MdbxerApp {
             backward: !forward,
             wrapped: false,
         });
+
         self.status = Status::info(crate::i18n::tr().searching_value.to_string());
     }
 
@@ -1423,6 +1489,7 @@ impl MdbxerApp {
         if order.is_empty() {
             return;
         }
+
         let target = match self.selected_row {
             Some(cur) => {
                 match order.iter().position(|&i| i == cur) {
@@ -1434,6 +1501,7 @@ impl MdbxerApp {
             }
             None => Some(order[0]),
         };
+
         if let Some(i) = target {
             self.select_row(i);
         }
@@ -1563,15 +1631,18 @@ impl MdbxerApp {
             return;
         };
         let key = row.key.clone();
+
         let Some(table) = self.cur_table() else {
             self.detail.clear();
             return;
         };
         let (name, dup_sort) = (table.name.clone(), table.dup_sort);
+
         let Some(dbh) = self.db.as_ref() else {
             self.detail.clear();
             return;
         };
+
         self.detail
             .load_dups(&dbh.db, name.as_deref(), dup_sort, &key);
     }
@@ -1608,6 +1679,7 @@ impl MdbxerApp {
     pub fn current_value(&self) -> Option<Vec<u8>> {
         let row = self.selected_row.and_then(|i| self.rows.get(i))?;
         let is_dup = self.cur_table().map(|t| t.dup_sort).unwrap_or(false);
+
         if is_dup {
             Some(
                 self.detail
@@ -1636,6 +1708,7 @@ impl MdbxerApp {
         else {
             return false;
         };
+
         match std::fs::write(&path, bytes) {
             Ok(()) => {
                 self.status = Status::info(t.export_ok(bytes.len(), &path.display().to_string()));
@@ -1660,6 +1733,7 @@ impl MdbxerApp {
         let Some(table) = self.cur_table() else {
             return;
         };
+
         let name = table.display();
         let ext = self.export_format.ext();
         let Some(out) = rfd::FileDialog::new()
@@ -1672,6 +1746,7 @@ impl MdbxerApp {
         else {
             return;
         };
+
         let job = crate::export::ExportJob {
             dup_sort: table.dup_sort,
             key_mode: self.key_mode,
@@ -1680,6 +1755,7 @@ impl MdbxerApp {
             out_path: out.clone(),
             format: self.export_format,
         };
+
         let (batch_tx, event_rx) = crate::export::start(job);
         self.export_batch_tx = Some(batch_tx);
         self.export_ev_rx = Some(event_rx);
@@ -1709,8 +1785,10 @@ impl MdbxerApp {
         let Some(rx) = self.export_ev_rx.take() else {
             return;
         };
+
         let t = crate::i18n::tr();
         let mut finished = false;
+
         while let Ok(ev) = rx.try_recv() {
             match ev {
                 crate::export::ExportEvent::NeedBatch => {
@@ -1745,17 +1823,20 @@ impl MdbxerApp {
                         }
                     }
                 }
+
                 crate::export::ExportEvent::Done(n) => {
                     self.export_count = n;
                     self.status = Status::info(t.export_done(n, &self.export_path));
                     finished = true;
                 }
+
                 crate::export::ExportEvent::Fail(e) => {
                     self.status = Status::error(t.export_fail(&e));
                     finished = true;
                 }
             }
         }
+
         if finished {
             self.export_batch_tx = None;
             self.export_anchor = None;
@@ -1788,12 +1869,15 @@ impl MdbxerApp {
             val_mode: Some(self.val_mode.as_str().to_string()),
             thousands_sep: Some(crate::fmt::thousands_sep()),
             cell_max: Some(self.cell_max),
+
             show_addr: Some(self.detail.show_addr),
             show_hex: Some(self.detail.show_hex),
             show_ascii: Some(self.detail.show_ascii),
             hex_width: Some(self.detail.hex_width),
+
             left_visible: Some(self.left_visible),
             detail_visible: Some(self.detail_visible),
+
             table_sort: Some(self.table_sort.as_str().to_string()),
             export_format: Some(self.export_format.ext().to_string()),
         }
@@ -1836,8 +1920,10 @@ impl MdbxerApp {
         let Some(table) = self.cur_table() else {
             return;
         };
+
         let table_name = table.name.clone();
         let key_hex = key_hex(key);
+
         if let Some(pos) = self
             .fav_keys
             .iter()
@@ -1854,6 +1940,7 @@ impl MdbxerApp {
                 note: String::new(),
             });
         }
+
         self.save_per_db();
     }
 
@@ -1922,6 +2009,7 @@ pub fn apply_theme(ctx: &egui::Context, dark: bool) {
         egui::Theme::Light
     };
     ctx.set_theme(theme);
+
     // 全局滚动条外观（行为保持原生浮动式：闲置淡出隐藏，滚动/悬停/拖拽时才出现）。
     // 只改外观：手柄用前景高亮色（深主题白/浅主题黑），不再用深主题默认的
     // 近黑 widgets.inactive.bg_fill——那种手柄在深色背景上拖动时是突兀的粗黑块。
@@ -1933,6 +2021,7 @@ pub fn apply_theme(ctx: &egui::Context, dark: bool) {
         scroll.active_handle_opacity = 0.75; // 滚动中淡显（默认 0.6 偏淡）
         scroll.interact_handle_opacity = 0.95; // 悬停/拖拽接近实色
     });
+
     // 同步原生窗口标题栏（Windows 标题栏默认跟随系统，不设的话内容深、标题栏浅）
     ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(if dark {
         egui::SystemTheme::Dark
@@ -1972,6 +2061,7 @@ fn absolutize_path(path: &str) -> String {
             .map(|d| d.join(p))
             .unwrap_or_else(|_| p.to_path_buf())
     };
+
     let s = abs.to_string_lossy();
     if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")
@@ -2011,11 +2101,13 @@ fn leading_num(s: &str) -> Option<f64> {
     if let Ok(v) = t.parse::<f64>() {
         return Some(v);
     }
+
     if let Some(p) = t.strip_suffix(crate::i18n::tr().padded) {
         if let Ok(v) = p.trim().parse::<f64>() {
             return Some(v);
         }
     }
+
     if let Some((p, _)) = t.split_once(" → ") {
         if let Ok(v) = p.trim().parse::<f64>() {
             return Some(v);
@@ -2032,15 +2124,18 @@ fn parse_jump_input(input: &str, integer_key: bool) -> Result<JumpKey, String> {
         .and_then(|x| x.strip_suffix(')'))
         .or_else(|| s.strip_prefix("0x"))
         .or_else(|| s.strip_prefix("0X"));
+
     if let Some(h) = hex {
         return parse_hex(h).map(JumpKey::Bytes);
     }
+
     if integer_key {
         return s
             .parse::<u64>()
             .map(JumpKey::Int)
             .map_err(|_| crate::i18n::tr().int_key_hint.to_string());
     }
+
     Ok(JumpKey::Bytes(s.as_bytes().to_vec()))
 }
 
@@ -2079,6 +2174,7 @@ impl MdbxerApp {
     fn show_status_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("status_bar").show(ui, |ui| {
             let t = crate::i18n::tr();
+
             ui.horizontal(|ui| {
                 match (&self.db, self.cur_table()) {
                     (Some(dbh), Some(table)) => {
@@ -2101,6 +2197,7 @@ impl MdbxerApp {
                         } else {
                             t.range_rows(&range)
                         };
+
                         ui.label(format!("{} — {range_desc} / {total_desc}", table.display()));
                         ui.separator();
                         ui.label(if dbh.no_sub_dir {
@@ -2115,6 +2212,7 @@ impl MdbxerApp {
                         ui.label(t.no_db_status);
                     }
                 }
+
                 ui.separator();
                 // 一次性消息按级别着色：错误红 / 警告黄 / 信息默认
                 let msg_color = match self.status.level() {
@@ -2122,6 +2220,7 @@ impl MdbxerApp {
                     MsgLevel::Warn => Some(ui.visuals().warn_fg_color),
                     MsgLevel::Error => Some(ui.visuals().error_fg_color),
                 };
+
                 match msg_color {
                     Some(c) => ui.label(egui::RichText::new(self.status.text()).color(c)),
                     None => ui.label(self.status.text()),

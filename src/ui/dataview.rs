@@ -27,12 +27,14 @@ fn elide_tooltip(ui: &mut egui::Ui, resp: egui::Response, full: &str) {
             .size()
             .x
     });
+
     if width > resp.rect.width() {
         let text = if full.chars().count() > 512 {
             full.chars().take(512).collect::<String>() + "…"
         } else {
             full.to_string()
         };
+
         resp.on_hover_text(
             egui::RichText::new(text)
                 .monospace()

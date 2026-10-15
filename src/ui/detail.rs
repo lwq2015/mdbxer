@@ -78,20 +78,24 @@ impl Default for DetailState {
         Self {
             key_mode: DecodeMode::Auto,
             val_mode: DecodeMode::Auto,
+
             show_addr: true,
             show_hex: true,
             show_ascii: true,
             hex_width: fmt::DEFAULT_HEX_WIDTH,
+
             dup_total: 1,
             dup_index: 0,
             dup_page_start: 0,
             dup_values: Vec::new(),
             dup_jump_input: String::new(),
             dup_search_input: String::new(),
+
             key_seg_off: 0,
             val_seg_off: 0,
             key_seg_input: String::new(),
             val_seg_input: String::new(),
+
             key_blob_input: String::new(),
             val_blob_input: String::new(),
             key_blob_hit: None,
@@ -100,6 +104,7 @@ impl Default for DetailState {
             val_blob_matches: None,
             key_blob_scroll: None,
             val_blob_scroll: None,
+
             hex_key_fp: None,
             hex_key_sel: None,
             hex_val_fp: None,
@@ -125,16 +130,19 @@ impl DetailState {
     pub fn clear(&mut self) {
         self.key_mode = DecodeMode::Auto;
         self.val_mode = DecodeMode::Auto;
+
         self.dup_total = 1;
         self.dup_index = 0;
         self.dup_page_start = 0;
         self.dup_values.clear();
         self.dup_jump_input.clear();
         self.dup_search_input.clear();
+
         self.key_seg_off = 0;
         self.val_seg_off = 0;
         self.key_seg_input.clear();
         self.val_seg_input.clear();
+
         self.key_blob_input.clear();
         self.val_blob_input.clear();
         self.key_blob_hit = None;
@@ -177,6 +185,7 @@ impl DetailState {
         if self.dup_total == 0 {
             return Ok(());
         }
+
         let idx = idx.min(self.dup_total - 1);
         let in_page =
             idx >= self.dup_page_start && idx < self.dup_page_start + self.dup_values.len();
@@ -191,7 +200,9 @@ impl DetailState {
                 Err(e) => return Err(tr().dup_load_fail(&e)),
             }
         }
+
         self.dup_index = idx.min(self.dup_total.saturating_sub(1));
+
         // 切换到另一个值：Value 分段偏移归零；旧值的搜索命中失效（输入保留）
         self.val_seg_off = 0;
         self.val_seg_input.clear();
@@ -242,16 +253,19 @@ impl DetailState {
         if s.is_empty() {
             return (MsgLevel::Warn, t.dup_prompt.to_string());
         }
+
         let needle = match parse_bytes_input(s) {
             Ok(b) => b,
             Err(e) => return (MsgLevel::Error, t.dup_bad_query(&e)),
         };
+
         // 向后从下一个值开始；向前从当前值之前开始
         let from = if forward {
             self.dup_index + 1
         } else {
             self.dup_index
         };
+
         match db::dup_find(ctx.db, ctx.table, ctx.key, &needle, from, forward) {
             Ok(Some((i, _))) => {
                 let wrapped = forward && i < from || !forward && i >= from;
@@ -323,6 +337,7 @@ impl DetailState {
         } else {
             s.parse::<usize>()
         };
+
         match parsed {
             Ok(v) if v < total => {
                 *off = (v / fmt::PAGE_BYTES) * fmt::PAGE_BYTES;
@@ -404,14 +419,17 @@ impl DetailState {
             *self.blob_state_mut(is_key).2 = None;
             return (MsgLevel::Warn, t.blob_prompt.to_string());
         }
+
         let needle = match parse_bytes_input(&s) {
             Ok(b) => b,
             Err(e) => return (MsgLevel::Error, t.dup_bad_query(&e)),
         };
+
         if needle.is_empty() || needle.len() > bytes.len() {
             *self.blob_state_mut(is_key).2 = None;
             return (MsgLevel::Warn, t.blob_nomatch.to_string());
         }
+
         let cur = self.blob_hit(is_key);
         let (pos, wrapped) = if forward {
             // 从当前命中末尾之后继续；无命中则从头搜
@@ -467,6 +485,7 @@ impl DetailState {
                 }
             }
         };
+
         // 统计全部命中（不重叠）与当前命中序号，供搜索行显示 VSCode 风格 n/m
         let mut total = 0usize;
         let mut cur_no = 0usize;
@@ -484,6 +503,7 @@ impl DetailState {
                 None => break,
             }
         }
+
         // 记录命中并跳到所在段；置滚动目标，内容区滚动组件本帧消费后把命中行滚到可见
         let (_, hit, matches) = self.blob_state_mut(is_key);
         *hit = Some((pos, needle.len()));
@@ -495,6 +515,7 @@ impl DetailState {
         } else {
             self.val_blob_scroll = Some(pos);
         }
+
         if wrapped {
             (MsgLevel::Info, t.blob_wrap(pos))
         } else {
@@ -1374,6 +1395,7 @@ fn json_tokens(s: &str) -> Vec<JsonTok> {
     let n = chars.len();
     let mut i = 0usize;
     let mut out = Vec::new();
+
     while i < n {
         let (start, c) = chars[i];
         match c {
@@ -1392,6 +1414,7 @@ fn json_tokens(s: &str) -> Vec<JsonTok> {
                     j += 1;
                 }
                 let end = chars.get(j).map(|(p, _)| *p).unwrap_or(s.len());
+
                 // 判断是否为键：其后第一个非空白字符是 ':'
                 let mut k = j;
                 while k < n && chars[k].1.is_whitespace() {
@@ -1405,6 +1428,7 @@ fn json_tokens(s: &str) -> Vec<JsonTok> {
                 out.push(JsonTok { start, end, kind });
                 i = j;
             }
+
             '{' | '}' | '[' | ']' | ':' | ',' => {
                 let end = chars
                     .get(i + 1)
@@ -1417,6 +1441,7 @@ fn json_tokens(s: &str) -> Vec<JsonTok> {
                 });
                 i += 1;
             }
+
             c if c.is_ascii_alphanumeric() || c == '-' => {
                 let mut j = i + 1;
                 while j < n {
@@ -1436,6 +1461,7 @@ fn json_tokens(s: &str) -> Vec<JsonTok> {
                 out.push(JsonTok { start, end, kind });
                 i = j;
             }
+
             // 空白 / 换行 / 缩进等：无需着色，跳过
             _ => i += 1,
         }
@@ -1580,6 +1606,7 @@ mod tests {
         let mut st = DetailState::default();
         let data = b"ab--ab--ab";
         st.val_blob_input = "ab".into();
+
         st.blob_search(false, data, true);
         assert_eq!(st.blob_matches(false), Some((1, 3)));
         st.blob_search(false, data, true);
@@ -1589,14 +1616,17 @@ mod tests {
         assert_eq!(st.blob_matches(false), Some((1, 3)));
         st.blob_search(false, data, false); // 向前回绕到最后一个
         assert_eq!(st.blob_matches(false), Some((3, 3)));
+
         // 不重叠计数：aaaa 中搜 aa 应为 2 个
         st.val_blob_input = "aa".into();
         st.blob_search(false, b"aaaa", true);
         assert_eq!(st.blob_matches(false), Some((1, 2)));
+
         // 未命中清除计数
         st.val_blob_input = "zz".into();
         st.blob_search(false, data, true);
         assert_eq!(st.blob_matches(false), None);
+
         // 空输入清除计数
         st.val_blob_input = String::new();
         st.blob_search(false, data, true);

@@ -125,11 +125,15 @@ impl DecodeMode {
     pub fn label(self) -> String {
         match self {
             DecodeMode::Auto => crate::i18n::tr().mode_auto.to_string(),
+
+            // 文本与编码
             DecodeMode::Utf8 => "utf8".to_string(),
             DecodeMode::Utf16Le => "utf16 (LE)".to_string(),
             DecodeMode::Utf16Be => "utf16 (BE)".to_string(),
             DecodeMode::Gb18030 => "gb18030".to_string(),
             DecodeMode::Cp1251 => "windows-1251".to_string(),
+
+            // 整数
             DecodeMode::I8 => "int8".to_string(),
             DecodeMode::I16 => "int16".to_string(),
             DecodeMode::I32 => "int32".to_string(),
@@ -138,11 +142,17 @@ impl DecodeMode {
             DecodeMode::U16 => "uint16".to_string(),
             DecodeMode::U32 => "uint32".to_string(),
             DecodeMode::U64 => "uint64".to_string(),
+
+            // 浮点
             DecodeMode::F32 => "float".to_string(),
             DecodeMode::F64 => "double".to_string(),
+
+            // 进制/二进制展示
             DecodeMode::Hex => "hex".to_string(),
             DecodeMode::Dec => "dec".to_string(),
             DecodeMode::Binary => "binary".to_string(),
+
+            // 编码文本类
             DecodeMode::Base64 => "base64".to_string(),
             DecodeMode::Uuid => "uuid".to_string(),
             DecodeMode::Json => "json".to_string(),
@@ -153,11 +163,15 @@ impl DecodeMode {
     pub fn as_str(self) -> &'static str {
         match self {
             DecodeMode::Auto => "auto",
+
+            // 文本与编码
             DecodeMode::Utf8 => "utf8",
             DecodeMode::Utf16Le => "utf16le",
             DecodeMode::Utf16Be => "utf16be",
             DecodeMode::Gb18030 => "gb18030",
             DecodeMode::Cp1251 => "cp1251",
+
+            // 整数
             DecodeMode::I8 => "i8",
             DecodeMode::I16 => "i16",
             DecodeMode::I32 => "i32",
@@ -166,11 +180,17 @@ impl DecodeMode {
             DecodeMode::U16 => "u16",
             DecodeMode::U32 => "u32",
             DecodeMode::U64 => "u64",
+
+            // 浮点
             DecodeMode::F32 => "f32",
             DecodeMode::F64 => "f64",
+
+            // 进制/二进制展示
             DecodeMode::Hex => "hex",
             DecodeMode::Dec => "dec",
             DecodeMode::Binary => "bin",
+
+            // 编码文本类
             DecodeMode::Base64 => "b64",
             DecodeMode::Uuid => "uuid",
             DecodeMode::Json => "json",
@@ -180,11 +200,14 @@ impl DecodeMode {
     /// 从 [`as_str`](Self::as_str) 标识解析；未知值回退 Auto。
     pub fn from_str(s: &str) -> DecodeMode {
         match s {
+            // 文本与编码
             "utf8" => DecodeMode::Utf8,
             "utf16le" => DecodeMode::Utf16Le,
             "utf16be" => DecodeMode::Utf16Be,
             "gb18030" => DecodeMode::Gb18030,
             "cp1251" => DecodeMode::Cp1251,
+
+            // 整数
             "i8" => DecodeMode::I8,
             "i16" => DecodeMode::I16,
             "i32" => DecodeMode::I32,
@@ -193,14 +216,22 @@ impl DecodeMode {
             "u16" => DecodeMode::U16,
             "u32" => DecodeMode::U32,
             "u64" => DecodeMode::U64,
+
+            // 浮点
             "f32" => DecodeMode::F32,
             "f64" => DecodeMode::F64,
+
+            // 进制/二进制展示
             "hex" => DecodeMode::Hex,
             "dec" => DecodeMode::Dec,
             "bin" => DecodeMode::Binary,
+
+            // 编码文本类
             "b64" => DecodeMode::Base64,
             "uuid" => DecodeMode::Uuid,
             "json" => DecodeMode::Json,
+
+            // 未知值回退 Auto
             _ => DecodeMode::Auto,
         }
     }
@@ -211,15 +242,23 @@ impl DecodeMode {
     pub fn forced_label(self, endian: Endian) -> Option<String> {
         let t = crate::i18n::tr();
         let sfx = endian.suffix();
+
         Some(match self {
+            // Auto 交给调用方自动猜测
             DecodeMode::Auto => return None,
+
+            // 文本与编码
             DecodeMode::Utf8 => t.guess_utf8.to_string(),
             DecodeMode::Utf16Le => t.guess_utf16_le.to_string(),
             DecodeMode::Utf16Be => t.guess_utf16_be.to_string(),
             DecodeMode::Gb18030 => "GB18030".to_string(),
             DecodeMode::Cp1251 => "Windows-1251".to_string(),
+
+            // 单字节整数无字节序后缀
             DecodeMode::I8 => "i8".to_string(),
             DecodeMode::U8 => "u8".to_string(),
+
+            // 多字节整数/浮点随字节序加后缀
             DecodeMode::I16 => format!("i16 {sfx}"),
             DecodeMode::U16 => format!("u16 {sfx}"),
             DecodeMode::I32 => format!("i32 {sfx}"),
@@ -228,9 +267,13 @@ impl DecodeMode {
             DecodeMode::U64 => format!("u64 {sfx}"),
             DecodeMode::F32 => format!("f32 {sfx}"),
             DecodeMode::F64 => format!("f64 {sfx}"),
+
+            // 进制/二进制展示
             DecodeMode::Hex => "hex".to_string(),
             DecodeMode::Dec => "dec".to_string(),
             DecodeMode::Binary => "binary".to_string(),
+
+            // 编码文本类
             DecodeMode::Base64 => "base64".to_string(),
             DecodeMode::Uuid => "uuid".to_string(),
             DecodeMode::Json => "JSON".to_string(),
@@ -297,11 +340,13 @@ mod tests {
     fn forced_label_none_for_auto_and_suffixed_for_multibyte() {
         // Auto 不产生指定标签（调用方退回自动猜测）
         assert_eq!(DecodeMode::Auto.forced_label(Endian::Little), None);
+
         // 单字节类型无字节序后缀
         assert_eq!(
             DecodeMode::U8.forced_label(Endian::Little).as_deref(),
             Some("u8")
         );
+
         // 多字节整数随字节序加后缀
         assert_eq!(
             DecodeMode::U32.forced_label(Endian::Little).as_deref(),
@@ -311,6 +356,7 @@ mod tests {
             DecodeMode::U32.forced_label(Endian::Big).as_deref(),
             Some("u32 BE")
         );
+
         // 全部非 Auto 模式都有标签
         for m in DecodeMode::ALL {
             if m != DecodeMode::Auto {

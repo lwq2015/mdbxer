@@ -38,9 +38,11 @@ fn sep_int(s: &str) -> String {
         Some(rest) => ("-", rest),
         None => ("", s),
     };
+
     if digits.len() < 5 || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return s.to_string();
     }
+
     let mut out = String::with_capacity(s.len() + digits.len() / 3);
     out.push_str(neg);
     let rem = digits.len() % 3;
@@ -258,8 +260,11 @@ fn base64_text(bytes: &[u8]) -> String {
     if bytes.is_empty() {
         return String::new();
     }
+
     const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+
+    // 每 3 字节编码为 4 个输出字符，末尾不足 3 字节用 '=' 填充
     for chunk in bytes.chunks(3) {
         let mut buf = [0u8; 3];
         for (i, &b) in chunk.iter().enumerate() {
@@ -286,10 +291,12 @@ fn uuid_text(bytes: &[u8]) -> String {
     if bytes.is_empty() {
         return String::new();
     }
+
     if bytes.len() != 16 {
         let t = crate::i18n::tr();
         return format!("{} {}", hex_spaced(bytes), t.uuid_bad_len);
     }
+
     format!(
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
         bytes[0],
@@ -407,18 +414,21 @@ mod tests {
         setup();
         let t = crate::i18n::tr();
         use DecodeMode::*;
+
         // 整数/浮点模式：空数据返回通用空占位文案
         let numeric = [I8, U8, I16, U16, I32, U32, I64, U64, F32, F64];
         for mode in numeric {
             let s = decode(&[], mode, Endian::Little, 100);
             assert_eq!(s, t.empty, "mode={:?}", mode);
         }
+
         // 字符串/进制模式：空数据返回空串（无内容可展示）
         let textual = [Utf8, Utf16Le, Utf16Be, Gb18030, Cp1251, Hex, Dec, Binary];
         for mode in textual {
             let s = decode(&[], mode, Endian::Little, 100);
             assert_eq!(s, "", "mode={:?}", mode);
         }
+
         // Auto 模式：走 guess，返回 guess_empty_sym
         let s = decode(&[], Auto, Endian::Little, 100);
         assert_eq!(s, t.guess_empty_sym);
@@ -573,6 +583,8 @@ mod tests {
             decode(b"foo", DecodeMode::Base64, Endian::Little, 100),
             "Zm9v"
         );
+
+        // 空输入返回空串
         assert_eq!(decode(&[], DecodeMode::Base64, Endian::Little, 100), "");
     }
 

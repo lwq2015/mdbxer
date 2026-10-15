@@ -23,7 +23,9 @@ pub(crate) fn normalize_path(path: &str) -> String {
     } else {
         p.to_path_buf()
     };
+
     let resolved = std::fs::canonicalize(&abs).unwrap_or_else(|_| lexical_normalize(&abs));
+
     let mut s = resolved.to_string_lossy().into_owned();
     if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
         s = format!(r"\\{rest}");
@@ -105,6 +107,7 @@ impl History {
                         file: file.clone(),
                     };
                     let mut changed = false;
+
                     // entries 按最近打开在前；重复时保留靠前者（更新的 last_open）。
                     for e in entries {
                         let norm = normalize_path(&e.path);
@@ -133,6 +136,7 @@ impl History {
                 }
             }
         }
+
         Self {
             entries: Vec::new(),
             file,
@@ -144,10 +148,12 @@ impl History {
     pub fn add(&mut self, path: &str, mode: &str) {
         let norm = normalize_path(path);
         self.entries.retain(|e| !path_eq(&e.path, &norm));
+
         let last_open = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
+
         self.entries.insert(
             0,
             HistoryEntry {
@@ -156,6 +162,7 @@ impl History {
                 last_open,
             },
         );
+
         self.entries.truncate(MAX_ENTRIES);
         self.save();
     }
@@ -254,6 +261,7 @@ mod tests {
     #[test]
     fn add_dedup_equivalent_path_forms() {
         let (mut h, _) = temp_history();
+
         // 真实存在的目录：含 ./ 的写法与规范写法必须视为同一条
         let ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -264,10 +272,13 @@ mod tests {
         let p1 = base.join("sub");
         let p2 = base.join(".").join("sub");
         assert_ne!(p1.to_string_lossy(), p2.to_string_lossy());
+
         h.add(p1.to_str().unwrap(), "dir");
         h.add(p2.to_str().unwrap(), "dir");
+
         assert_eq!(h.entries.len(), 1);
         assert_eq!(h.entries[0].path, normalize_path(p1.to_str().unwrap()));
+
         let _ = fs::remove_dir_all(&base);
     }
 

@@ -185,6 +185,7 @@ fn merge_per_db(dst: &mut PerDbRecord, src: PerDbRecord) {
             dst.fav_tables.push(t);
         }
     }
+
     for k in src.fav_keys {
         if !dst
             .fav_keys
@@ -194,6 +195,7 @@ fn merge_per_db(dst: &mut PerDbRecord, src: PerDbRecord) {
             dst.fav_keys.push(k);
         }
     }
+
     if src.last_use > dst.last_use {
         dst.last_use = src.last_use;
         dst.last_table = src.last_table;
@@ -317,6 +319,7 @@ fn system_locale_string() -> String {
             return String::from_utf16_lossy(&buf[..n as usize - 1]);
         }
     }
+
     // Unix: LC_ALL > LC_MESSAGES > LANG（形如 ru_RU.UTF-8）
     for var in ["LC_ALL", "LC_MESSAGES", "LANG"] {
         if let Ok(v) = std::env::var(var) {
@@ -325,6 +328,7 @@ fn system_locale_string() -> String {
             }
         }
     }
+
     String::new()
 }
 
@@ -368,8 +372,10 @@ mod tests {
             table_sort: Some("count_desc".to_string()),
             export_format: Some("json".to_string()),
         };
+
         let s = serde_json::to_string(&p).unwrap();
         let back: UiPrefs = serde_json::from_str(&s).unwrap();
+
         assert_eq!(back.page_size, Some(500));
         assert_eq!(back.endian_le, Some(false));
         assert_eq!(back.key_mode.as_deref(), Some("hex"));
@@ -442,7 +448,9 @@ mod tests {
                 },
             );
         }
+
         assert_eq!(list.len(), MAX_PER_DB);
+
         // 保留的是最新的 50 个（db10..db59），最旧在最末
         assert_eq!(
             list[0].path,
@@ -477,17 +485,20 @@ mod tests {
                 ..Default::default()
             },
         ];
+
         normalize_per_db(&mut list);
         assert_eq!(list.len(), 2);
         let merged = list
             .iter()
             .find(|r| crate::history::path_eq(&r.path, "K:\\Data\\DB"))
             .unwrap();
+
         // 收藏并集去重保序
         assert_eq!(
             merged.fav_tables,
             vec![Some("a".to_string()), Some("b".to_string())]
         );
+
         // last_table 跟随更新的 last_use
         assert_eq!(merged.last_use, 200);
         assert_eq!(merged.last_table.as_deref(), Some("t2"));

@@ -264,6 +264,7 @@ mod tests {
         let path = dir.join("out.csv");
         let _ = std::fs::remove_file(&path);
         let job = job_at(&path, ExportFormat::Csv, false);
+
         let (result, text) = pipeline(
             job,
             vec![
@@ -280,6 +281,7 @@ mod tests {
                 },
             ],
         );
+
         assert_eq!(result.unwrap(), 3);
         assert_eq!(text, "key,value\na,1\nb,\"2,3\"\nc,\"x\"\"y\"\n");
     }
@@ -291,6 +293,7 @@ mod tests {
         let path = dir.join("out.json");
         let _ = std::fs::remove_file(&path);
         let job = job_at(&path, ExportFormat::Json, true);
+
         // 同一 Key 的三个值拆在两批，必须合并为一个 values 数组
         let (result, text) = pipeline(
             job,
@@ -308,6 +311,7 @@ mod tests {
                 },
             ],
         );
+
         assert_eq!(result.unwrap(), 3);
         assert_eq!(
             text,
