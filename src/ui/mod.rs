@@ -323,6 +323,28 @@ struct ValueSearchState {
     wrapped: bool,
 }
 
+/// 边缘开关按钮：平时 50% 透明，悬停不透明；返回是否被点击。
+fn edge_toggle_btn(ui: &mut egui::Ui, sym: &str, tip: &str) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(10.0, 44.0), egui::Sense::click());
+    let hover = resp.hovered();
+    let st = if hover {
+        &ui.style().visuals.widgets.hovered
+    } else {
+        &ui.style().visuals.widgets.inactive
+    };
+    let alpha = if hover { 1.0 } else { 0.5 };
+    let p = ui.painter();
+    p.rect_filled(rect, 3.0, st.bg_fill.gamma_multiply(alpha));
+    p.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        sym,
+        egui::FontId::monospace(12.0),
+        st.text_color().gamma_multiply(alpha),
+    );
+    resp.on_hover_text(tip).clicked()
+}
+
 /// 只读打开失败、等待用户确认恢复的库信息
 #[derive(Clone)]
 pub struct PendingRecover {
@@ -805,6 +827,47 @@ impl MdbxerApp {
         match crate::db::DbHandle::open_recover(std::path::Path::new(&p.path), p.mode) {
             Ok(_) => self.open_db(&p.path),
             Err(e) => self.status = Status::error(e),
+        }
+    }
+
+    /// 左右缘悬浮开关：垂直居中，"<"/">" 箭头指示收合方向。
+    ///
+    /// 左侧可见显示 "<"（点击收起），隐藏显示 ">"（点开展开）；右侧相反。
+    fn show_edge_toggles(&mut self, ui: &egui::Ui) {
+        if self.db.is_none() {
+            return;
+        }
+        let t = crate::i18n::tr();
+        let ctx = ui.ctx().clone();
+        let area = ui.available_rect_before_wrap();
+        let screen = ctx.viewport_rect();
+        let mut left_clicked = false;
+        egui::Area::new(egui::Id::new("left_edge_toggle"))
+            .order(egui::Order::Middle)
+            .fixed_pos(egui::Pos2::new(screen.left(), area.center().y - 23.0))
+            .show(&ctx, |ui| {
+                let sym = if self.left_visible { "<" } else { ">" };
+                if edge_toggle_btn(ui, sym, t.panel_tables) {
+                    left_clicked = true;
+                }
+            });
+        let mut right_clicked = false;
+        egui::Area::new(egui::Id::new("right_edge_toggle"))
+            .order(egui::Order::Middle)
+            .fixed_pos(egui::Pos2::new(screen.right() - 10.0, area.center().y - 23.0))
+            .show(&ctx, |ui| {
+                let sym = if self.detail_visible { ">" } else { "<" };
+                if edge_toggle_btn(ui, sym, t.panel_detail) {
+                    right_clicked = true;
+                }
+            });
+        if left_clicked {
+            self.left_visible = !self.left_visible;
+            self.save_ui_prefs();
+        }
+        if right_clicked {
+            self.detail_visible = !self.detail_visible;
+            self.save_ui_prefs();
         }
     }
 
@@ -2108,6 +2171,8 @@ impl eframe::App for MdbxerApp {
                 detail::show(ui, self);
             }
         }
+        // 左右缘悬浮开关（面板声明后调用，ui 剩余区域即中央数据区）
+        self.show_edge_toggles(ui);
 
         // 中央区域（页签始终显示；"关于"无库也可查看）
         egui::CentralPanel::default().show(ui, |ui| {

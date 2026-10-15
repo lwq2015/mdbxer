@@ -215,22 +215,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 app.save_ui_prefs();
             }
 
-            ui.separator();
-
-            let mut lv = app.left_visible;
-            if ui.selectable_label(lv, t.panel_tables).clicked() {
-                lv = !lv;
-            }
-            let mut dv = app.detail_visible;
-            if ui.selectable_label(dv, t.panel_detail).clicked() {
-                dv = !dv;
-            }
-            if lv != app.left_visible || dv != app.detail_visible {
-                app.left_visible = lv;
-                app.detail_visible = dv;
-                app.save_ui_prefs();
-            }
-
             // 语言选择：顶栏最右侧，切换即时生效并持久化
             ui.separator();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
