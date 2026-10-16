@@ -172,6 +172,65 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
         ),
         // 非法 JSON：手动 Json 排版时应原样回退为文本
         (b"json_invalid", b"not a json string".to_vec()),
+        // ── 新格式：BSON（Auto 应自动识别为 BSON，显示宽松扩展 JSON）──
+        // 最小合法 BSON：空文档 {}（5 字节 "05 00 00 00 00"）
+        (
+            b"bson_empty",
+            bson::to_vec(&bson::doc! {}).expect("valid bson"),
+        ),
+        // 简单文档：字符串/int/bool，与 json_object 内容对应，
+        // 可对照同内容 JSON 与 BSON 两种排版的输出
+        (
+            b"bson_simple",
+            bson::to_vec(&bson::doc! {
+                "name": "mdbx",
+                "version": 1,
+                "active": true,
+            })
+            .expect("valid bson"),
+        ),
+        // 常见类型全覆盖：字符串/int32/int64/double/bool/null/日期/
+        // ObjectId/Timestamp/二进制；datetime 与 ts_millis 同一毫秒
+        // 时间戳（2025-09-28 前后），可对照 u64 时间戳排版核对
+        (
+            b"bson_mixed",
+            bson::to_vec(&bson::doc! {
+                "title": "混合类型",
+                "count": 42i32,
+                "big": 9_000_000_000_000i64,
+                "pi": 3.14159,
+                "ok": false,
+                "missing": null,
+                "created": bson::DateTime::from_millis(1_759_000_000_123),
+                "id": bson::oid::ObjectId::from_bytes([
+                    0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4, 0xa7, 0x16, 0x44, 0x66,
+                ]),
+                "tick": bson::Timestamp {
+                    time: 1_759_000_000,
+                    increment: 1,
+                },
+                "blob": bson::Binary {
+                    subtype: bson::spec::BinarySubtype::Generic,
+                    bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
+                },
+            })
+            .expect("valid bson"),
+        ),
+        // 嵌套结构：嵌套对象、混合类型数组、空对象/空数组、中文键值
+        (
+            b"bson_nested",
+            bson::to_vec(&bson::doc! {
+                "中文键": "值：你好，BSON！",
+                "tags": ["db", "gui", 3, 2.5, true, null],
+                "meta": {
+                    "version": "1.0",
+                    "deep": [{ "x": 1i32 }, { "x": -2.5 }],
+                },
+                "empty_obj": {},
+                "empty_arr": [],
+            })
+            .expect("valid bson"),
+        ),
     ];
     let entries: Vec<(&[u8], Vec<u8>)> = entries.into_iter().chain(nums).collect();
     for (k, v) in entries {
