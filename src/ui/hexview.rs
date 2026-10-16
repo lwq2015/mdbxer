@@ -447,7 +447,8 @@ pub(crate) fn hex_view(
             }
         }
 
-        // 3) 文本（最后画，压在背景之上）
+        // 3) 文本（最后画，压在背景之上）。地址列弱化半透明、
+        //    HEX/ASCII 数据列保持原色，用 LayoutJob 两段着色
         let galley = cache
             .rows
             .entry(r)
@@ -462,7 +463,23 @@ pub(crate) fn hex_view(
                     base_offset + r * n,
                     digits,
                 );
-                ui.fonts_mut(|f| f.layout_no_wrap(line, font_id.clone(), text_color))
+                // 整行均为 ASCII（地址 + HEX + ASCII 列），按字节切出地址段
+                let addr_len = if show_addr { digits + 2 } else { 0 };
+                let mut job = egui::text::LayoutJob::default();
+                if addr_len > 0 {
+                    let addr_color = with_alpha(text_color, 0x99);
+                    job.append(
+                        &line[..addr_len],
+                        0.0,
+                        egui::TextFormat::simple(font_id.clone(), addr_color),
+                    );
+                }
+                job.append(
+                    &line[addr_len..],
+                    0.0,
+                    egui::TextFormat::simple(font_id.clone(), text_color),
+                );
+                ui.fonts_mut(|f| f.layout_job(job))
             })
             .clone();
         painter.galley(egui::pos2(rect.left(), row_top), galley, text_color);
