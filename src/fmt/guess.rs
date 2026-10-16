@@ -27,6 +27,15 @@ pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
         return ("JSON".to_string(), s.to_string());
     }
 
+    // BSON 文档与 JSON 同级优先（都在普通 UTF-8 之前）。BSON 无魔数，靠
+    // "前 4 字节长度自洽 + 0x00 终止 + 整体可解析"约束识别；文本仍返回紧凑
+    // 扩展 JSON，pretty/着色交给详情层（与 JSON 同一套管线）。
+    if is_bson(bytes) {
+        if let Some(s) = value::bson_compact(bytes) {
+            return ("BSON".to_string(), s);
+        }
+    }
+
     // 优先可打印 UTF-8 文本（允许 \t \n \r）
     if let Ok(s) = std::str::from_utf8(bytes) {
         if s.chars()
@@ -89,6 +98,22 @@ pub fn is_structured_json(bytes: &[u8]) -> bool {
         .find(|c| !c.is_ascii_whitespace());
     matches!(first, Some(b'{') | Some(b'['))
         && serde_json::from_slice::<serde_json::Value>(bytes).is_ok()
+}
+
+/// 判断字节是否为完整 BSON 文档，用于 Auto 自动识别与详情着色。
+///
+/// BSON 无魔数，靠三层约束把误判压到可忽略：
+/// 1. 至少 5 字节（最小 BSON 文档为 4 字节长度字段 + 1 字节终止符）；
+/// 2. 末字节 0x00（文档终止符）；
+/// 3. 前 4 字节小端 u32 恰好等于总长（BSON 文档首字段即自身总长）。
+/// 满足后再交给 `bson::Document::from_reader` 做权威校验（类型字节、元素
+/// 结构、CStr 字段名等）。随机二进制要同时命中这三层且解析成功，概率极低；
+/// 普通整数/UTF-8 文本几乎不可能同时满足长度自洽与终止符。
+pub fn is_bson(bytes: &[u8]) -> bool {
+    bytes.len() >= 5
+        && bytes[bytes.len() - 1] == 0
+        && u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize == bytes.len()
+        && bson::Document::from_reader(bytes).is_ok()
 }
 
 /// 尝试把字节识别为 UTF-16 文本。
@@ -347,6 +372,57 @@ mod tests {
         assert!(!is_structured_json(b"null"));
         assert!(!is_structured_json(b"{broken"));
         assert!(!is_structured_json(b""));
+    }
+
+    #[test]
+    fn guess_bson_document() {
+        // {"a": "hi"} 的 BSON：Auto 识别为 BSON，文本为紧凑扩展 JSON 单行
+        let doc = bson::to_vec(&bson::doc! { "a": "hi" }).unwrap();
+        assert!(is_bson(&doc));
+        let (label, text) = guess(&doc, Endian::Little);
+        assert_eq!(label, "BSON");
+        assert_eq!(text, r#"{"a":"hi"}"#);
+        assert!(!text.contains('\n'), "Auto 猜测 BSON 不应返回多行");
+    }
+
+    #[test]
+    fn guess_bson_rich_types() {
+        // 混合类型（整数/浮点/嵌套文档）：标签 BSON、文本可再次被 serde_json 解析
+        let doc = bson::to_vec(&bson::doc! {
+            "n": 42i32,
+            "f": 1.5f64,
+            "sub": { "ok": true },
+        })
+        .unwrap();
+        let (label, text) = guess(&doc, Endian::Little);
+        assert_eq!(label, "BSON");
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["n"], 42);
+        assert_eq!(v["f"], 1.5);
+        assert_eq!(v["sub"]["ok"], true);
+    }
+
+    #[test]
+    fn guess_bson_empty_document() {
+        // 最小 BSON：空文档 05 00 00 00 00
+        let (label, _) = guess(&[0x05, 0x00, 0x00, 0x00, 0x00], Endian::Little);
+        assert_eq!(label, "BSON");
+    }
+
+    #[test]
+    fn bson_predicate_rejects_lookalikes() {
+        // 长度字段与总长一致的 5 字节 \x05\x00\x00\x00\x00 是合法空文档
+        assert!(is_bson(&[0x05, 0x00, 0x00, 0x00, 0x00]));
+        // 长度自洽但末字节非 0 / 解析失败 / 长度不符：均不识别
+        assert!(!is_bson(&[0x05, 0x00, 0x00, 0x00, 0xFF]));
+        assert!(!is_bson(&[0x09, 0x00, 0x00, 0x00, 0x00]));
+        assert!(!is_bson(&[0x00]));
+        assert!(!is_bson(&[]));
+        // 普通整数/文本/JSON 不被判为 BSON
+        let int_le = [0x78u8, 0x56, 0x34, 0x12];
+        assert!(!is_bson(&int_le));
+        assert!(!is_bson(b"hello"));
+        assert!(!is_bson(br#"{"a":1}"#));
     }
 
     #[test]

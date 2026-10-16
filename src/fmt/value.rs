@@ -162,6 +162,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) 
         DecodeMode::Base64 => base64_text(bytes),
         DecodeMode::Uuid => uuid_text(bytes),
         DecodeMode::Json => json_text(bytes),
+        DecodeMode::Bson => bson_text(bytes),
     };
     truncate_chars(s, max_chars)
 }
@@ -328,6 +329,38 @@ fn json_text(bytes: &[u8]) -> String {
             .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned()),
         Err(_) => String::from_utf8_lossy(bytes).into_owned(),
     }
+}
+
+/// BSON 转宽松扩展 JSON：合法文档 → pretty；非法 → UTF-8 文本。
+/// 宽松（relaxed）扩展 JSON 下日期/整数等以自然形式显示，最接近源码可读形态。
+pub(crate) fn bson_text(bytes: &[u8]) -> String {
+    match bson_json_value(bytes) {
+        Some(v) => serde_json::to_string_pretty(&v)
+            .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned()),
+        None => {
+            if bytes.is_empty() {
+                String::new()
+            } else {
+                String::from_utf8_lossy(bytes).into_owned()
+            }
+        }
+    }
+}
+
+/// 紧凑版 BSON → 扩展 JSON（表格 Auto 单行预览用）。
+pub(crate) fn bson_compact(bytes: &[u8]) -> Option<String> {
+    bson_json_value(bytes).and_then(|v| serde_json::to_string(&v).ok())
+}
+
+/// 把字节按 BSON 文档解析并转成 serde_json 值（宽松扩展 JSON）。
+/// 非 BSON 字节返回 None；空字节同样按解析失败处理。
+fn bson_json_value(bytes: &[u8]) -> Option<serde_json::Value> {
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let doc = bson::Document::from_reader(bytes).ok()?;
+    bson::Bson::Document(doc).into_relaxed_extjson().into()
 }
 
 #[cfg(test)]
@@ -633,5 +666,21 @@ mod tests {
         assert_eq!(s, "not json");
         // 空输入为空串
         assert_eq!(decode(&[], DecodeMode::Json, Endian::Little, 100), "");
+    }
+
+    #[test]
+    fn decode_bson_pretty() {
+        setup();
+        let doc = bson::to_vec(&bson::doc! { "a": "hi", "n": 3i32 }).unwrap();
+        let s = decode(&doc, DecodeMode::Bson, Endian::Little, 500);
+        // 宽松扩展 JSON pretty 多行，与 Json 模式同款缩进
+        assert!(s.contains('\n'), "pretty BSON 应多行: {s}");
+        assert!(s.contains("\"a\" : \"hi\"") || s.contains("\"a\": \"hi\""));
+        assert!(s.contains("3"));
+        // 非法 BSON 回退 UTF-8 文本
+        let s = decode(b"not bson", DecodeMode::Bson, Endian::Little, 100);
+        assert_eq!(s, "not bson");
+        // 空输入为空串
+        assert_eq!(decode(&[], DecodeMode::Bson, Endian::Little, 100), "");
     }
 }

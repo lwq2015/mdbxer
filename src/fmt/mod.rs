@@ -10,9 +10,9 @@ mod hexdump;
 mod value;
 
 pub use guess::guess;
-pub(crate) use guess::is_structured_json;
+pub(crate) use guess::{is_bson, is_structured_json};
 pub(crate) use hexdump::{
-    ADDR_CHARS, hex_copy_selection, hex_line, hex_section_chars, mid_gap_index,
+    addr_chars, addr_digits, hex_copy_selection, hex_line, hex_section_chars, mid_gap_index,
 };
 pub use hexdump::{DEFAULT_HEX_WIDTH, HEX_WIDTHS, PAGE_BYTES};
 pub use value::decode;
@@ -93,10 +93,12 @@ pub enum DecodeMode {
     Uuid,
     /// JSON 美化（非法 JSON 回退 UTF-8 文本）
     Json,
+    /// BSON 文档 → 宽松扩展 JSON 显示（非法 BSON 回退 UTF-8 文本）
+    Bson,
 }
 
 impl DecodeMode {
-    pub const ALL: [DecodeMode; 22] = [
+    pub const ALL: [DecodeMode; 23] = [
         DecodeMode::Auto,
         DecodeMode::Utf8,
         DecodeMode::Utf16Le,
@@ -119,6 +121,7 @@ impl DecodeMode {
         DecodeMode::Base64,
         DecodeMode::Uuid,
         DecodeMode::Json,
+        DecodeMode::Bson,
     ];
 
     /// 下拉框显示文本（"自动"随界面语言；类型名为国际通用写法不翻译）。
@@ -156,6 +159,7 @@ impl DecodeMode {
             DecodeMode::Base64 => "base64".to_string(),
             DecodeMode::Uuid => "uuid".to_string(),
             DecodeMode::Json => "json".to_string(),
+            DecodeMode::Bson => "bson".to_string(),
         }
     }
 
@@ -194,6 +198,7 @@ impl DecodeMode {
             DecodeMode::Base64 => "b64",
             DecodeMode::Uuid => "uuid",
             DecodeMode::Json => "json",
+            DecodeMode::Bson => "bson",
         }
     }
 
@@ -230,6 +235,7 @@ impl DecodeMode {
             "b64" => DecodeMode::Base64,
             "uuid" => DecodeMode::Uuid,
             "json" => DecodeMode::Json,
+            "bson" => DecodeMode::Bson,
 
             // 未知值回退 Auto
             _ => DecodeMode::Auto,
@@ -277,6 +283,7 @@ impl DecodeMode {
             DecodeMode::Base64 => "base64".to_string(),
             DecodeMode::Uuid => "uuid".to_string(),
             DecodeMode::Json => "JSON".to_string(),
+            DecodeMode::Bson => "BSON".to_string(),
         })
     }
 }
@@ -318,7 +325,7 @@ mod tests {
 
     #[test]
     fn decode_mode_all_complete() {
-        assert_eq!(DecodeMode::ALL.len(), 22);
+        assert_eq!(DecodeMode::ALL.len(), 23);
     }
 
     #[test]
