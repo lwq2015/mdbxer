@@ -532,7 +532,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     } else {
         0.0
     };
-    let max_w = detail_max_width(ui, &app.detail, left_w);
+    // 地址位数随数据大小变化：取 Key/Value 两卡片中较大的最大绝对偏移
+    let val_len = app.current_value().map_or(0, |v| v.len());
+    let key_len = app
+        .selected_row
+        .and_then(|i| app.rows.get(i))
+        .map_or(0, |r| r.key.len());
+    let addr_max_off = (app.detail.key_seg_off + key_len.saturating_sub(1))
+        .max(app.detail.val_seg_off + val_len.saturating_sub(1));
+    let max_w = detail_max_width(ui, &app.detail, left_w, addr_max_off);
     // 行宽/列开关变化后按新配置内容宽度自动收放右栏（面板本体只会被超宽内容
     // 撑到上限，内容变窄时不会自动缩回，需在 show 结束后改写 PanelState）
     let mut hex_pref_changed = false;
@@ -661,7 +669,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     if hex_pref_changed {
         let limit = (ui.ctx().viewport_rect().width() - left_w - super::MIDDLE_MIN_WIDTH)
             .max(240.0);
-        let target = detail_needed_width(ui, &app.detail).clamp(240.0, limit);
+        let target = detail_needed_width(ui, &app.detail, addr_max_off).clamp(240.0, limit);
         let rect =
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(target, 0.0));
         ui.ctx().data_mut(|d| {
@@ -842,10 +850,11 @@ fn kv_card(
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(t.copy).clicked() {
-                    // Auto 下完整值是结构化 JSON 时按 Json 复制（得到 pretty），
+                    // Auto 下完整值是结构化 JSON/BSON 时按对应格式复制（得到 pretty），
                     // 与详情显示一致；其余情况按当前实际模式复制原文。
                     let copy_mode = match app.detail.mode_of(is_key) {
                         DecodeMode::Auto if fmt::is_structured_json(bytes) => DecodeMode::Json,
+                        DecodeMode::Auto if fmt::is_bson(bytes) => DecodeMode::Bson,
                         m => m,
                     };
                     ui.ctx()
@@ -1077,23 +1086,22 @@ fn kv_card(
             + ui.spacing().extra_text_line_spacing;
         let fixed = card_fixed_overhead(total, is_key, is_dup);
         let (text_open, hex_open) = card_section_open(ui.ctx(), is_key);
-        // JSON 语法着色：手动 Json 或 Auto 命中结构化 JSON 时启用。
-        let syntax_json = json_color_enabled(app.detail.mode_of(is_key), window);
-        // 详情文本区"实际显示"的文本：Auto 命中结构化 JSON 时改用 pretty。
+        // JSON/BSON 语法着色：手动 Json（合法 JSON）或 Auto 命中结构化 JSON/BSON
+        // 时启用；Some 同时给出 Auto 下 pretty 重解码应使用的格式。
+        let json_mode = json_color_mode(app.detail.mode_of(is_key), window);
+        let syntax_json = json_mode.is_some();
+        // 详情文本区"实际显示"的文本：Auto 命中 JSON/BSON 时改用 pretty。
         // guess 返回的是紧凑原文（保证表格单行预览不被破坏），故这里要重解码一次。
         // 高度估算与下方渲染必须共用这份文本，否则 pretty 后行数变多却仍按紧凑文本
         // 的 1 行估高，文本区会被裁掉大半、也无法占满折叠 hex 释放出的空间。
-        let display_text: String = if syntax_json
-            && app.detail.mode_of(is_key) == DecodeMode::Auto
-        {
-            fmt::decode(
+        let display_text: String = match (json_mode, app.detail.mode_of(is_key)) {
+            (Some(m), DecodeMode::Auto) => fmt::decode(
                 window,
-                DecodeMode::Json,
+                m,
                 app.endian,
                 window.len().saturating_mul(4) + 256,
-            )
-        } else {
-            text.to_string()
+            ),
+            _ => text.to_string(),
         };
         let syntax_palette = json_palette(ui.visuals().dark_mode);
         // hex 份额不在这里定：渲染时按游标实测回填（见下），此处只分文本区
@@ -1373,18 +1381,29 @@ impl JsonKind {
     }
 }
 
-/// 判断当前显示段是否应以 JSON 语法着色：
+/// 判断该段文本是否启用 JSON 语法着色；Some 返回 Auto 下 pretty 重解码应
+/// 使用的格式（Json 或 Bson）。
 /// - 手动切到 Json：该段是任意合法 JSON（含标量）即着色；
-/// - Auto：仅当该段为对象/数组形态的结构化 JSON 时才随自动识别一起着色，
+/// - Auto：完整 BSON 或对象/数组形态的结构化 JSON 时返回对应格式，
 ///   排除 `123`/`true`/`"s"`/`null` 等会被当普通文本的标量。
 ///
-/// 大字段分段时只有能独立解析的段（通常是首页完整小值）着色；跨页截断的部分
-/// JSON 解析失败，回退单色。
-fn json_color_enabled(mode: DecodeMode, window: &[u8]) -> bool {
+/// 大字段分段时只有能独立解析的段（通常是首页完整小值）着色；跨页截断的
+/// 部分 JSON/BSON 解析失败，回退单色。
+fn json_color_mode(mode: DecodeMode, window: &[u8]) -> Option<DecodeMode> {
     match mode {
-        DecodeMode::Json => serde_json::from_slice::<serde_json::Value>(window).is_ok(),
-        DecodeMode::Auto => fmt::is_structured_json(window),
-        _ => false,
+        DecodeMode::Json => serde_json::from_slice::<serde_json::Value>(window)
+            .is_ok()
+            .then_some(DecodeMode::Json),
+        DecodeMode::Auto => {
+            if fmt::is_bson(window) {
+                Some(DecodeMode::Bson)
+            } else if fmt::is_structured_json(window) {
+                Some(DecodeMode::Json)
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -1531,8 +1550,8 @@ fn append_json_colored(
 /// 在面板内不折行。按等宽字体实测字宽计算，再扣除各级边距；
 /// 同时不超过窗口宽度减去左栏与中央表格最小保留宽度，
 /// 窄窗口时下限放宽到右栏最小宽度 240，优先保证中央表格。
-fn detail_max_width(ui: &egui::Ui, d: &DetailState, left_w: f32) -> f32 {
-    let needed = detail_needed_width(ui, d);
+fn detail_max_width(ui: &egui::Ui, d: &DetailState, left_w: f32, addr_max_off: usize) -> f32 {
+    let needed = detail_needed_width(ui, d, addr_max_off);
     let screen = ui.ctx().viewport_rect().width();
     needed
         .max(720.0)
@@ -1540,15 +1559,16 @@ fn detail_max_width(ui: &egui::Ui, d: &DetailState, left_w: f32) -> f32 {
 }
 
 /// 当前 hex 配置（行宽 + 地址/HEX/ASCII 开关）下内容实际所需宽度。
-fn detail_needed_width(ui: &egui::Ui, d: &DetailState) -> f32 {
+/// `addr_max_off` 为当前数据（Key/Value 中较大者）的最大绝对偏移，决定地址列位数。
+fn detail_needed_width(ui: &egui::Ui, d: &DetailState, addr_max_off: usize) -> f32 {
     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
     let char_w = ui.fonts_mut(|f| f.glyph_width(&font_id, '0'));
 
     let n = d.hex_width as f32;
     let mut line_chars = 0.0_f32;
     if d.show_addr {
-        // 8 位十六进制地址 + 列后 2 空格
-        line_chars += 10.0;
+        // 地址位数随数据大小变化（最小 4 位）+ 列后 2 空格
+        line_chars += crate::fmt::addr_chars(crate::fmt::addr_digits(0, addr_max_off + 1)) as f32;
     }
     if d.show_hex {
         // 每字节 "XX "，宽行中间额外 1 个分隔空格
@@ -1684,7 +1704,7 @@ mod tests {
 
     // ── JSON 语法着色 ──────────────────────────────────────────────
 
-    use super::{JsonKind, json_color_enabled, json_tokens};
+    use super::{JsonKind, json_color_mode, json_tokens};
     use crate::fmt::DecodeMode;
 
     /// 取 (文本片段, 类别) 列表，方便断言。
@@ -1695,24 +1715,37 @@ mod tests {
             .collect()
     }
 
+    /// 构造一个最小合法 BSON 文档：{"a": "hi"}
+    fn bson_sample() -> Vec<u8> {
+        bson::to_vec(&bson::doc! { "a": "hi" }).expect("序列化 BSON 文档")
+    }
+
     #[test]
-    fn json_color_enabled_modes() {
+    fn json_color_mode_formats() {
         let valid = br#"{"a":1}"#;
-        // 手动 Json：合法 JSON 着色
-        assert!(json_color_enabled(DecodeMode::Json, valid));
-        // Auto：对象/数组形态的合法 JSON 也自动着色
-        assert!(json_color_enabled(DecodeMode::Auto, valid));
-        assert!(json_color_enabled(DecodeMode::Auto, b"[1,2]"));
+        // 手动 Json：合法 JSON 着色（格式为 Json）
+        assert_eq!(json_color_mode(DecodeMode::Json, valid), Some(DecodeMode::Json));
+        // Auto：对象/数组形态的合法 JSON 自动着色为 Json
+        assert_eq!(json_color_mode(DecodeMode::Auto, valid), Some(DecodeMode::Json));
+        assert_eq!(json_color_mode(DecodeMode::Auto, b"[1,2]"), Some(DecodeMode::Json));
+        // Auto：完整 BSON 文档自动着色为 Bson
+        let doc = bson_sample();
+        assert_eq!(json_color_mode(DecodeMode::Auto, &doc), Some(DecodeMode::Bson));
+        // 手动 Json 下 BSON 字节不是合法 JSON：不着色
+        assert_eq!(json_color_mode(DecodeMode::Json, &doc), None);
         // Auto 下合法 JSON 标量不着色（避免普通数字/字符串被误判）
-        assert!(!json_color_enabled(DecodeMode::Auto, b"123"));
-        assert!(!json_color_enabled(DecodeMode::Auto, br#""s""#));
-        // 非 Json/Auto 模式：永不着色
-        assert!(!json_color_enabled(DecodeMode::Utf8, valid));
+        assert_eq!(json_color_mode(DecodeMode::Auto, b"123"), None);
+        assert_eq!(json_color_mode(DecodeMode::Auto, br#""s""#), None);
+        // 非 Json/Bson/Auto 模式：永不着色
+        assert_eq!(json_color_mode(DecodeMode::Utf8, valid), None);
+        assert_eq!(json_color_mode(DecodeMode::Bson, valid), None);
         // 非法内容不着色
-        assert!(!json_color_enabled(DecodeMode::Json, b"not json"));
-        // 跨页截断的部分 JSON：Auto/Json 都不着色
-        assert!(!json_color_enabled(DecodeMode::Json, br#"{"a": "lon"#));
-        assert!(!json_color_enabled(DecodeMode::Auto, br#"{"a": "lon"#));
+        assert_eq!(json_color_mode(DecodeMode::Json, b"not json"), None);
+        // 跨页截断的部分 JSON/BSON：Auto/Json 都不着色
+        assert_eq!(json_color_mode(DecodeMode::Json, br#"{"a": "lon"#), None);
+        assert_eq!(json_color_mode(DecodeMode::Auto, br#"{"a": "lon"#), None);
+        // 截断的 BSON（长度字段无法自洽）：不着色
+        assert_eq!(json_color_mode(DecodeMode::Auto, &doc[..doc.len() - 2]), None);
     }
 
     #[test]
@@ -1815,7 +1848,10 @@ mod tests {
         );
         // 先确认测试数据本身是合法 JSON
         assert!(serde_json::from_str::<serde_json::Value>(raw).is_ok());
-        assert!(json_color_enabled(DecodeMode::Json, raw.as_bytes()));
+        assert_eq!(
+            json_color_mode(DecodeMode::Json, raw.as_bytes()),
+            Some(DecodeMode::Json)
+        );
 
         let toks = json_tokens(raw);
         let pairs = tok_pairs(raw);

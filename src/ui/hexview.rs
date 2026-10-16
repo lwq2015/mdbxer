@@ -16,7 +16,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::fmt::{ADDR_CHARS, hex_line, mid_gap_index};
+use crate::fmt::{addr_chars, addr_digits, hex_line, mid_gap_index};
 
 /// Galley 缓存：内容指纹变化时整体作废。
 #[derive(Default, Clone)]
@@ -161,11 +161,9 @@ pub(crate) fn hex_view(
     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
     let (cw, rh) = ui.fonts_mut(|f| (f.glyph_width(&font_id, '0'), f.row_height(&font_id)));
 
-    let addr_w = if show_addr {
-        ADDR_CHARS as f32 * cw
-    } else {
-        0.0
-    };
+    // 地址位数随数据大小变化（同一 dump 内所有行统一位数保证对齐）
+    let digits = addr_digits(base_offset, bytes.len());
+    let addr_w = if show_addr { addr_chars(digits) as f32 * cw } else { 0.0 };
     let hex_w = if show_hex {
         crate::fmt::hex_section_chars(n) as f32 * cw
     } else {
@@ -462,6 +460,7 @@ pub(crate) fn hex_view(
                     show_hex,
                     show_ascii,
                     base_offset + r * n,
+                    digits,
                 );
                 ui.fonts_mut(|f| f.layout_no_wrap(line, font_id.clone(), text_color))
             })

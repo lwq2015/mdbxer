@@ -11,8 +11,19 @@ pub const PAGE_BYTES: usize = 64 * 1024;
 pub const HEX_WIDTHS: [usize; 3] = [4, 8, 16 /*, 32*/];
 pub const DEFAULT_HEX_WIDTH: usize = 8;
 
-/// 地址列宽度（字符）：8 位十六进制 + 2 空格。
-pub const ADDR_CHARS: usize = 10;
+/// 地址列位数：覆盖最大绝对偏移（base_offset + 总长 - 1）所需的最少
+/// 十六进制位数，最小 4 位（64 KiB 段内偏移上限 0xFFFF）。
+pub fn addr_digits(base_offset: usize, total_len: usize) -> usize {
+    let max_off = base_offset + total_len.saturating_sub(1);
+    let bits = usize::BITS - max_off.leading_zeros();
+
+    ((bits as usize + 3) / 4).max(4)
+}
+
+/// 地址列宽度（字符）：位数 + 列后 2 空格。
+pub fn addr_chars(digits: usize) -> usize {
+    digits + 2
+}
 
 /// 宽行（≥8 字节）中间加空隙的位置（第 mid 字节前多 1 空格）。
 pub fn mid_gap_index(width: usize) -> Option<usize> {
@@ -26,6 +37,7 @@ pub fn hex_section_chars(width: usize) -> usize {
 
 /// 构造一行 hex dump（不去尾空格，供交互组件按固定字符坐标布局）。
 /// 与 [`hex_dump`] 的单行内容一致：地址列 + HEX 列（末行补空格对齐）+ ASCII 列。
+/// `addr_digits` 为地址列十六进制位数（同一 dump 内所有行一致，保证对齐）。
 pub fn hex_line(
     chunk: &[u8],
     width: usize,
@@ -33,12 +45,13 @@ pub fn hex_line(
     show_hex: bool,
     show_ascii: bool,
     abs_offset: usize,
+    addr_digits: usize,
 ) -> String {
     let width = width.max(1);
     let mid_gap = mid_gap_index(width).unwrap_or(usize::MAX);
     let mut s = String::new();
     if show_addr {
-        s.push_str(&format!("{abs_offset:08X}  "));
+        s.push_str(&format!("{abs_offset:0addr_digits$X}  "));
     }
     if show_hex {
         for i in 0..width {
@@ -109,6 +122,7 @@ pub fn hex_copy_selection(
             show_hex,
             show_ascii,
             0,
+            0,
         );
         let mut buf: Vec<char> = line.chars().collect();
         // 只保留选中字节在 HEX 段（两位数字）和 ASCII 段（一个字符）的位置
@@ -155,6 +169,7 @@ pub fn hex_dump(
         return crate::i18n::tr().empty.to_string();
     }
     let width = width.max(1);
+    let digits = addr_digits(base_offset, bytes.len());
     let mut out = String::new();
     for (line, chunk) in bytes.chunks(width).enumerate() {
         out.push_str(&hex_line(
@@ -164,6 +179,7 @@ pub fn hex_dump(
             show_hex,
             show_ascii,
             base_offset + line * width,
+            digits,
         ));
         out.truncate(out.trim_end().len());
         out.push('\n');
@@ -185,8 +201,8 @@ mod tests {
     fn all_columns_on() {
         let bytes = [0x48, 0x65, 0x6C, 0x6C, 0x6F]; // "Hello"
         let s = hex_dump(&bytes, 8, true, true, true, 0);
-        // 地址列
-        assert!(s.starts_with("00000000  "));
+        // 地址列（最小 4 位）
+        assert!(s.starts_with("0000  "));
         // HEX 列（宽 8 时第 4 字节后有双空格）
         assert!(s.contains("48 65 6C 6C  6F"));
         // ASCII 列
@@ -196,7 +212,7 @@ mod tests {
     #[test]
     fn addr_only() {
         let s = hex_dump(&[0x41], 8, true, false, false, 0);
-        assert!(s.starts_with("00000000"));
+        assert!(s.starts_with("0000"));
         assert!(!s.contains("41")); // 无 HEX 列
     }
 
@@ -227,7 +243,28 @@ mod tests {
     #[test]
     fn base_offset_affects_addr_column() {
         let s = hex_dump(&[0x41], 8, true, true, true, 0x1000);
-        assert!(s.starts_with("00001000  "));
+        assert!(s.starts_with("1000  "));
+    }
+
+    #[test]
+    fn addr_digits_grows_with_size() {
+        // 最小 4 位：小数据与 64 KiB 边界内
+        assert_eq!(addr_digits(0, 1), 4);
+        assert_eq!(addr_digits(0, 64 * 1024), 4); // 最大偏移 0xFFFF
+        assert_eq!(addr_digits(0x1000, 1), 4); // 最大偏移 0x1000
+        // 5 位：超过 0xFFFF
+        assert_eq!(addr_digits(0, 64 * 1024 + 1), 5);
+        assert_eq!(addr_digits(0, 200_000), 5); // blob_200k
+        // 8 位：老 hexdump 惯例的 4 GiB 域
+        assert_eq!(addr_digits(0, 0x1_0000_0000), 8);
+        // base_offset 计入最大绝对偏移
+        assert_eq!(addr_digits(64 * 1024, 64 * 1024), 5); // 最大偏移 0x1FFFF
+    }
+
+    #[test]
+    fn addr_chars_adds_gap() {
+        assert_eq!(addr_chars(4), 6);
+        assert_eq!(addr_chars(8), 10);
     }
 
     #[test]
@@ -259,7 +296,7 @@ mod tests {
     #[test]
     fn hex_line_is_untrimmed_and_ascii_aligned() {
         // 行宽 4、只 1 字节：HEX 列补齐 4 字节（12 字符），ASCII 起始位置固定
-        let line = hex_line(&[0x45], 4, false, true, true, 0);
+        let line = hex_line(&[0x45], 4, false, true, true, 0, 0);
         assert_eq!(line.len(), 13); // 12（HEX 列）+ 1（ASCII）
         assert_eq!(&line[..2], "45");
         assert_eq!(line.chars().last(), Some('E'));
@@ -274,7 +311,7 @@ mod tests {
     #[test]
     fn hex_line_mid_gap_offset() {
         // 行宽 8：第 5 字节（i=4=mid）前多 1 空格
-        let line = hex_line(&[0u8; 8], 8, false, true, false, 0);
+        let line = hex_line(&[0u8; 8], 8, false, true, false, 0, 0);
         // "00 00 00 00  00 00 00 00 "（结尾空格保留）
         assert!(line.starts_with("00 00 00 00  00"));
         assert_eq!(line.len(), hex_section_chars(8));
