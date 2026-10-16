@@ -340,9 +340,9 @@ pub(crate) fn hex_view(
         if copy {
             if let Some((a, b)) = *sel {
                 let (lo, hi) = (a.min(b), a.max(b).min(bytes.len() - 1));
-                // HEX 与 ASCII 同时输出，按显示行/列对齐（见 hexdump::hex_copy_selection）
+                // 地址/HEX/ASCII 跟随界面开关输出，按显示行/列对齐（见 hexdump::hex_copy_selection）
                 ui.ctx().copy_text(crate::fmt::hex_copy_selection(
-                    bytes, lo, hi, n, show_hex, show_ascii,
+                    bytes, lo, hi, n, show_addr, show_hex, show_ascii, base_offset, digits,
                 ));
             }
         }
