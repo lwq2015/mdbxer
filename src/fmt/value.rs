@@ -137,7 +137,28 @@ pub fn decode(
         DecodeMode::I32 => int!(i32),
         DecodeMode::I64 => int!(i64),
         DecodeMode::U16 => int!(u16),
-        DecodeMode::U32 => int!(u32),
+        DecodeMode::U32 => {
+            if bytes.is_empty() {
+                empty_text()
+            } else {
+                let n = 4;
+                let take = bytes.len().min(n);
+                let mut arr = [0u8; 4];
+                match endian {
+                    Endian::Little => arr[..take].copy_from_slice(&bytes[..take]),
+                    Endian::Big => arr[n - take..].copy_from_slice(&bytes[..take]),
+                }
+                let v = match endian {
+                    Endian::Little => u32::from_le_bytes(arr),
+                    Endian::Big => u32::from_be_bytes(arr),
+                };
+                if bytes.len() < n {
+                    format!("{}{}", u32_text(v, hints.unix_ts), pad_note())
+                } else {
+                    u32_text(v, hints.unix_ts)
+                }
+            }
+        }
         DecodeMode::U64 => {
             if bytes.is_empty() {
                 empty_text()
@@ -225,6 +246,18 @@ fn utf16_text(bytes: &[u8], big_endian: bool) -> String {
 /// encoding_rs 对未定义字节输出 U+FFFD 替换符，与 UTF-8 lossy 行为一致。
 fn legacy_text(bytes: &[u8], enc: &'static encoding_rs::Encoding) -> String {
     enc.decode(bytes).0.into_owned()
+}
+
+/// u32 显示文本；按开关落在 Unix 秒域时附本地日期（与 u64 同一套域判定，
+/// u32 上限 4.29e9 与域 1e9..1e10 相交段即 2001~2106 年）。FILETIME 域
+/// 从 110e15 起，远超 u32 上限，无需判定。
+pub fn u32_text(v: u32, unix_ts: bool) -> String {
+    let num = with_sep(v.to_string());
+    let date = if unix_ts { unix_to_local(v as u64) } else { None };
+    match date {
+        Some(d) => format!("{num} → {d}"),
+        None => num,
+    }
 }
 
 /// u64 显示文本；按开关落在 Unix 时间戳（秒/毫秒）或 FILETIME 合理区间时
@@ -851,6 +884,25 @@ mod tests {
         assert_eq!(with_sep("3.14".to_string()), "3.14");
         // 指数后缀保留
         assert_eq!(with_sep("1.5e10".to_string()), "1.5e10");
+    }
+
+    #[test]
+    fn u32_text_timestamp() {
+        setup();
+
+        // u32 秒级时间戳（ts_seconds_u32 样本值）：附本地日期
+        let v = 1_759_000_000u32;
+        let s = u32_text(v, true);
+        assert!(s.starts_with("1,759,000,000 → "), "s={s}");
+        assert!(s.contains("2025"), "s={s}");
+
+        // 域外小值不附日期；开关关闭只显示数字
+        assert_eq!(u32_text(42, true), "42");
+        assert_eq!(u32_text(v, false), "1,759,000,000");
+
+        // U32 排版同样附注（与 Auto 的 u32 分支同一来源）
+        let d = decode(&v.to_le_bytes(), DecodeMode::U32, super::Endian::Little, 100);
+        assert_eq!(d, s);
     }
 
     #[test]

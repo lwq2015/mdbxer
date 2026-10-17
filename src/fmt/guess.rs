@@ -153,7 +153,7 @@ fn guess_at_depth(bytes: &[u8], endian: Endian, depth: usize, hints: &HintFlags)
                 Endian::Little => u32::from_le_bytes(arr),
                 Endian::Big => u32::from_be_bytes(arr),
             };
-            (format!("u32 {sfx}"), value::with_sep(v.to_string()))
+            (format!("u32 {sfx}"), value::u32_text(v, hints.unix_ts))
         }
         8 => {
             let arr: [u8; 8] = bytes.try_into().unwrap_or_else(|_| unreachable!());
@@ -916,8 +916,19 @@ mod tests {
         let (label, text) = guess(&bytes, Endian::Little);
         assert!(label.contains("u32"));
         assert!(label.contains("LE"));
-        // 默认不附 IPv4（地址类附注无判别力，见 HintFlags::default）
+        // 默认不附 IPv4（地址类附注无判别力，见 HintFlags::default）；
+        // 305,419,896 < 1e9 不落 Unix 秒域，也不附日期
         assert_eq!(text, "305,419,896");
+    }
+
+    #[test]
+    fn guess_u32_unix_ts() {
+        // 4 字节落在 Unix 秒域（1e9..1e10 与 u32 相交段）附本地日期
+        let bytes = 1_759_000_000u32.to_le_bytes();
+        let (label, text) = guess(&bytes, Endian::Little);
+        assert!(label.contains("u32"));
+        assert!(text.starts_with("1,759,000,000 → "), "text={text}");
+        assert!(text.contains("2025"), "text={text}");
     }
 
     #[test]
