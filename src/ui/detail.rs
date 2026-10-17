@@ -1215,24 +1215,12 @@ fn kv_card(
         // 不再单列一行占据文本框与 hex 之间的位置
         let guess_text = if app.detail.mode_of(is_key) == DecodeMode::Auto {
             let (label, _) = fmt::guess(bytes, app.endian);
-            // 附加解读：4/6/16 字节地址、8 字节 FILETIME 与常见文件魔数
-            let mut hint = String::new();
-
-            if let Some(h) = fmt::addr_hint(bytes, app.endian) {
-                hint.push_str(&h);
-            }
-
-            if let Some(h) = fmt::magic_hint(bytes) {
-                if !hint.is_empty() {
-                    hint.push_str(" · ");
-                }
-                hint.push_str(h);
-            }
-
-            if hint.is_empty() {
-                t.guess_line(&label, bytes.len())
-            } else {
-                t.guess_line(&format!("{label} · {hint}"), bytes.len())
+            // 附加解读只保留文件魔数（强信号、短标注）：地址/FILETIME 对
+            // 任意字节几乎总命中（IPv4/IPv6 无有效性约束），放猜测行是噪音
+            // 且撑宽窗口——需要时切手动 mac/ip/time 格式查看
+            match fmt::magic_hint(bytes) {
+                Some(h) => t.guess_line(&format!("{label} · {h}"), bytes.len()),
+                None => t.guess_line(&label, bytes.len()),
             }
         } else {
             t.bytes(bytes.len())
