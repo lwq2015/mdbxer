@@ -1,13 +1,13 @@
 // Copyright 2026 lwq_yu
 // SPDX-License-Identifier: Apache-2.0
 
-//! 压缩容器识别与解压：zstd / gzip / zlib / lz4（frame）。
+//! 压缩容器识别与解压：zstd / gzip / zlib / lz4（frame）/ bzip2 / xz。
 //!
 //! MDBX 不提供内置压缩，应用常自行压缩后再存值；这里靠魔数识别
 //! （误判率≈0），解压后交回 Auto 猜测链递归解码，实现"套娃数据"穿透。
 //! 解压输出上限 [`MAX_DECOMP`]，防解压炸弹拖垮 UI。
 
-use std::io::Read;
+use std::io::{Read, Write};
 
 /// 单次解压输出的字节上限（64 MiB）：超出按解压失败处理。
 pub(crate) const MAX_DECOMP: usize = 64 * 1024 * 1024;
@@ -49,7 +49,48 @@ pub(crate) fn decompress(bytes: &[u8]) -> Option<(&'static str, Vec<u8>)> {
         return read_limited(dec).map(|v| ("lz4", v));
     }
 
+    // bzip2："BZh" + 层级数字 '1'..'9'
+    if matches!(bytes, [b'B', b'Z', b'h', b'1'..=b'9', ..]) {
+        let dec = bzip2::read::BzDecoder::new(bytes);
+        return read_limited(dec).map(|v| ("bzip2", v));
+    }
+
+    // xz：FD 37 7A 58 5A 00
+    if bytes.starts_with(&[0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00]) {
+        let mut out = Vec::new();
+        let mut w = LimitedWriter {
+            cap: MAX_DECOMP,
+            out: &mut out,
+        };
+        lzma_rs::xz_decompress(&mut std::io::Cursor::new(bytes), &mut w).ok()?;
+        return (out.len() <= MAX_DECOMP).then_some(("xz", out));
+    }
+
     None
+}
+
+/// 带上限的 Write：超出 cap 即报错（配合 lzma_rs 一体式 API 限制输出）。
+struct LimitedWriter<'a> {
+    cap: usize,
+    out: &'a mut Vec<u8>,
+}
+
+impl Write for LimitedWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.out.len() + buf.len() > self.cap {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::OutOfMemory,
+                "decompressed data exceeds limit",
+            ));
+        }
+
+        self.out.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -97,9 +138,26 @@ mod tests {
         assert_eq!(algo, "lz4");
         assert_eq!(out, json);
 
+        // bzip2
+        let mut e = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::default());
+        e.write_all(json).unwrap();
+        let bz = e.finish().unwrap();
+        let (algo, out) = decompress(&bz).unwrap();
+        assert_eq!(algo, "bzip2");
+        assert_eq!(out, json);
+
+        // xz
+        let mut xz = Vec::new();
+        lzma_rs::xz_compress(&mut std::io::Cursor::new(json), &mut xz).unwrap();
+        let (algo, out) = decompress(&xz).unwrap();
+        assert_eq!(algo, "xz");
+        assert_eq!(out, json);
+
         // 压缩但损坏/截断的数据 → None
         assert!(decompress(&z[..z.len() - 2]).is_none());
         assert!(decompress(&gz(json)[..3]).is_none());
+        assert!(decompress(&bz[..bz.len() - 4]).is_none());
+        assert!(decompress(&xz[..xz.len() - 4]).is_none());
 
         // 非压缩数据
         assert!(decompress(json).is_none());

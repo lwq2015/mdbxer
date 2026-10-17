@@ -130,9 +130,9 @@ pub fn is_structured_json(bytes: &[u8]) -> bool {
         && serde_json::from_slice::<serde_json::Value>(bytes).is_ok()
 }
 
-/// 4/6 字节值的附加解读：IPv4 地址 / MAC 地址（地址按纯字节序读，无字节序
-/// 概念，也不影响 Auto 猜测本身）。用于详情面板猜测行的附加标注。
-pub fn addr_hint(bytes: &[u8]) -> Option<String> {
+/// 4/6/16 字节值的地址解读 + 8 字节 FILETIME 解读（用于详情猜测行的附加
+/// 标注；地址按纯字节序读，FILETIME 按 endian 解读）。不影响 Auto 猜测本身。
+pub fn addr_hint(bytes: &[u8], endian: Endian) -> Option<String> {
     match bytes.len() {
         4 => Some(format!(
             "IPv4 {}.{}.{}.{}",
@@ -142,6 +142,73 @@ pub fn addr_hint(bytes: &[u8]) -> Option<String> {
             "MAC {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]
         )),
+        8 => filetime_hint(bytes, endian),
+        // std Display 遵循 RFC 5952（:: 压缩、小写）
+        16 => {
+            let arr: [u8; 16] = bytes.try_into().unwrap_or_else(|_| unreachable!());
+            Some(format!("IPv6 {}", std::net::Ipv6Addr::from(arr)))
+        }
+        _ => None,
+    }
+}
+
+/// FILETIME 合理域（Windows 1601 epoch、100ns 单位）：约 1949~2124 年。
+/// 随机 u64 落入此域的概率约 0.17%，作为附加解读可忽略。
+const FILETIME_MIN: u64 = 110_000_000_000_000_000;
+const FILETIME_MAX: u64 = 140_000_000_000_000_000;
+
+/// 8 字节 FILETIME → 本地时间文本（如 `FILETIME → 2026-10-17 12:34:56`）。
+/// 与 Unix 秒/毫秒时间戳域（1e9..1e13）完全不相交，同一值不会双重附注。
+fn filetime_hint(bytes: &[u8], endian: Endian) -> Option<String> {
+    let arr: [u8; 8] = bytes.try_into().unwrap_or_else(|_| unreachable!());
+    let v = match endian {
+        Endian::Little => u64::from_le_bytes(arr),
+        Endian::Big => u64::from_be_bytes(arr),
+    };
+
+    if !(FILETIME_MIN..FILETIME_MAX).contains(&v) {
+        return None;
+    }
+
+    // 100ns 单位 → (秒, 纳秒)，再减 1601→1970 的 11_644_473_600 秒
+    let secs = (v / 10_000_000) as i64 - 11_644_473_600;
+    let nanos = (v % 10_000_000) as u32 * 100;
+    let dt = chrono::DateTime::from_timestamp(secs, nanos)?;
+    Some(format!(
+        "FILETIME → {}",
+        dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S")
+    ))
+}
+
+/// 常见文件魔数 → 简短标注（格式名国际通用不翻译）。只收录高置信魔数，
+/// 避免误报；仅作 Auto 猜测行的附加解读，不参与猜测与解码。
+pub fn magic_hint(bytes: &[u8]) -> Option<&'static str> {
+    match bytes {
+        // ICO 目录头：保留字 0 + 类型 1/2（图标/光标），至少含完整头 + 1 个目录项
+        [0x00, 0x00, 0x01, 0x00, ..] if bytes.len() >= 22 => Some("ICO"),
+        [0x00, 0x00, 0x02, 0x00, ..] if bytes.len() >= 22 => Some("ICO"),
+        [b'%', b'P', b'D', b'F', ..] => Some("PDF"),
+        [0x37, b'z', 0xBC, 0xAF, 0x27, 0x1C, ..] => Some("7z"),
+        [b'G', b'I', b'F', b'8', b'7' | b'9', b'a', ..] => Some("GIF"),
+        [b'I', b'D', b'3', _, _, ..] => Some("MP3"),
+        [b'O', b'g', b'g', b'S', ..] => Some("Ogg"),
+        [b'P', b'K', 0x03, 0x04, ..] => Some("ZIP"),
+        // RIFF 容器按偏移 8 的格式名细分（WebP/WAV）
+        [b'R', b'I', b'F', b'F', ..] if bytes.len() >= 12 && &bytes[8..12] == b"WEBP" => {
+            Some("WebP")
+        }
+        [b'R', b'I', b'F', b'F', ..] if bytes.len() >= 12 && &bytes[8..12] == b"WAVE" => {
+            Some("WAV")
+        }
+        [b'R', b'a', b'r', b'!', 0x1A, 0x07, ..] => Some("RAR"),
+        [b'S', b'Q', b'L', b'i', b't', b'e', b' ', b'f', b'o', b'r', b'm', b'a', b't', b' ', b'3', 0x00, ..] => {
+            Some("SQLite")
+        }
+        [b'f', b'L', b'a', b'C', ..] => Some("FLAC"),
+        [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, ..] => Some("PNG"),
+        [0xFF, 0xD8, 0xFF, ..] => Some("JPEG"),
+        // MP4/HEIC 等 ISO 基媒体：偏移 4 起为 "ftyp" 品牌盒
+        _ if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" => Some("MP4"),
         _ => None,
     }
 }
@@ -583,19 +650,88 @@ mod tests {
     }
 
     #[test]
-    fn addr_hint_ipv4_mac() {
+    fn addr_hint_ipv4_mac_ipv6() {
         assert_eq!(
-            addr_hint(&[192, 168, 1, 1]),
+            addr_hint(&[192, 168, 1, 1], Endian::Little),
             Some("IPv4 192.168.1.1".to_string())
         );
         assert_eq!(
-            addr_hint(&[0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E]),
+            addr_hint(&[0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E], Endian::Little),
             Some("MAC 00:1A:2B:3C:4D:5E".to_string())
         );
+        // 2001:db8::1（RFC 5952 压缩写法、小写）
+        let v6 = [
+            0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+        ];
+        assert_eq!(
+            addr_hint(&v6, Endian::Little),
+            Some("IPv6 2001:db8::1".to_string())
+        );
         // 其他长度不标注
-        assert_eq!(addr_hint(&[1, 2, 3]), None);
-        assert_eq!(addr_hint(&[0; 7]), None);
-        assert_eq!(addr_hint(&[]), None);
+        assert_eq!(addr_hint(&[1, 2, 3], Endian::Little), None);
+        assert_eq!(addr_hint(&[0; 7], Endian::Little), None);
+        assert_eq!(addr_hint(&[], Endian::Little), None);
+    }
+
+    #[test]
+    fn addr_hint_filetime() {
+        // 2026-01-01 00:00:00 UTC 的 FILETIME（1601 epoch、100ns 单位）：
+        // 2026 Unix 秒 1_767_225_600 + 1601→1970 的 11_644_473_600 秒
+        let v: u64 = (1_767_225_600u64 + 11_644_473_600) * 10_000_000;
+        let le = v.to_le_bytes();
+        let hint = addr_hint(&le, Endian::Little).unwrap();
+        assert!(hint.starts_with("FILETIME → 2026-"), "hint={hint}");
+
+        // 1970-01-01 UTC（域下界附近，11_644_473_600e7）
+        let v = 11_644_473_600u64 * 10_000_000;
+        assert!(addr_hint(&v.to_le_bytes(), Endian::Little).is_some());
+
+        // Unix 秒/毫秒域与 FILETIME 域不相交：普通时间戳不标注
+        assert_eq!(addr_hint(&1_759_000_000u64.to_le_bytes(), Endian::Little), None);
+
+        // 域外大数 / 域内 BE 字节按 LE 解读不命中
+        assert_eq!(addr_hint(&0xFFFF_FFFF_FFFF_FFFFu64.to_le_bytes(), Endian::Little), None);
+        assert_eq!(addr_hint(&u64::from_be(v).to_le_bytes(), Endian::Little), None);
+    }
+
+    #[test]
+    fn magic_hint_all_formats() {
+        assert_eq!(
+            magic_hint(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
+            Some("PNG")
+        );
+        assert_eq!(magic_hint(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("JPEG"));
+        assert_eq!(magic_hint(b"GIF89a"), Some("GIF"));
+        assert_eq!(magic_hint(b"%PDF-1.4"), Some("PDF"));
+        assert_eq!(magic_hint(b"PK\x03\x04"), Some("ZIP"));
+        assert_eq!(magic_hint(b"Rar!\x1A\x07"), Some("RAR"));
+        assert_eq!(magic_hint(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]), Some("7z"));
+        assert_eq!(magic_hint(b"SQLite format 3\0"), Some("SQLite"));
+        assert_eq!(magic_hint(b"fLaC"), Some("FLAC"));
+        assert_eq!(magic_hint(b"OggS"), Some("Ogg"));
+        assert_eq!(magic_hint(b"ID3\x04\x00"), Some("MP3"));
+
+        // RIFF 容器按偏移 8 的格式名细分
+        let mut riff = b"RIFF\x24\x00\x00\x00WEBVP".to_vec();
+        assert_eq!(magic_hint(&riff), None); // 非法格式名不标
+        riff[8..12].copy_from_slice(b"WEBP");
+        assert_eq!(magic_hint(&riff), Some("WebP"));
+        riff[8..12].copy_from_slice(b"WAVE");
+        assert_eq!(magic_hint(&riff), Some("WAV"));
+
+        // ISO 基媒体：偏移 4 的 "ftyp"
+        assert_eq!(magic_hint(b"\x00\x00\x00\x18ftypmp42"), Some("MP4"));
+
+        // ICO：至少完整头 + 1 个目录项（22 字节）；type=1（图标）
+        assert_eq!(magic_hint(&[0x00, 0x00, 0x01, 0x00]), None); // 太短不标
+        let mut ico = vec![0u8; 22];
+        ico[2] = 0x01;
+        assert_eq!(magic_hint(&ico), Some("ICO"));
+
+        // 非魔数数据不标
+        assert_eq!(magic_hint(b"hello"), None);
+        assert_eq!(magic_hint(br#"{"a":1}"#), None);
+        assert_eq!(magic_hint(&[]), None);
     }
 
     #[test]

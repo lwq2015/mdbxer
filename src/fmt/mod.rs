@@ -12,7 +12,7 @@ mod value;
 
 pub use guess::guess;
 pub(crate) use compress::decompress;
-pub(crate) use guess::{addr_hint, is_bson, is_cbor, is_msgpack, is_structured_json};
+pub(crate) use guess::{addr_hint, is_bson, is_cbor, is_msgpack, is_structured_json, magic_hint};
 pub(crate) use hexdump::{
     addr_chars, addr_digits, hex_copy_selection, hex_line, hex_section_chars, mid_gap_index,
 };

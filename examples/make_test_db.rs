@@ -6,7 +6,11 @@
 //! 用法：`cargo run --example make_test_db`
 //! 输出：testdata/dir_db（目录模式）、testdata/file_db.mdbx（单文件模式）
 
+// 测试数据有意使用 3.14159 / 1.41421356 这类"真实业务值"而非 consts::PI/SQRT_2
+#![allow(clippy::approx_constant)]
+
 use libmdbx::{Database, DatabaseOptions, NoWriteMap, TableFlags, WriteFlags};
+use std::io::Write;
 use std::path::Path;
 
 fn main() -> libmdbx::Result<()> {
@@ -231,6 +235,130 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
             })
             .expect("valid bson"),
         ),
+        // ── 新格式：MessagePack / CBOR（Auto 应自动识别，显示紧凑/pretty JSON）──
+        // 与 bson_simple 同内容，可对照 JSON/BSON/MSGPACK/CBOR 四种排版输出
+        (
+            b"msgpack_simple",
+            rmpv_to_vec(&rmpv::Value::Map(vec![
+                (s("name"), s("mdbx")),
+                (s("version"), rmpv::Value::Integer(1.into())),
+                (s("active"), rmpv::Value::Boolean(true)),
+            ])),
+        ),
+        // 常见类型全覆盖：嵌套 map、混合数组、nil、二进制、浮点、64 位整数
+        (
+            b"msgpack_mixed",
+            rmpv_to_vec(&rmpv::Value::Map(vec![
+                (s("title"), s("混合类型")),
+                (s("count"), rmpv::Value::Integer(42.into())),
+                (s("big"), rmpv::Value::Integer(9_000_000_000_000i64.into())),
+                (s("pi"), rmpv::Value::F64(3.14159)),
+                (s("missing"), rmpv::Value::Nil),
+                (
+                    s("tags"),
+                    rmpv::Value::Array(vec![s("db"), s("gui"), rmpv::Value::Boolean(true)]),
+                ),
+                (s("blob"), rmpv::Value::Binary(vec![0xDE, 0xAD, 0xBE, 0xEF])),
+                (
+                    s("nested"),
+                    rmpv::Value::Map(vec![(s("x"), rmpv::Value::Integer((-2).into()))]),
+                ),
+            ])),
+        ),
+        // CBOR：与 msgpack 同内容，对照两种排版
+        (
+            b"cbor_simple",
+            cbor_to_vec(&ciborium::value::Value::Map(vec![
+                (txt("name"), txt("mdbx")),
+                (txt("version"), ciborium::value::Value::Integer(1.into())),
+                (txt("active"), ciborium::value::Value::Bool(true)),
+            ])),
+        ),
+        (
+            b"cbor_mixed",
+            cbor_to_vec(&ciborium::value::Value::Map(vec![
+                (txt("title"), txt("混合类型")),
+                (txt("count"), ciborium::value::Value::Integer(42.into())),
+                (
+                    txt("big"),
+                    ciborium::value::Value::Integer(9_000_000_000_000i64.into()),
+                ),
+                (txt("pi"), ciborium::value::Value::Float(3.14159)),
+                (txt("missing"), ciborium::value::Value::Null),
+                (
+                    txt("tags"),
+                    ciborium::value::Value::Array(vec![
+                        txt("db"),
+                        txt("gui"),
+                        ciborium::value::Value::Bool(true),
+                    ]),
+                ),
+                (txt("blob"), ciborium::value::Value::Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF])),
+                (
+                    txt("nested"),
+                    ciborium::value::Value::Map(vec![(
+                        txt("x"),
+                        ciborium::value::Value::Integer((-2).into()),
+                    )]),
+                ),
+            ])),
+        ),
+        // ── 压缩容器穿透：Auto 应识别魔数并解压，显示 `gzip → JSON` 等 ──
+        // 四种算法压同一份紧凑 JSON，可对照未压缩的 json_object
+        (b"gz_json_object", gz(JSON_SAMPLE)),
+        (b"zstd_json_object", zstd::stream::encode_all(JSON_SAMPLE, 3).unwrap()),
+        (b"bz2_json_object", bz2(JSON_SAMPLE)),
+        (b"xz_json_object", xz(JSON_SAMPLE)),
+        // ── 地址 / FILETIME 标注：Auto 猜测行应追加解读 ──
+        // 4 字节 → `IPv4 192.168.1.1`；6 字节 → `MAC 00:1A:2B:3C:4D:5E`；
+        // 16 字节 → `IPv6 2001:db8::1`；8 字节 → `FILETIME → <本地时间>`
+        (b"ipv4_sample", vec![192, 168, 1, 1]),
+        (b"mac_sample", vec![0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E]),
+        (
+            b"ipv6_sample",
+            vec![0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01],
+        ),
+        (
+            b"filetime_sample",
+            ((chrono::Utc::now().timestamp() as u64 + 11_644_473_600) * 10_000_000
+                + chrono::Utc::now().timestamp_subsec_nanos() as u64 / 100)
+                .to_le_bytes()
+                .to_vec(),
+        ),
+        // ── 文件魔数标注：Auto 猜测行应追加 PNG/JPEG/GIF/PDF/ZIP 标注 ──
+        // 完整的 1×1 透明 PNG（RGBA），另存后可正常打开
+        (b"magic_png_1x1", png_1x1()),
+        // 仅头部的 JPEG（SOI + JFIF APP0 + EOI）与 GIF 逻辑屏幕头：
+        // 魔数正确、无图像数据，验证标注即可
+        (
+            b"magic_jpeg_head",
+            vec![
+                0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F', 0x00, 0x01, 0x01, 0x00,
+                0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xFF, 0xD9,
+            ],
+        ),
+        (
+            b"magic_gif_head",
+            vec![b'G', b'F', b'I', b'8', b'9', b'a', 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00],
+        ),
+        (
+            b"magic_pdf_head",
+            concat!(
+                "%PDF-1.4\n",
+                "1 0 obj<</Type/Catalog>>endobj\n",
+                "trailer<</Root 1 0 R>>\n",
+                "%%EOF\n"
+            )
+            .as_bytes()
+            .to_vec(),
+        ),
+        // 合法的空 ZIP（仅 EOCD），另存后解压工具可正常打开
+        (
+            b"magic_zip_empty",
+            vec![
+                b'P', b'K', 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+        ),
     ];
     let entries: Vec<(&[u8], Vec<u8>)> = entries.into_iter().chain(nums).collect();
     for (k, v) in entries {
@@ -307,6 +435,105 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
 
     txn.commit()?;
     Ok(())
+}
+
+/// 压缩样本共用的紧凑 JSON（与 json_object 相同内容）
+const JSON_SAMPLE: &[u8] = br#"{"name":"mdbx","version":1,"tags":["fast","embedded"]}"#;
+
+/// rmpv 字符串值简写
+fn s(v: &str) -> rmpv::Value {
+    rmpv::Value::String(v.into())
+}
+
+/// rmpv 值序列化为 MessagePack 字节
+fn rmpv_to_vec(v: &rmpv::Value) -> Vec<u8> {
+    let mut buf = Vec::new();
+    rmpv::encode::write_value(&mut buf, v).expect("valid msgpack");
+    buf
+}
+
+/// ciborium 文本值简写
+fn txt(v: &str) -> ciborium::value::Value {
+    ciborium::value::Value::Text(v.to_string())
+}
+
+/// ciborium 值序列化为 CBOR 字节
+fn cbor_to_vec(v: &ciborium::value::Value) -> Vec<u8> {
+    let mut buf = Vec::new();
+    ciborium::ser::into_writer(v, &mut buf).expect("valid cbor");
+    buf
+}
+
+/// gzip 压缩
+fn gz(data: &[u8]) -> Vec<u8> {
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    e.write_all(data).unwrap();
+    e.finish().unwrap()
+}
+
+/// bzip2 压缩
+fn bz2(data: &[u8]) -> Vec<u8> {
+    let mut e = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::default());
+    e.write_all(data).unwrap();
+    e.finish().unwrap()
+}
+
+/// xz 压缩
+fn xz(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    lzma_rs::xz_compress(&mut std::io::Cursor::new(data), &mut out).unwrap();
+    out
+}
+
+/// 生成完整的 1×1 透明 PNG（RGBA），另存后可正常打开
+fn png_1x1() -> Vec<u8> {
+    let mut out = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+
+    // IHDR：宽 1、高 1、位深 8、RGBA、无压缩/滤波/隔行
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&1u32.to_be_bytes());
+    ihdr.extend_from_slice(&1u32.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    png_chunk(&mut out, b"IHDR", &ihdr);
+
+    // IDAT：filter 0 + 单个 RGBA 像素（透明黑），zlib 压缩
+    let raw = [0u8, 0, 0, 0, 0];
+    let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    e.write_all(&raw).unwrap();
+    png_chunk(&mut out, b"IDAT", &e.finish().unwrap());
+
+    png_chunk(&mut out, b"IEND", &[]);
+    out
+}
+
+/// 写一个 PNG chunk：长度(4BE) + 类型 + 数据 + CRC32(类型+数据)
+fn png_chunk(out: &mut Vec<u8>, ty: &[u8; 4], data: &[u8]) {
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(ty);
+    out.extend_from_slice(data);
+
+    let mut crc = crc32(ty);
+    crc = crc32_update(crc, data);
+    out.extend_from_slice(&crc.to_be_bytes());
+}
+
+/// PNG 用的标准 CRC32（对已初始化值继续追加数据）
+fn crc32_update(mut crc: u32, data: &[u8]) -> u32 {
+    for &b in data {
+        crc ^= b as u32;
+
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+
+    crc
+}
+
+/// PNG CRC32 入口（初值取标准 0xFFFFFFFF）
+fn crc32(data: &[u8]) -> u32 {
+    crc32_update(0xFFFF_FFFF, data)
 }
 
 /// 构造便于核对分段的大字段：内容为可直接阅读的英文诗与散文
