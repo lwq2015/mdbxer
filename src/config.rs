@@ -79,6 +79,12 @@ pub struct UiPrefs {
     /// 单元格最多显示字符数
     #[serde(default)]
     pub cell_max: Option<usize>,
+    /// 单元格附注开关（Key 列：时间/地址/魔数解读）
+    #[serde(default)]
+    pub hint_key: crate::fmt::HintFlags,
+    /// 单元格附注开关（Value 列）
+    #[serde(default)]
+    pub hint_value: crate::fmt::HintFlags,
     /// hex dump：显示地址列
     #[serde(default)]
     pub show_addr: Option<bool>,
@@ -405,6 +411,10 @@ mod tests {
 
     #[test]
     fn ui_prefs_round_trip() {
+        let hints = crate::fmt::HintFlags {
+            ipv4: true,
+            ..Default::default()
+        };
         let p = UiPrefs {
             page_size: Some(500),
             endian_le: Some(false),
@@ -412,6 +422,8 @@ mod tests {
             val_mode: Some("auto".to_string()),
             thousands_sep: Some(false),
             cell_max: Some(256),
+            hint_key: hints,
+            hint_value: crate::fmt::HintFlags::default(),
             show_addr: Some(true),
             show_hex: Some(false),
             show_ascii: Some(true),
@@ -433,6 +445,12 @@ mod tests {
         assert_eq!(back.val_mode.as_deref(), Some("auto"));
         assert_eq!(back.thousands_sep, Some(false));
         assert_eq!(back.cell_max, Some(256));
+        // 附注开关：Key 列只改了 ipv4（其余保持默认），Value 列原样默认
+        assert!(back.hint_key.ipv4);
+        assert!(back.hint_key.unix_ts);
+        assert_eq!(back.hint_value, crate::fmt::HintFlags::default());
+        assert!(back.hint_value.magic);
+        assert!(!back.hint_value.ipv4);
         assert_eq!(back.show_hex, Some(false));
         assert_eq!(back.hex_width, Some(16));
         assert_eq!(back.left_visible, Some(false));
@@ -452,6 +470,9 @@ mod tests {
         assert!(back.val_mode.is_none());
         assert!(back.thousands_sep.is_none());
         assert!(back.cell_max.is_none());
+        // 附注开关缺省 = Default（地址类关、时间/魔数开）
+        assert_eq!(back.hint_key, crate::fmt::HintFlags::default());
+        assert_eq!(back.hint_value, crate::fmt::HintFlags::default());
         assert!(back.show_addr.is_none());
         assert!(back.show_hex.is_none());
         assert!(back.show_ascii.is_none());

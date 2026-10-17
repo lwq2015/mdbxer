@@ -350,6 +350,26 @@ pub struct I18n {
     pub guess_utf16_be: &'static str,
     pub guess_binary: &'static str,
 
+    // ── 高级配置页 ──
+    /// 中央页签名
+    pub tab_settings: &'static str,
+    /// 附注开关表节标题与提示
+    pub hint_section: &'static str,
+    pub hint_section_tip: &'static str,
+    /// 附注表列头「格式」与行名
+    pub hint_col_format: &'static str,
+    pub hint_ts: &'static str,
+    pub hint_filetime: &'static str,
+    pub hint_ipv4: &'static str,
+    pub hint_mac: &'static str,
+    pub hint_ipv6: &'static str,
+    pub hint_magic: &'static str,
+    /// 显示参数节标题与「千位分隔」标签
+    pub disp_section: &'static str,
+    pub thousands_label: &'static str,
+    /// 「单元格显示长度」行标签（原顶栏无标签，高级配置页新增）
+    pub cell_max_label: &'static str,
+
     // ── 跳转/搜索输入解析错误 ──
     pub int_key_hint: &'static str,
     pub hex_even: &'static str,

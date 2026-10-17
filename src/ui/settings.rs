@@ -1,0 +1,165 @@
+// Copyright 2026 lwq_yu
+// SPDX-License-Identifier: Apache-2.0
+
+//! 高级配置页（中央页签）：单元格附注开关表 + 从顶栏移入的不常用显示参数。
+//! 各开关改动即时生效并持久化（save_ui_prefs）；附注开关变化会经 views_key
+//! 失效自动重建当前页显示缓存。
+
+use super::MdbxerApp;
+
+/// 高级配置页主体。
+pub(crate) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    let t = crate::i18n::tr();
+
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.add_space(8.0);
+        ui.heading(t.tab_settings);
+        ui.add_space(6.0);
+
+        hint_section(ui, app);
+        ui.add_space(10.0);
+        display_section(ui, app);
+    });
+}
+
+/// 节 1：单元格附注开关表（格式 | Key | Value 勾选）。
+fn hint_section(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    let t = crate::i18n::tr();
+
+    ui.group(|ui| {
+        ui.label(egui::RichText::new(t.hint_section).strong())
+            .on_hover_text(t.hint_section_tip);
+        ui.add_space(4.0);
+
+        // 「格式 | Key | Value」三列勾选表
+        egui::Grid::new("hint_flags_grid")
+            .striped(true)
+            .num_columns(3)
+            .spacing([16.0, 4.0])
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new(t.hint_col_format).strong());
+                ui.label(egui::RichText::new("Key").strong());
+                ui.label(egui::RichText::new("Value").strong());
+                ui.end_row();
+
+                hint_row(ui, app, t.hint_ts, |f| &mut f.unix_ts);
+                hint_row(ui, app, t.hint_filetime, |f| &mut f.filetime);
+                hint_row(ui, app, t.hint_ipv4, |f| &mut f.ipv4);
+                hint_row(ui, app, t.hint_mac, |f| &mut f.mac);
+                hint_row(ui, app, t.hint_ipv6, |f| &mut f.ipv6);
+                hint_row(ui, app, t.hint_magic, |f| &mut f.magic);
+            });
+    });
+}
+
+/// 一行附注开关：行名 + Key/Value 两个勾选框（改动即保存）。
+fn hint_row(
+    ui: &mut egui::Ui,
+    app: &mut MdbxerApp,
+    name: &str,
+    sel: impl Fn(&mut crate::fmt::HintFlags) -> &mut bool,
+) {
+    ui.label(name);
+
+    let mut k = *sel(&mut app.hint_key);
+    if ui.checkbox(&mut k, "").changed() {
+        *sel(&mut app.hint_key) = k;
+        app.save_ui_prefs();
+    }
+
+    let mut v = *sel(&mut app.hint_value);
+    if ui.checkbox(&mut v, "").changed() {
+        *sel(&mut app.hint_value) = v;
+        app.save_ui_prefs();
+    }
+
+    ui.end_row();
+}
+
+/// 节 2：显示参数（从顶栏移入：字节序/单元格长度/每页条数/千位分隔）。
+fn display_section(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    let t = crate::i18n::tr();
+
+    ui.group(|ui| {
+        ui.label(egui::RichText::new(t.disp_section).strong());
+        ui.add_space(4.0);
+
+        egui::Grid::new("display_params_grid")
+            .num_columns(2)
+            .spacing([16.0, 6.0])
+            .show(ui, |ui| {
+                // 字节序（影响整数/float/double 与自动猜测）
+                ui.label(t.endian);
+                let mut en = app.endian;
+                let ir = egui::ComboBox::from_id_salt("set_endian")
+                    .width(72.0)
+                    .selected_text(en.suffix())
+                    .show_ui(ui, |ui| {
+                        for e in crate::fmt::Endian::ALL {
+                            ui.selectable_value(&mut en, e, e.label());
+                        }
+                    });
+                super::wheel_cycle(ui.ctx(), &ir.response, &crate::fmt::Endian::ALL, &mut en);
+                if app.endian != en {
+                    app.endian = en;
+                    app.save_ui_prefs();
+                }
+                ui.end_row();
+
+                // 单元格最多显示字符数
+                ui.label(t.cell_max_label);
+                let mut cm = app.cell_max;
+                let ir = egui::ComboBox::from_id_salt("set_cell_max")
+                    .width(72.0)
+                    .selected_text(format!("{cm}"))
+                    .show_ui(ui, |ui| {
+                        for v in CELL_MAXES {
+                            ui.selectable_value(&mut cm, *v, v.to_string());
+                        }
+                    });
+                let resp = ir.response.on_hover_text(t.cell_max_tip);
+                super::wheel_cycle(ui.ctx(), &resp, CELL_MAXES, &mut cm);
+                if app.cell_max != cm {
+                    app.cell_max = cm;
+                    app.save_ui_prefs();
+                }
+                ui.end_row();
+
+                // 每页显示条数
+                ui.label(t.page_size_label);
+                let mut ps = app.page_size;
+                let ir = egui::ComboBox::from_id_salt("set_page_size")
+                    .width(72.0)
+                    .selected_text(format!("{ps}"))
+                    .show_ui(ui, |ui| {
+                        for v in super::PAGE_SIZES {
+                            ui.selectable_value(&mut ps, v, v.to_string());
+                        }
+                    });
+                let resp = ir.response.on_hover_text(t.page_size_tip);
+                super::wheel_cycle(ui.ctx(), &resp, &super::PAGE_SIZES, &mut ps);
+                if ps != app.page_size {
+                    app.page_size = ps;
+                    app.save_ui_prefs();
+                    app.load_first_page();
+                }
+                ui.end_row();
+
+                // 整数千位分隔开关（影响所有 decode/guess 输出）
+                ui.label(t.thousands_label);
+                let mut ts = crate::fmt::thousands_sep();
+                if ui
+                    .checkbox(&mut ts, "1,234")
+                    .on_hover_text(t.thousands_tip)
+                    .changed()
+                {
+                    crate::fmt::set_thousands_sep(ts);
+                    app.save_ui_prefs();
+                }
+                ui.end_row();
+            });
+    });
+}
+
+/// 单元格显示长度档位（与原顶栏一致）。
+const CELL_MAXES: &[usize] = &[64, 128, 256, 512, 1024, 4096];

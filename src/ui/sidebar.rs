@@ -280,11 +280,12 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                                 crate::ui::parse_hex(&fk.key_hex)
                                     .map(|b| {
                                         crate::fmt::decode(
-                                            &b,
-                                            crate::fmt::DecodeMode::Auto,
-                                            app.endian,
-                                            24,
-                                        )
+                                        &b,
+                                        crate::fmt::DecodeMode::Auto,
+                                        app.endian,
+                                        24,
+                                        &app.hint_key,
+                                    )
                                     })
                                     .unwrap_or_else(|_| {
                                         fk.key_hex.chars().take(16).collect()

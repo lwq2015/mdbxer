@@ -54,6 +54,9 @@ pub struct ExportJob {
     pub key_mode: DecodeMode,
     pub val_mode: DecodeMode,
     pub endian: Endian,
+    /// 单元格附注开关（Key/Value 列各一套，与表格显示一致）
+    pub hint_key: crate::fmt::HintFlags,
+    pub hint_value: crate::fmt::HintFlags,
     pub out_path: PathBuf,
     pub format: ExportFormat,
 }
@@ -110,7 +113,9 @@ fn run(
         writeln!(w, "[").map_err(|e| e.to_string())?;
     }
 
-    let dec = |b: &[u8], mode: DecodeMode| decode(b, mode, job.endian, usize::MAX);
+    let dec = |b: &[u8], mode: DecodeMode, hints: &crate::fmt::HintFlags| {
+        decode(b, mode, job.endian, usize::MAX, hints)
+    };
     let mut n = 0usize;
     // JSON 跨批分组状态
     let mut json_started = false; // 是否已写出过第一个条目
@@ -159,15 +164,15 @@ fn run(
 fn write_rows(
     w: &mut impl Write,
     job: &ExportJob,
-    dec: &impl Fn(&[u8], DecodeMode) -> String,
+    dec: &impl Fn(&[u8], DecodeMode, &crate::fmt::HintFlags) -> String,
     rows: Vec<(Vec<u8>, Vec<u8>)>,
     json_started: &mut bool,
     json_cur_key: &mut Option<Vec<u8>>,
 ) -> Result<usize, String> {
     let mut n = 0usize;
     for (k, v) in rows {
-        let key_text = dec(&k, job.key_mode);
-        let val_text = dec(&v, job.val_mode);
+        let key_text = dec(&k, job.key_mode, &job.hint_key);
+        let val_text = dec(&v, job.val_mode, &job.hint_value);
         if job.format == ExportFormat::Csv {
             writeln!(w, "{},{}", csv_field(&key_text), csv_field(&val_text))
                 .map_err(|e| e.to_string())?;
@@ -234,6 +239,8 @@ mod tests {
             key_mode: DecodeMode::Utf8,
             val_mode: DecodeMode::Utf8,
             endian: Endian::Little,
+            hint_key: crate::fmt::HintFlags::default(),
+            hint_value: crate::fmt::HintFlags::default(),
             out_path: path.to_path_buf(),
             format,
         }

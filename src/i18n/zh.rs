@@ -206,6 +206,20 @@ pub(super) const ZH: I18n = I18n {
     guess_utf16_be: "UTF-16 文本 (BE)",
     guess_binary: "二进制",
 
+    tab_settings: "高级配置",
+    hint_section: "单元格附注",
+    hint_section_tip: "自动模式下追加在 Key/Value 显示文本后的附加解读；各类型可按列独立开关",
+    hint_col_format: "格式",
+    hint_ts: "int 时间戳",
+    hint_filetime: "FILETIME",
+    hint_ipv4: "IPv4",
+    hint_mac: "MAC",
+    hint_ipv6: "IPv6",
+    hint_magic: "文件魔数",
+    disp_section: "显示参数",
+    thousands_label: "千位分隔",
+    cell_max_label: "单元格显示长度",
+
     int_key_hint: "整数键表请输入十进制数字，或 hex(...)/0x... 形式的字节",
     hex_even: "hex 长度必须为偶数",
 

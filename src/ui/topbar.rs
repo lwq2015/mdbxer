@@ -1,16 +1,17 @@
 // Copyright 2026 lwq_yu
 // SPDX-License-Identifier: Apache-2.0
 
-//! 顶栏：打开模式/历史 + 文件/目录按钮 + 字节序/排版/单元格/面板开关（单行紧凑布局）。
+//! 顶栏：打开模式/历史 + 文件/目录按钮 + 排版/面板开关（单行紧凑布局）。
+//! 字节序/单元格长度/每页条数/千位分隔等不常用开关已移至「高级配置」页。
 //! 最右侧为语言下拉。
 
 use super::MdbxerApp;
 use crate::config;
 use crate::db::OpenMode;
-use crate::fmt::{DecodeMode, Endian};
+use crate::fmt::DecodeMode;
 use crate::i18n::{self, Lang};
 
-/// 顶栏面板：文件/目录/关闭 + 历史 + 字节序/排版/单元格 + 表/详情开关 + 语言。
+/// 顶栏面板：文件/目录/关闭 + 历史 + Key/Value 排版 + 导出 + 表/详情开关 + 语言。
 /// 打开模式不显示选择器：由各打开入口（文件钮=单文件、目录钮=目录、历史=记录值、拖入=自动）自行确定。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let t = i18n::tr().clone();
@@ -82,23 +83,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
             ui.separator();
 
-            // 字节序（默认小端，可切大端；影响整数/float/double 与自动猜测）
-            ui.label(t.endian);
-            let mut en = app.endian;
-            let ir = egui::ComboBox::from_id_salt("endian")
-                .width(72.0)
-                .selected_text(en.suffix())
-                .show_ui(ui, |ui| {
-                    for e in Endian::ALL {
-                        ui.selectable_value(&mut en, e, e.label());
-                    }
-                });
-            super::wheel_cycle(ui.ctx(), &ir.response, &Endian::ALL, &mut en);
-            if app.endian != en {
-                app.endian = en;
-                app.save_ui_prefs();
-            }
-
             // Key 排版（默认自动；编码固定的表可手动指定）
             ui.label("Key");
             let mut km = app.key_mode;
@@ -135,58 +119,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             super::wheel_cycle(ui.ctx(), &ir.response, &sorted, &mut vm);
             if app.val_mode != vm {
                 app.val_mode = vm;
-                app.save_ui_prefs();
-            }
-
-            let mut cm = app.cell_max;
-            let ir = egui::ComboBox::from_id_salt("cell_max")
-                .width(60.0)
-                .selected_text(format!("{cm}"))
-                .show_ui(ui, |ui| {
-                    for v in [64usize, 128, 256, 512, 1024, 4096] {
-                        ui.selectable_value(&mut cm, v, v.to_string());
-                    }
-                });
-            let cm_resp = ir.response.on_hover_text(t.cell_max_tip);
-            super::wheel_cycle(
-                ui.ctx(),
-                &cm_resp,
-                &[64usize, 128, 256, 512, 1024, 4096],
-                &mut cm,
-            );
-            if app.cell_max != cm {
-                app.cell_max = cm;
-                app.save_ui_prefs();
-            }
-
-            // 每页显示条数（原数据页工具条，移入顶栏统一管理）
-            ui.label(t.page_size_label);
-            let mut ps = app.page_size;
-            let ir = egui::ComboBox::from_id_salt("page_size")
-                .width(60.0)
-                .selected_text(format!("{ps}"))
-                .show_ui(ui, |ui| {
-                    for v in super::PAGE_SIZES {
-                        ui.selectable_value(&mut ps, v, v.to_string());
-                    }
-                });
-            let ps_resp = ir.response.on_hover_text(t.page_size_tip);
-            super::wheel_cycle(ui.ctx(), &ps_resp, &super::PAGE_SIZES, &mut ps);
-            if ps != app.page_size {
-                app.page_size = ps;
-                app.save_ui_prefs();
-                app.load_first_page();
-            }
-
-            // 整数千位分隔开关（影响所有 decode/guess 输出）
-            let mut ts = crate::fmt::thousands_sep();
-            if ui
-                .selectable_label(ts, "1,234")
-                .on_hover_text(t.thousands_tip)
-                .clicked()
-            {
-                ts = !ts;
-                crate::fmt::set_thousands_sep(ts);
                 app.save_ui_prefs();
             }
 

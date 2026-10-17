@@ -206,6 +206,20 @@ pub(super) const EN: I18n = I18n {
     guess_utf16_be: "UTF-16 text (BE)",
     guess_binary: "Binary",
 
+    tab_settings: "Advanced",
+    hint_section: "Cell hints",
+    hint_section_tip: "Extra readings appended to Key/Value display text in Auto mode; toggle each type per column",
+    hint_col_format: "Format",
+    hint_ts: "int timestamp",
+    hint_filetime: "FILETIME",
+    hint_ipv4: "IPv4",
+    hint_mac: "MAC",
+    hint_ipv6: "IPv6",
+    hint_magic: "File magic",
+    disp_section: "Display",
+    thousands_label: "Thousand separators",
+    cell_max_label: "Cell max chars",
+
     int_key_hint: "For integer-key tables enter a decimal number, or bytes as hex(...)/0x...",
     hex_even: "hex length must be even",
 

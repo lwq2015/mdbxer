@@ -3,15 +3,51 @@
 
 //! 字节内容的自动类型猜测。
 
+use serde::{Deserialize, Serialize};
+
 use super::{Endian, value};
+
+/// 单元格文本附注开关（Key/Value 列各自独立配置，高级配置页编辑）。
+/// 附注是追加在显示文本后的"附加解读"，不影响猜测与解码本身。
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct HintFlags {
+    /// u64 落在 Unix 秒/毫秒区间时附本地日期
+    pub unix_ts: bool,
+    /// 8 字节落 FILETIME 域时附本地日期
+    pub filetime: bool,
+    /// 4 字节附 IPv4 点分十进制
+    pub ipv4: bool,
+    /// 6 字节附 MAC 地址
+    pub mac: bool,
+    /// 16 字节附 IPv6 地址
+    pub ipv6: bool,
+    /// 命中常见文件魔数时附格式名
+    pub magic: bool,
+}
+
+impl Default for HintFlags {
+    // 地址类（IPv4/MAC/IPv6）对任意字节必然命中，标注无判别力，默认关；
+    // 时间戳/FILETIME 域窄（约 33 年/175 年）误报低、魔数为高置信匹配，默认开。
+    fn default() -> Self {
+        Self {
+            unix_ts: true,
+            filetime: true,
+            ipv4: false,
+            mac: false,
+            ipv6: false,
+            magic: true,
+        }
+    }
+}
 
 /// 猜测字节内容的类型，返回 (类型标签, 显示文本)。
 /// 1 字节按 u8 解释（无字节序），多字节整数按 endian 解释。标签随当前界面语言。
-pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
-    guess_at_depth(bytes, endian, 0)
+/// 附注（地址/时间/魔数解读）按 hints 开关追加。
+pub fn guess(bytes: &[u8], endian: Endian, hints: &HintFlags) -> (String, String) {
+    guess_at_depth(bytes, endian, 0, hints)
 }
 
-fn guess_at_depth(bytes: &[u8], endian: Endian, depth: usize) -> (String, String) {
+fn guess_at_depth(bytes: &[u8], endian: Endian, depth: usize, hints: &HintFlags) -> (String, String) {
     let t = crate::i18n::tr();
 
     // 空值：专有标签
@@ -27,7 +63,7 @@ fn guess_at_depth(bytes: &[u8], endian: Endian, depth: usize) -> (String, String
     if depth == 0 {
         if let Some((algo, inner)) = super::decompress(bytes) {
             if !inner.is_empty() {
-                let (label, text) = guess_at_depth(&inner, endian, depth + 1);
+                let (label, text) = guess_at_depth(&inner, endian, depth + 1, hints);
                 return (format!("{algo} → {label}"), text);
             }
         }
@@ -125,22 +161,32 @@ fn guess_at_depth(bytes: &[u8], endian: Endian, depth: usize) -> (String, String
                 Endian::Little => u64::from_le_bytes(arr),
                 Endian::Big => u64::from_be_bytes(arr),
             };
-            (format!("u64 {sfx}"), value::u64_text(v))
+            (
+                format!("u64 {sfx}"),
+                value::u64_text(v, hints.unix_ts, hints.filetime),
+            )
         }
         _ => (t.guess_binary.to_string(), value::hex_spaced(bytes)),
     };
 
-    // 值文本追加可读解读：4 字节 IPv4、16 字节 IPv6 与常见文件魔数。
-    // 8 字节 FILETIME 已由 u64_text 附日期（同一来源，不重复）；6 字节 MAC
-    // 与二进制 hex 原文重复，不标。
-    if matches!(bytes.len(), 4 | 16) {
-        if let Some(h) = addr_hint(bytes, endian) {
-            text = format!("{text} · {h}");
-        }
+    // 值文本追加可读解读（各类型受高级配置开关控制，Key/Value 列独立）：
+    // 4 字节 IPv4、6 字节 MAC、16 字节 IPv6 与常见文件魔数。8 字节 FILETIME
+    // 已由 u64_text 按开关附日期（同一来源，不重复）；MAC 与二进制 hex 原文
+    // 有冗余，但保持与 IPv4/IPv6 同一套开关便于按需开启。
+    let addr = match bytes.len() {
+        4 if hints.ipv4 => addr_hint(bytes, endian),
+        6 if hints.mac => addr_hint(bytes, endian),
+        16 if hints.ipv6 => addr_hint(bytes, endian),
+        _ => None,
+    };
+    if let Some(h) = addr {
+        text = format!("{text} · {h}");
     }
 
-    if let Some(m) = magic_hint(bytes) {
-        text = format!("{text} · {m}");
+    if hints.magic {
+        if let Some(m) = magic_hint(bytes) {
+            text = format!("{text} · {m}");
+        }
     }
 
     (label, text)
@@ -456,6 +502,14 @@ fn utf16_validate(units: &[u16]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 默认附注开关的 guess 快捷方式：多数测试不关心附注，
+    /// 需要显式控制开关的测试直接调 super::guess 三参版本。
+    #[allow(dead_code)]
+    fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
+        super::guess(bytes, endian, &HintFlags::default())
+    }
+
     use crate::fmt::Endian;
 
     #[test]
@@ -675,23 +729,36 @@ mod tests {
 
     #[test]
     fn guess_auto_text_appends_hints() {
+        // 地址类开关全开：4 字节附 IPv4、16 字节附 IPv6
+        let hints = HintFlags {
+            ipv4: true,
+            mac: true,
+            ipv6: true,
+            ..HintFlags::default()
+        };
+
         // 4 字节：u32 数值后附 IPv4 解读（192.168.1.1 LE = 0x0101A8C0）
         let bytes = [192u8, 168, 1, 1];
-        let (label, text) = guess(&bytes, Endian::Little);
+        let (label, text) = super::guess(&bytes, Endian::Little, &hints);
         assert_eq!(label, "u32 LE");
         assert_eq!(text, "16,885,952 · IPv4 192.168.1.1");
+
+        // 6 字节：二进制 hex 后附 MAC 解读
+        let mac = [0x00u8, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E];
+        let (_, text) = super::guess(&mac, Endian::Little, &hints);
+        assert!(text.ends_with("· MAC 00:1A:2B:3C:4D:5E"), "text={text}");
 
         // 16 字节：二进制 hex 后附 IPv6 解读
         let v6 = [
             0x20u8, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
         ];
-        let (label, text) = guess(&v6, Endian::Little);
+        let (label, text) = super::guess(&v6, Endian::Little, &hints);
         assert_eq!(label, "二进制");
         assert!(text.starts_with("20 01 0D B8 00"), "text={text}");
         assert!(text.ends_with("· IPv6 2001:db8::1"), "text={text}");
 
         // 文件魔数：PNG 签名开头的二进制附格式名（奇数长度使 UTF-16
-        // 启发式直接拒绝，落回二进制分支）
+        // 启发式直接拒绝，落回二进制分支）——魔数默认开
         let png = [0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00];
         let (_, text) = guess(&png, Endian::Little);
         assert!(text.ends_with("· PNG"), "text={text}");
@@ -701,6 +768,36 @@ mod tests {
         let (_, text) = guess(&ft.to_le_bytes(), Endian::Little);
         assert!(text.contains("→ 2026-"), "text={text}");
         assert!(!text.contains("FILETIME"), "text={text}");
+    }
+
+    #[test]
+    fn guess_hints_addresses_default_off() {
+        // 默认关：地址类对任意字节必然命中（4 字节必是合法 IPv4 点分串），
+        // 标注无判别力，默认不附——纯整数就是纯整数
+        let bytes = [192u8, 168, 1, 1];
+        let (_, text) = guess(&bytes, Endian::Little);
+        assert_eq!(text, "16,885,952");
+
+        let v6 = [0x20u8, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
+        let (_, text) = guess(&v6, Endian::Little);
+        assert!(!text.contains("IPv6"), "text={text}");
+    }
+
+    #[test]
+    fn guess_hints_ts_toggle() {
+        // int 时间戳开关关闭时 u64 不附日期
+        let v = 1_767_225_600u64;
+        let hints = HintFlags {
+            unix_ts: false,
+            filetime: false,
+            ..HintFlags::default()
+        };
+        let (_, text) = super::guess(&v.to_le_bytes(), Endian::Little, &hints);
+        assert_eq!(text, "1,767,225,600");
+
+        // 打开后附日期
+        let (_, text) = guess(&v.to_le_bytes(), Endian::Little);
+        assert!(text.contains("→ 2026-"), "text={text}");
     }
 
     #[test]
@@ -819,8 +916,8 @@ mod tests {
         let (label, text) = guess(&bytes, Endian::Little);
         assert!(label.contains("u32"));
         assert!(label.contains("LE"));
-        // 值文本附 IPv4 解读（0x78 0x56 0x34 0x12）
-        assert_eq!(text, "305,419,896 · IPv4 120.86.52.18");
+        // 默认不附 IPv4（地址类附注无判别力，见 HintFlags::default）
+        assert_eq!(text, "305,419,896");
     }
 
     #[test]

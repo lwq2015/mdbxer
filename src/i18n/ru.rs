@@ -206,6 +206,20 @@ pub(super) const RU: I18n = I18n {
     guess_utf16_be: "Текст UTF-16 (BE)",
     guess_binary: "Бинарный",
 
+    tab_settings: "Расширенные",
+    hint_section: "Примечания к ячейкам",
+    hint_section_tip: "Дополнительные расшифровки в тексте Key/Value в авто-режиме; каждый тип включается отдельно для колонки",
+    hint_col_format: "Формат",
+    hint_ts: "метка времени int",
+    hint_filetime: "FILETIME",
+    hint_ipv4: "IPv4",
+    hint_mac: "MAC",
+    hint_ipv6: "IPv6",
+    hint_magic: "Магия файлов",
+    disp_section: "Отображение",
+    thousands_label: "Разделение разрядов",
+    cell_max_label: "Символов в ячейке",
+
     int_key_hint: "Для таблиц с целочисленными ключами введите десятичное число или байты в виде hex(...)/0x...",
     hex_even: "длина hex должна быть чётной",
 

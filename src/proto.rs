@@ -275,7 +275,7 @@ mod tests {
         assert!(cands.iter().any(|(n, u)| n == "t2.B" && *u > 0));
 
         // Auto 集成：fmt::guess 标签带类型全名，文本为紧凑 JSON
-        let (label, text) = crate::fmt::guess(&bytes, crate::fmt::Endian::Little);
+        let (label, text) = crate::fmt::guess(&bytes, crate::fmt::Endian::Little, &crate::fmt::HintFlags::default());
         assert_eq!(label, "PROTO · t2.A", "label={label}");
         assert_eq!(text, r#"{"x":42}"#, "text={text}");
 
@@ -285,7 +285,7 @@ mod tests {
 
         // 截断的 varint：解码失败 → 无候选；fmt::guess 不猜 proto
         assert!(guess_candidates(&[0x08]).is_empty());
-        let (label2, _) = crate::fmt::guess(&[0x08], crate::fmt::Endian::Little);
+        let (label2, _) = crate::fmt::guess(&[0x08], crate::fmt::Endian::Little, &crate::fmt::HintFlags::default());
         assert!(!label2.starts_with("PROTO"), "label2={label2}");
 
         // 空池（未载入时）——这里已载入，验证清理路径即可

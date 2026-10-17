@@ -10,7 +10,7 @@ mod guess;
 mod hexdump;
 mod value;
 
-pub use guess::guess;
+pub use guess::{HintFlags, guess};
 pub(crate) use compress::decompress;
 pub(crate) use guess::{is_bson, is_cbor, is_msgpack, is_structured_json, magic_hint};
 pub(crate) use hexdump::{

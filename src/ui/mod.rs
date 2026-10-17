@@ -7,6 +7,7 @@ mod about;
 mod dataview;
 mod detail;
 mod hexview;
+mod settings;
 mod sidebar;
 mod statsview;
 mod topbar;
@@ -205,6 +206,8 @@ pub enum CenterTab {
     TableStat,
     /// 环境信息（几何/映射/事务/读者/主表）
     EnvInfo,
+    /// 高级配置（单元格附注/显示参数等不常用开关）
+    Settings,
     /// 关于（版本/环境/链接/致谢/免责）
     About,
 }
@@ -217,6 +220,7 @@ impl CenterTab {
             CenterTab::Data => t.tab_data,
             CenterTab::TableStat => t.tab_stat,
             CenterTab::EnvInfo => t.tab_env,
+            CenterTab::Settings => t.tab_settings,
             CenterTab::About => t.tab_about,
         }
     }
@@ -420,10 +424,23 @@ pub struct MdbxerApp {
     pub endian: crate::fmt::Endian,
     /// 单元格最多显示字符数（超出截断）
     pub cell_max: usize,
+    /// 单元格附注开关（Key 列：时间/地址/魔数解读，高级配置页编辑）
+    pub hint_key: crate::fmt::HintFlags,
+    /// 单元格附注开关（Value 列）
+    pub hint_value: crate::fmt::HintFlags,
     /// 当前页显示缓存（与 rows 一一对应），由 display_order 按需重建
     pub views: Vec<RowView>,
-    /// 缓存生成时的解码参数 (key_mode, val_mode, endian, cell_max, 千位分隔, 语言)；None = 需重建
-    views_key: Option<(DecodeMode, DecodeMode, crate::fmt::Endian, usize, bool, u8)>,
+    /// 缓存生成时的解码参数 (key_mode, val_mode, endian, cell_max, hints_key, hints_value, 千位分隔, 语言)；None = 需重建
+    views_key: Option<(
+        DecodeMode,
+        DecodeMode,
+        crate::fmt::Endian,
+        usize,
+        crate::fmt::HintFlags,
+        crate::fmt::HintFlags,
+        bool,
+        u8,
+    )>,
     // ── 右栏 ──
     /// 右栏（详情）是否显示
     pub detail_visible: bool,
@@ -592,6 +609,8 @@ impl MdbxerApp {
             val_mode,
             endian,
             cell_max,
+            hint_key: prefs.hint_key,
+            hint_value: prefs.hint_value,
 
             views: Vec::new(),
             views_key: None,
@@ -683,6 +702,8 @@ impl MdbxerApp {
             self.val_mode,
             self.endian,
             self.cell_max,
+            self.hint_key,
+            self.hint_value,
             crate::fmt::thousands_sep(),
             crate::i18n::lang() as u8,
         );
@@ -695,14 +716,25 @@ impl MdbxerApp {
             .rows
             .iter()
             .map(|r| {
-                let val_text =
-                    crate::fmt::decode(&r.value, self.val_mode, self.endian, self.cell_max);
+                let val_text = crate::fmt::decode(
+                    &r.value,
+                    self.val_mode,
+                    self.endian,
+                    self.cell_max,
+                    &self.hint_value,
+                );
                 RowView {
-                    key_text: crate::fmt::decode(&r.key, self.key_mode, self.endian, self.cell_max),
+                    key_text: crate::fmt::decode(
+                        &r.key,
+                        self.key_mode,
+                        self.endian,
+                        self.cell_max,
+                        &self.hint_key,
+                    ),
                     // Value 指定了解码类型时，类型列同步显示指定类型；只有"自动"才按字节猜测。
                     type_label: match self.val_mode.forced_label(self.endian) {
                         Some(label) => label,
-                        None => crate::fmt::guess(&r.value, self.endian).0,
+                        None => crate::fmt::guess(&r.value, self.endian, &self.hint_value).0,
                     },
                     val_num: leading_num(&val_text),
                     val_text,
@@ -1435,8 +1467,9 @@ impl MdbxerApp {
     fn copy_selected_row(&mut self, ctx: &egui::Context) {
         let Some(i) = self.selected_row else { return };
         let Some(row) = self.rows.get(i) else { return };
-        let key_text = crate::fmt::decode(&row.key, self.key_mode, self.endian, 65536);
-        let val_text = crate::fmt::decode(&row.value, self.val_mode, self.endian, 65536);
+        let key_text = crate::fmt::decode(&row.key, self.key_mode, self.endian, 65536, &self.hint_key);
+        let val_text =
+            crate::fmt::decode(&row.value, self.val_mode, self.endian, 65536, &self.hint_value);
         let text = format!("{}\t{}", key_text, val_text);
         ctx.copy_text(text);
         self.status = Status::info(crate::i18n::tr().copied_row.to_string());
@@ -1579,13 +1612,20 @@ impl MdbxerApp {
         for (k, v) in &batch.rows {
             // 同时按 Auto 解码与当前排版解码匹配：当前排版为 hex/数值时
             // 文本搜索仍可用 Auto 命中
-            let auto_text =
-                crate::fmt::decode(v, crate::fmt::DecodeMode::Auto, endian, 65536).to_lowercase();
+            let auto_text = crate::fmt::decode(
+                v,
+                crate::fmt::DecodeMode::Auto,
+                endian,
+                65536,
+                &self.hint_value,
+            )
+            .to_lowercase();
             if auto_text.contains(&needle) {
                 found = Some((k.clone(), v.clone()));
                 break;
             }
-            let mode_text = crate::fmt::decode(v, val_mode, endian, 65536).to_lowercase();
+            let mode_text =
+                crate::fmt::decode(v, val_mode, endian, 65536, &self.hint_value).to_lowercase();
             if mode_text.contains(&needle) {
                 found = Some((k.clone(), v.clone()));
                 break;
@@ -1772,6 +1812,8 @@ impl MdbxerApp {
             key_mode: self.key_mode,
             val_mode: self.val_mode,
             endian: self.endian,
+            hint_key: self.hint_key,
+            hint_value: self.hint_value,
             out_path: out.clone(),
             format: self.export_format,
         };
@@ -1889,6 +1931,8 @@ impl MdbxerApp {
             val_mode: Some(self.val_mode.as_str().to_string()),
             thousands_sep: Some(crate::fmt::thousands_sep()),
             cell_max: Some(self.cell_max),
+            hint_key: self.hint_key,
+            hint_value: self.hint_value,
 
             show_addr: Some(self.detail.show_addr),
             show_hex: Some(self.detail.show_hex),
@@ -2309,15 +2353,21 @@ impl eframe::App for MdbxerApp {
                 ui.selectable_value(&mut tab, CenterTab::Data, CenterTab::Data.label());
                 ui.selectable_value(&mut tab, CenterTab::TableStat, CenterTab::TableStat.label());
                 ui.selectable_value(&mut tab, CenterTab::EnvInfo, CenterTab::EnvInfo.label());
+                ui.selectable_value(&mut tab, CenterTab::Settings, CenterTab::Settings.label());
                 ui.selectable_value(&mut tab, CenterTab::About, CenterTab::About.label());
             });
             if tab != self.tab {
                 self.tab = tab;
             }
             ui.separator();
+            // "关于"与"高级配置"是全局页，无库也可查看
             if self.tab == CenterTab::About {
                 let date = self.build_date.clone();
                 about::show(ui, &date);
+                return;
+            }
+            if self.tab == CenterTab::Settings {
+                settings::show(ui, self);
                 return;
             }
             if self.db.is_none() {
@@ -2333,6 +2383,7 @@ impl eframe::App for MdbxerApp {
                 CenterTab::Data => dataview::show(ui, self),
                 CenterTab::TableStat => statsview::show_table_stat(ui, self),
                 CenterTab::EnvInfo => statsview::show_env_info(ui, self),
+                CenterTab::Settings => settings::show(ui, self),
                 CenterTab::About => unreachable!(),
             }
         });

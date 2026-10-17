@@ -621,6 +621,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 app.detail.key_mode,
                 app.endian,
                 k_win.len() * 9 + 64,
+                &app.hint_key,
             );
             let (_, v_win) = card_window(app, &value, false);
             let v_text = fmt::decode(
@@ -628,6 +629,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 app.detail.val_mode,
                 app.endian,
                 v_win.len() * 9 + 64,
+                &app.hint_value,
             );
 
             // 高度预算：两张卡片都装得下时各按自然高度；装不下时至少均分——
@@ -864,8 +866,13 @@ fn kv_card(
                         });
 
                     if let Some((m, inner)) = decomp_copy {
-                        ui.ctx()
-                            .copy_text(fmt::decode(&inner, m, app.endian, usize::MAX));
+                        ui.ctx().copy_text(fmt::decode(
+                            &inner,
+                            m,
+                            app.endian,
+                            usize::MAX,
+                            &app.hint_value,
+                        ));
                     } else if let Some(pretty) =
                         proto_auto_pretty(app.detail.mode_of(is_key), bytes)
                     {
@@ -882,8 +889,9 @@ fn kv_card(
                             DecodeMode::Auto if fmt::is_cbor(bytes) => DecodeMode::Cbor,
                             m => m,
                         };
+                        let hints = if is_key { &app.hint_key } else { &app.hint_value };
                         ui.ctx()
-                            .copy_text(text_of(bytes, copy_mode, app.endian));
+                            .copy_text(text_of(bytes, copy_mode, app.endian, hints));
                     }
                 }
                 if ui.button(t.save_as).on_hover_text(t.save_tip).clicked() {
@@ -1205,6 +1213,7 @@ fn kv_card(
                 m,
                 app.endian,
                 inner.len().saturating_mul(4) + 256,
+                &app.hint_value,
             ),
             None => {
                 if let Some(pretty) = proto_pretty {
@@ -1216,6 +1225,7 @@ fn kv_card(
                             m,
                             app.endian,
                             window.len().saturating_mul(4) + 256,
+                            &app.hint_value,
                         ),
                         _ => text.to_string(),
                     }
@@ -1237,7 +1247,7 @@ fn kv_card(
         // 猜测/字节数信息紧跟"文本"标题文字同一行右侧（自定义标题行），
         // 不再单列一行占据文本框与 hex 之间的位置
         let guess_text = if app.detail.mode_of(is_key) == DecodeMode::Auto {
-            let (label, _) = fmt::guess(bytes, app.endian);
+            let (label, _) = fmt::guess(bytes, app.endian, &app.hint_value);
             // 附加解读只保留文件魔数（强信号、短标注）：地址/FILETIME 对
             // 任意字节几乎总命中（IPv4/IPv6 无有效性约束），放猜测行是噪音
             // 且撑宽窗口——需要时切手动 mac/ip/time 格式查看
@@ -1462,8 +1472,13 @@ fn kv_card(
 }
 
 /// 复制按钮用：完整解码文本（不受 cell_max 截断）。
-fn text_of(bytes: &[u8], mode: DecodeMode, endian: fmt::Endian) -> String {
-    fmt::decode(bytes, mode, endian, usize::MAX)
+fn text_of(
+    bytes: &[u8],
+    mode: DecodeMode,
+    endian: fmt::Endian,
+    hints: &fmt::HintFlags,
+) -> String {
+    fmt::decode(bytes, mode, endian, usize::MAX, hints)
 }
 
 // ── JSON 语法着色 ─────────────────────────────────────────────────────────

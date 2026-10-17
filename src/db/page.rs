@@ -691,6 +691,7 @@ mod tests {
                     crate::fmt::DecodeMode::Auto,
                     crate::fmt::Endian::Little,
                     65536,
+                    &crate::fmt::HintFlags::default(),
                 )
                 .to_lowercase();
                 if text.contains(&needle) {

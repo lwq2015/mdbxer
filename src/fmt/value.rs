@@ -60,8 +60,14 @@ fn sep_int(s: &str) -> String {
 ///
 /// 字节数少于类型宽度时按零扩展补齐（小端补尾部、大端补头部，数值等价），
 /// 并在结果后标注补零说明；空数据显示空占位；超长取前 N 字节。
-/// 占位文案随当前界面语言。
-pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) -> String {
+/// 占位文案随当前界面语言。附注（Auto 猜测的时间/地址/魔数解读）按 hints 开关。
+pub fn decode(
+    bytes: &[u8],
+    mode: DecodeMode,
+    endian: Endian,
+    max_chars: usize,
+    hints: &super::HintFlags,
+) -> String {
     // 整数分支：零扩展补齐。返回 (文本, 是否补齐)
     macro_rules! int {
         ($ty:ty) => {{
@@ -119,7 +125,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) 
     }
 
     let s = match mode {
-        DecodeMode::Auto => guess(bytes, endian).1,
+        DecodeMode::Auto => guess(bytes, endian, hints).1,
         DecodeMode::Utf8 => String::from_utf8_lossy(bytes).into_owned(),
         DecodeMode::Utf16Le => utf16_text(bytes, false),
         DecodeMode::Utf16Be => utf16_text(bytes, true),
@@ -148,9 +154,9 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) 
                     Endian::Big => u64::from_be_bytes(arr),
                 };
                 if bytes.len() < n {
-                    format!("{}{}", u64_text(v), pad_note())
+                    format!("{}{}", u64_text(v, hints.unix_ts, hints.filetime), pad_note())
                 } else {
-                    u64_text(v)
+                    u64_text(v, hints.unix_ts, hints.filetime)
                 }
             }
         }
@@ -221,20 +227,25 @@ fn legacy_text(bytes: &[u8], enc: &'static encoding_rs::Encoding) -> String {
     enc.decode(bytes).0.into_owned()
 }
 
-/// u64 显示文本；落在 Unix 时间戳合理区间时附本地日期。
-/// 毫秒级值保留 3 位小数（`.xxx`），秒级值只到秒。数字部分带千位分隔。
-pub fn u64_text(v: u64) -> String {
+/// u64 显示文本；按开关落在 Unix 时间戳（秒/毫秒）或 FILETIME 合理区间时
+/// 附本地日期。毫秒级值保留 3 位小数（`.xxx`），秒级值只到秒。数字部分带千位分隔。
+pub fn u64_text(v: u64, unix_ts: bool, filetime: bool) -> String {
     let num = with_sep(v.to_string());
-    match epoch_to_local(v) {
+    let date = if unix_ts {
+        unix_to_local(v)
+    } else {
+        None
+    }
+    .or_else(|| if filetime { filetime_to_local(v) } else { None });
+    match date {
         Some(date) => format!("{num} → {date}"),
         None => num,
     }
 }
 
-/// 识别秒（1e9..1e10）、毫秒（1e12..1e13）级 Unix 时间戳或 Windows FILETIME
-/// （1601 epoch、100ns 单位），格式化为本地时间；毫秒/FILETIME 保留 3 位小数
-/// （`.000`），秒级只到秒。
-fn epoch_to_local(v: u64) -> Option<String> {
+/// 识别秒（1e9..1e10）或毫秒（1e12..1e13）级 Unix 时间戳，格式化为本地时间；
+/// 毫秒保留 3 位小数（`.000`），秒级只到秒。
+fn unix_to_local(v: u64) -> Option<String> {
     if (1_000_000_000..10_000_000_000).contains(&v) {
         let dt = chrono::DateTime::from_timestamp(v as i64, 0)?;
         Some(
@@ -252,7 +263,7 @@ fn epoch_to_local(v: u64) -> Option<String> {
                 .to_string(),
         )
     } else {
-        filetime_to_local(v)
+        None
     }
 }
 
@@ -419,7 +430,8 @@ fn time_text(bytes: &[u8], endian: Endian) -> String {
                 Endian::Little => u64::from_le_bytes(arr),
                 Endian::Big => u64::from_be_bytes(arr),
             };
-            u64_text(v)
+            // 手动 time 格式：用户明确要看时间，附注必开（不受 hint 开关影响）
+            u64_text(v, true, true)
         }
         _ => {
             let t = crate::i18n::tr();
@@ -622,6 +634,13 @@ pub(crate) fn cbor_compact(bytes: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 默认附注开关的 decode 快捷方式：多数测试不关心附注。
+    #[allow(dead_code)]
+    fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) -> String {
+        super::decode(bytes, mode, endian, max_chars, &crate::fmt::HintFlags::default())
+    }
+
     use crate::fmt::{DecodeMode, Endian, set_thousands_sep};
 
     fn setup() {
@@ -839,12 +858,14 @@ mod tests {
         setup();
         // 秒级时间戳：2024-01-01 00:00:00 UTC
         let v = 1_704_067_200u64;
-        let s = u64_text(v);
+        let s = u64_text(v, true, true);
         assert!(s.starts_with("1,704,067,200 → "));
         assert!(s.contains("2024"));
         // 非时间戳范围：只显示数字
-        let s = u64_text(42);
+        let s = u64_text(42, true, true);
         assert_eq!(s, "42");
+        // 开关关闭：时间戳只显示数字
+        assert_eq!(u64_text(v, false, false), "1,704,067,200");
     }
 
     #[test]
@@ -852,14 +873,17 @@ mod tests {
         setup();
         // 2026-01-01 00:00:00 UTC 的 FILETIME：与 Unix 秒/毫秒同一套附日期显示
         let v = (1_767_225_600u64 + 11_644_473_600) * 10_000_000;
-        let s = u64_text(v);
+        let s = u64_text(v, true, true);
         assert!(s.starts_with("134,116,992,000,000,000 → "), "s={s}");
         assert!(s.contains("2026"), "s={s}");
 
         // Unix 秒/毫秒域与 FILETIME 域不相交：普通时间戳不受影响
-        assert!(u64_text(1_704_067_200).contains("2024"));
+        assert!(u64_text(1_704_067_200, true, true).contains("2024"));
         // 域外大数只显示数字
-        assert_eq!(u64_text(u64::MAX), with_sep(u64::MAX.to_string()));
+        assert_eq!(
+            u64_text(u64::MAX, true, true),
+            with_sep(u64::MAX.to_string())
+        );
     }
 
     #[test]
