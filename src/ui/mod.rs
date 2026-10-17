@@ -747,6 +747,16 @@ impl MdbxerApp {
                 self.fav_tables = rec.fav_tables.clone();
                 self.fav_keys = rec.fav_keys.clone();
                 self.normalize_favs();
+
+                // 恢复本库的 Protobuf 关联：自动载入绑定的 .proto 与 message
+                // 选择（文件缺失/编译失败静默跳过，保留现有池）
+                if let Some(files) = &rec.proto_files {
+                    let paths: Vec<std::path::PathBuf> =
+                        files.iter().map(std::path::PathBuf::from).collect();
+                    if crate::proto::load_files(&paths).is_ok() {
+                        crate::proto::set_current(rec.proto_msg.clone());
+                    }
+                }
                 self.selected_table = if n > 0 {
                     rec.last_table
                         .and_then(|name| {
@@ -1903,16 +1913,20 @@ impl MdbxerApp {
     }
 
     /// 保存当前库的每库记录（最后打开的表 + 收藏）。未打开库时无操作。
+    /// Protobuf 关联不在此处写入（详情卡片保存），但保留已有绑定不被抹掉。
     fn save_per_db(&self) {
         let Some(path) = &self.opened_path else {
             return;
         };
+        let old = crate::config::load_per_db(path);
         crate::config::save_per_db(&crate::config::PerDbRecord {
             path: path.clone(),
             last_table: self.cur_table().and_then(|t| t.name.clone()),
             fav_tables: self.fav_tables.clone(),
             fav_keys: self.fav_keys.clone(),
-            ..Default::default()
+            proto_files: old.proto_files,
+            proto_msg: old.proto_msg,
+            last_use: 0, // save_per_db 内部刷新为当前时间
         });
     }
 

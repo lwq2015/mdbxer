@@ -97,6 +97,13 @@ pub fn is_loaded() -> bool {
     POOL.read().unwrap().is_some()
 }
 
+/// 清空全部状态：类型池、文件列表、当前选择（清除库关联时调用）。
+pub fn clear() {
+    *POOL.write().unwrap() = None;
+    FILES.write().unwrap().clear();
+    *CURRENT.write().unwrap() = None;
+}
+
 /// 自动猜测候选：对池内全部 message 类型（跳过 map entry 内部类型）
 /// 试探解码，返回 (类型全名, unknown 字段个数) 按 unknown 升序。
 ///

@@ -120,6 +120,9 @@ pub struct I18n {
     pub proto_pick: &'static str,
     /// Protobuf：未载入 .proto 时类型下拉的占位项
     pub proto_no_types: &'static str,
+    /// proto 关联表清除按钮
+    pub proto_clear: &'static str,
+    pub proto_clear_tip: &'static str,
 
     // ── 左栏 ──
     pub tables_title: &'static str,

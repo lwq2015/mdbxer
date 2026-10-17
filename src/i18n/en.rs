@@ -32,6 +32,8 @@ pub(super) const EN: I18n = I18n {
     proto_load_tip: "Load .proto files (multi-select) and compile all message types; remembered globally across restarts",
     proto_pick: "Pick message type",
     proto_no_types: "(no .proto loaded)",
+    proto_clear: "Clear binding",
+    proto_clear_tip: "Clear this database's .proto binding (also resets loaded state)",
 
     tables_title: "Tables (subDB)",
     filter_hint: "Filter tables",

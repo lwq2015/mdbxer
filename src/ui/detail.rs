@@ -928,10 +928,7 @@ fn kv_card(
                         for n in &names {
                             if ui.selectable_value(&mut cur, Some(n.clone()), n).changed() {
                                 crate::proto::set_current(cur.clone());
-                                crate::config::save_proto_prefs(
-                                    &crate::proto::files(),
-                                    cur.as_deref(),
-                                );
+                                save_proto_binding(app, cur.as_deref());
                             }
                         }
                     });
@@ -950,14 +947,24 @@ fn kv_card(
                         match crate::proto::load_files(&paths) {
                             Ok(_) => {
                                 app.detail.proto_err = None;
-                                crate::config::save_proto_prefs(
-                                    &crate::proto::files(),
-                                    crate::proto::current().as_deref(),
-                                );
+                                save_proto_binding(app, crate::proto::current().as_deref());
                             }
                             Err(e) => app.detail.proto_err = Some(e),
                         }
                     }
+                }
+
+                // 清除关联：删除本库的 .proto 绑定并清空载入状态
+                if ui
+                    .small_button(t.proto_clear)
+                    .on_hover_text(t.proto_clear_tip)
+                    .clicked()
+                {
+                    if let Some(p) = &app.opened_path {
+                        crate::config::clear_proto_binding(p);
+                    }
+                    crate::proto::clear();
+                    app.detail.proto_err = None;
                 }
 
                 // 载入失败提示：截断显示，hover 看全文
@@ -1529,6 +1536,14 @@ fn json_color_mode(mode: DecodeMode, window: &[u8]) -> Option<DecodeMode> {
             }
         }
         _ => None,
+    }
+}
+
+/// 保存当前库的 Protobuf 关联表（.proto 文件列表 + message 选择），
+/// 打开该库时自动恢复。未打开库（无宿主可挂）时跳过。
+fn save_proto_binding(app: &MdbxerApp, msg: Option<&str>) {
+    if let Some(p) = &app.opened_path {
+        crate::config::save_proto_binding(p, &crate::proto::files(), msg);
     }
 }
 

@@ -32,6 +32,8 @@ pub(super) const RU: I18n = I18n {
     proto_load_tip: "Загрузить файлы .proto (можно несколько) и скомпилировать все типы message; запоминается глобально и сохраняется после перезапуска",
     proto_pick: "Выбрать тип message",
     proto_no_types: "(.proto не загружен)",
+    proto_clear: "Убрать привязку",
+    proto_clear_tip: "Убрать привязку .proto этой базы (и сбросить загруженное состояние)",
 
     tables_title: "Таблицы (subDB)",
     filter_hint: "Фильтр таблиц",

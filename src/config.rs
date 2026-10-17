@@ -124,6 +124,12 @@ pub struct PerDbRecord {
     /// 收藏的 Key
     #[serde(default)]
     pub fav_keys: Vec<FavKey>,
+    /// Protobuf 关联表：本库绑定的 .proto 文件列表（None = 未关联）
+    #[serde(default)]
+    pub proto_files: Option<Vec<String>>,
+    /// Protobuf 关联表：本库选定的 message 类型全名
+    #[serde(default)]
+    pub proto_msg: Option<String>,
     /// 最近使用时间（unix 秒；LRU 排序依据）
     #[serde(default)]
     pub last_use: u64,
@@ -264,11 +270,34 @@ pub fn load_proto_prefs() -> (Vec<String>, Option<String>) {
     (ui.proto_files.unwrap_or_default(), ui.proto_msg)
 }
 
-/// 保存 Protobuf 偏好（文件列表 + 当前 message 全名）。
-pub fn save_proto_prefs(files: &[String], msg: Option<&str>) {
+/// 保存某库的 Protobuf 关联表（.proto 文件列表 + message 选择）。
+/// 打开该库时自动恢复（见 open_db）。
+pub fn save_proto_binding(path: &str, files: &[String], msg: Option<&str>) {
     write_config(|c| {
-        c.ui.proto_files = Some(files.to_vec());
-        c.ui.proto_msg = msg.map(|s| s.to_string());
+        let norm = crate::history::normalize_path(path);
+        if let Some(rec) = c
+            .per_db
+            .iter_mut()
+            .find(|r| crate::history::path_eq(&r.path, &norm))
+        {
+            rec.proto_files = Some(files.to_vec());
+            rec.proto_msg = msg.map(|s| s.to_string());
+        }
+    });
+}
+
+/// 清除某库的 Protobuf 关联表（绑定不存在时无操作）。
+pub fn clear_proto_binding(path: &str) {
+    write_config(|c| {
+        let norm = crate::history::normalize_path(path);
+        if let Some(rec) = c
+            .per_db
+            .iter_mut()
+            .find(|r| crate::history::path_eq(&r.path, &norm))
+        {
+            rec.proto_files = None;
+            rec.proto_msg = None;
+        }
     });
 }
 
@@ -544,5 +573,27 @@ mod tests {
         let legacy: FavKey = serde_json::from_str(r#"{"table":null,"key_hex":"00FF"}"#).unwrap();
         assert_eq!(legacy.table, None);
         assert_eq!(legacy.note, "");
+    }
+
+    #[test]
+    fn proto_binding_serde_round_trip() {
+        let rec = PerDbRecord {
+            path: "db".to_string(),
+            proto_files: Some(vec!["t.proto".to_string()]),
+            proto_msg: Some("t.Msg".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&rec).unwrap();
+        let back: PerDbRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.proto_files.as_deref(),
+            Some(["t.proto".to_string()].as_slice())
+        );
+        assert_eq!(back.proto_msg.as_deref(), Some("t.Msg"));
+
+        // 旧记录（无 proto 字段）→ None
+        let legacy: PerDbRecord = serde_json::from_str(r#"{"path":"db"}"#).unwrap();
+        assert!(legacy.proto_files.is_none());
+        assert!(legacy.proto_msg.is_none());
     }
 }

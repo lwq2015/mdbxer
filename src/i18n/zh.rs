@@ -32,6 +32,8 @@ pub(super) const ZH: I18n = I18n {
     proto_load_tip: "载入 .proto 文件（可多选），编译全部 message 类型；全局记忆，重启沿用",
     proto_pick: "选择 message 类型",
     proto_no_types: "（未载入 .proto）",
+    proto_clear: "清除关联",
+    proto_clear_tip: "清除本库的 .proto 关联（载入状态也一并清空）",
 
     tables_title: "表 (subDB)",
     filter_hint: "过滤表名",
