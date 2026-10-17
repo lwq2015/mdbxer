@@ -167,8 +167,8 @@ pub fn addr_hint(bytes: &[u8], endian: Endian) -> Option<String> {
     }
 }
 
-/// 8 字节 FILETIME → 附加标注（如 `FILETIME → 2026-10-17 12:34:56.789 (+08:00)`）。
-/// 域判断与格式化复用 value::filetime_to_local（表格 u64 附日期同一套）。
+/// 8 字节 FILETIME → 简短标注（只到日期，避免撑宽猜测行；完整日期时间
+/// 由表格 Auto 列 u64_text 附注展示）。域判断与 value::filetime_to_local 同一常量。
 fn filetime_hint(bytes: &[u8], endian: Endian) -> Option<String> {
     let arr: [u8; 8] = bytes.try_into().unwrap_or_else(|_| unreachable!());
     let v = match endian {
@@ -176,7 +176,17 @@ fn filetime_hint(bytes: &[u8], endian: Endian) -> Option<String> {
         Endian::Big => u64::from_be_bytes(arr),
     };
 
-    value::filetime_to_local(v).map(|date| format!("FILETIME → {date}"))
+    if !(value::FILETIME_MIN..value::FILETIME_MAX).contains(&v) {
+        return None;
+    }
+
+    // 100ns 单位 → 秒，减 1601→1970 的 11_644_473_600 秒
+    let secs = (v / 10_000_000) as i64 - 11_644_473_600;
+    let dt = chrono::DateTime::from_timestamp(secs, 0)?;
+    Some(format!(
+        "FILETIME → {}",
+        dt.with_timezone(&chrono::Local).format("%Y-%m-%d")
+    ))
 }
 
 /// 常见文件魔数 → 简短标注（格式名国际通用不翻译）。只收录高置信魔数，
