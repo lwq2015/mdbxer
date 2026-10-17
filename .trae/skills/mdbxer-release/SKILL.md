@@ -20,8 +20,10 @@ description: 发布 mdbxer 新版本——升版本号、提交、打 tag、推�
 # 2. 提交版本号
 git add Cargo.toml Cargo.lock
 git commit -m "版本升至 v0.1.x"
-# 3. 打 tag（annotated）
-git tag -a v0.1.x -m "v0.1.x"
+# 3. 打 tag（annotated）：tag message = Release 正文（GitHub/Gitee 均自动取用）
+#    必须加 --cleanup=verbatim：git 默认剥掉 # 开头的行（markdown 标题会丢失）
+#    message 用 PowerShell here-string 写功能清单（markdown：## 小节 + - 列表）
+git tag -a v0.1.x -m $msg --cleanup=verbatim
 # 4. 推送 master + tag 到 Gitee
 git push origin master
 git push origin v0.1.x
