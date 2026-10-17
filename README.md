@@ -29,13 +29,16 @@
 - 序号跳转、按内容搜索（文本或字节子串，支持回绕）
 - 每 100 个值一页懒加载
 
-### 格式解析（17 种）
-`自动 / utf8 / utf16(LE) / utf16(BE) / int8 / int16 / int32 / int64 / uint8 / uint16 / uint32 / uint64 / float / double / hex / dec / binary`
+### 格式解析（29 种）
+`自动 / utf8 / utf16(LE) / utf16(BE) / gb18030 / windows-1251 / int8 / int16 / int32 / int64 / uint8 / uint16 / uint32 / uint64 / float / double / hex / dec / binary / base64 / uuid / mac / ip / time / json / bson / msgpack / cbor / proto`
 
-- 自动猜测类型（UTF-8 / u64 / u32 / u16 / 二进制）
-- 字节序 LE/BE 切换；短字节零扩展补齐并标注
-- `uint64` 落在 Unix 时间戳区间时自动附本地日期时间
-- 千位分隔开关、单元格字符数截断（64–4096）
+- **自动猜测链**：压缩容器穿透（zstd / gzip / zlib / lz4 / bzip2 / xz，解压后递归猜测，如 `gzip → JSON`）→ JSON / BSON / MessagePack / CBOR（自描述结构化数据，显示为 JSON）→ Protobuf（载入协议池后自动识别 message 类型）→ UTF-8 / UTF-16 → 整数 → 二进制
+- 命中文件魔数时附标注（PNG / JPEG / GIF / WebP / WAV / ICO / PDF / ZIP / RAR / 7z / FLAC / Ogg / MP3 / MP4 / SQLite）；表格 Auto 列对 4/6/16 字节值附 IPv4 / MAC / IPv6 解读
+- `uint64` 落在 Unix 时间戳（秒/毫秒）或 FILETIME 区间时自动附本地日期；手动 `time` 格式支持 4 字节 Unix 秒
+- 手动格式补齐常见场景：`gb18030` / `windows-1251` 传统编码、`base64`、`uuid`（16 字节）、`mac`（6 字节）、`ip`（4 字节 IPv4 / 16 字节 IPv6）、`json` / `bson` / `msgpack` / `cbor` 结构化美化、`proto` 动态解码
+- **Protobuf**：「载入 .proto」纯 Rust 编译（无需 protoc），按所选 message 类型解码为 JSON；协议与库的关联自动记忆、打开库时自动恢复，也可一键清除；已载入后 Auto 自动猜测类型
+- 字节序 LE/BE 切换；短字节零扩展补齐并标注；长度不符的地址/时间类格式回退 hex 并标注
+- 千位分隔开关、单元格字符数截断（64–4096）；格式下拉按界面语言排序，「自动」固定置顶
 
 ### 大字段分段
 - 超过 64 KiB 的字段按段浏览，段内文本与 hex 只渲染当前窗口
@@ -77,7 +80,11 @@ cargo test
 
 ## 测试数据
 
-`examples/make_test_db.rs` 可生成包含普通表、多值表、INTEGER_KEY 表及大字段的测试库：
+`examples/make_test_db.rs` 可生成功能全覆盖的测试库（`testdata/dir_db` + `testdata/file_db.mdbx`）：普通表、多值表、INTEGER_KEY 表、大字段、数值/边界值全覆盖、JSON/BSON/MessagePack/CBOR 样本（Auto 可识别）、压缩容器样本（`gzip → JSON` 等穿透）、地址/时间戳样本、文件魔数样本、以及 Protobuf 样本：
+
+- Protobuf 协议 `testdata/test.proto` 由脚本自动生成，覆盖全 15 种标量（int varint / sint zigzag / fixed 定宽）、enum、repeated、嵌套消息、map（三种值型）、oneof、optional
+- 样本 `proto_simple` / `proto_mixed` / `proto_scalars` / `proto_shapes` / `proto_tables` 与 UI 解码同一管线动态编码，wire 数据与 schema 自洽
+- 查看方式：UI 切 proto 排版 → 「载入 .proto」选 `testdata/test.proto` → 任意 `mdbxer.test.*` 类型（或直接用 Auto 自动识别）
 
 ```bash
 cargo run --example make_test_db
