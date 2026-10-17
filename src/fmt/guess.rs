@@ -152,13 +152,8 @@ pub fn addr_hint(bytes: &[u8], endian: Endian) -> Option<String> {
     }
 }
 
-/// FILETIME 合理域（Windows 1601 epoch、100ns 单位）：约 1949~2124 年。
-/// 随机 u64 落入此域的概率约 0.17%，作为附加解读可忽略。
-const FILETIME_MIN: u64 = 110_000_000_000_000_000;
-const FILETIME_MAX: u64 = 140_000_000_000_000_000;
-
-/// 8 字节 FILETIME → 本地时间文本（如 `FILETIME → 2026-10-17 12:34:56`）。
-/// 与 Unix 秒/毫秒时间戳域（1e9..1e13）完全不相交，同一值不会双重附注。
+/// 8 字节 FILETIME → 附加标注（如 `FILETIME → 2026-10-17 12:34:56.789 (+08:00)`）。
+/// 域判断与格式化复用 value::filetime_to_local（表格 u64 附日期同一套）。
 fn filetime_hint(bytes: &[u8], endian: Endian) -> Option<String> {
     let arr: [u8; 8] = bytes.try_into().unwrap_or_else(|_| unreachable!());
     let v = match endian {
@@ -166,18 +161,7 @@ fn filetime_hint(bytes: &[u8], endian: Endian) -> Option<String> {
         Endian::Big => u64::from_be_bytes(arr),
     };
 
-    if !(FILETIME_MIN..FILETIME_MAX).contains(&v) {
-        return None;
-    }
-
-    // 100ns 单位 → (秒, 纳秒)，再减 1601→1970 的 11_644_473_600 秒
-    let secs = (v / 10_000_000) as i64 - 11_644_473_600;
-    let nanos = (v % 10_000_000) as u32 * 100;
-    let dt = chrono::DateTime::from_timestamp(secs, nanos)?;
-    Some(format!(
-        "FILETIME → {}",
-        dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S")
-    ))
+    value::filetime_to_local(v).map(|date| format!("FILETIME → {date}"))
 }
 
 /// 常见文件魔数 → 简短标注（格式名国际通用不翻译）。只收录高置信魔数，

@@ -228,8 +228,9 @@ pub fn u64_text(v: u64) -> String {
     }
 }
 
-/// 识别秒（1e9..1e10）或毫秒（1e12..1e13）级 Unix 时间戳，格式化为本地时间；
-/// 毫秒级保留并显示 3 位毫秒（`.000`），秒级只到秒。
+/// 识别秒（1e9..1e10）、毫秒（1e12..1e13）级 Unix 时间戳或 Windows FILETIME
+/// （1601 epoch、100ns 单位），格式化为本地时间；毫秒/FILETIME 保留 3 位小数
+/// （`.000`），秒级只到秒。
 fn epoch_to_local(v: u64) -> Option<String> {
     if (1_000_000_000..10_000_000_000).contains(&v) {
         let dt = chrono::DateTime::from_timestamp(v as i64, 0)?;
@@ -248,8 +249,31 @@ fn epoch_to_local(v: u64) -> Option<String> {
                 .to_string(),
         )
     } else {
-        None
+        filetime_to_local(v)
     }
+}
+
+/// FILETIME 合理域（Windows 1601 epoch、100ns 单位）：约 1949~2124 年。
+/// 随机 u64 落入此域的概率约 0.17%，作为附加解读可忽略。
+/// 与上面 Unix 秒/毫秒域完全不相交，同一值不会双重附注。
+pub(crate) const FILETIME_MIN: u64 = 110_000_000_000_000_000;
+pub(crate) const FILETIME_MAX: u64 = 140_000_000_000_000_000;
+
+/// FILETIME → 本地时间文本（毫秒精度，与 Unix 毫秒时间戳同一格式）。
+pub(crate) fn filetime_to_local(v: u64) -> Option<String> {
+    if !(FILETIME_MIN..FILETIME_MAX).contains(&v) {
+        return None;
+    }
+
+    // 100ns 单位 → (秒, 纳秒)，再减 1601→1970 的 11_644_473_600 秒
+    let secs = (v / 10_000_000) as i64 - 11_644_473_600;
+    let nanos = (v % 10_000_000) as u32 * 100;
+    let dt = chrono::DateTime::from_timestamp(secs, nanos)?;
+    Some(
+        dt.with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S%.3f (%Z%:z)")
+            .to_string(),
+    )
 }
 
 fn truncate_chars(s: String, max_chars: usize) -> String {
@@ -741,6 +765,21 @@ mod tests {
         // 非时间戳范围：只显示数字
         let s = u64_text(42);
         assert_eq!(s, "42");
+    }
+
+    #[test]
+    fn u64_text_filetime() {
+        setup();
+        // 2026-01-01 00:00:00 UTC 的 FILETIME：与 Unix 秒/毫秒同一套附日期显示
+        let v = (1_767_225_600u64 + 11_644_473_600) * 10_000_000;
+        let s = u64_text(v);
+        assert!(s.starts_with("134,116,992,000,000,000 → "), "s={s}");
+        assert!(s.contains("2026"), "s={s}");
+
+        // Unix 秒/毫秒域与 FILETIME 域不相交：普通时间戳不受影响
+        assert!(u64_text(1_704_067_200).contains("2024"));
+        // 域外大数只显示数字
+        assert_eq!(u64_text(u64::MAX), with_sep(u64::MAX.to_string()));
     }
 
     #[test]
