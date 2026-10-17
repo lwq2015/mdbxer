@@ -66,6 +66,21 @@ fn guess_at_depth(bytes: &[u8], endian: Endian, depth: usize) -> (String, String
         }
     }
 
+    // Protobuf：已载入协议池时全池试探解码（unknown 字段判别）。wire format
+    // 与随机二进制不可区分，但正确类型解码后 unknown 为空、错误类型几乎必有
+    // unknown——强判别；未载入池/无 0-unknown 候选时静默跳过。限制字节数
+    // 保护表格渲染（大 blob 全池试探代价过高，显示 hex 无损，手动排版可看）。
+    if crate::proto::is_loaded() && bytes.len() <= crate::proto::GUESS_MAX {
+        if let Some((best, 0)) = crate::proto::guess_candidates(bytes)
+            .first()
+            .map(|(n, u)| (n.clone(), *u))
+        {
+            if let Some(s) = crate::proto::decode_compact(&best, bytes) {
+                return (format!("PROTO · {best}"), s);
+            }
+        }
+    }
+
     // 优先可打印 UTF-8 文本（允许 \t \n \r）
     if let Ok(s) = std::str::from_utf8(bytes) {
         if s.chars()

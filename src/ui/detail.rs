@@ -866,6 +866,12 @@ fn kv_card(
                     if let Some((m, inner)) = decomp_copy {
                         ui.ctx()
                             .copy_text(fmt::decode(&inner, m, app.endian, usize::MAX));
+                    } else if let Some(pretty) =
+                        proto_auto_pretty(app.detail.mode_of(is_key), bytes)
+                    {
+                        // Auto + 已载入协议池：试探出 message 类型时按该类型
+                        // 复制 proto3 JSON pretty，与详情显示一致
+                        ui.ctx().copy_text(pretty);
                     } else {
                         // Auto 下完整值是结构化 JSON/BSON/MSGPACK/CBOR 时按对应格式复制
                         //（得到 pretty），与详情显示一致；其余情况按当前实际模式复制原文。
@@ -1170,6 +1176,9 @@ fn kv_card(
         // JSON/BSON 语法着色：手动 Json（合法 JSON）或 Auto 命中结构化 JSON/BSON
         // 时启用；Some 同时给出 Auto 下 pretty 重解码应使用的格式。
         let json_mode = json_color_mode(app.detail.mode_of(is_key), window);
+        // Auto + 已载入协议池：全池试探出 message 类型时按该类型 pretty 渲染
+        //（着色复用 JSON 语法——proto3 JSON mapping 输出即 JSON 文本）
+        let proto_pretty = proto_auto_pretty(app.detail.mode_of(is_key), window);
         // Auto 下压缩容器穿透：解压后内层仍是结构化数据时按内层格式 pretty/着色
         let decomp = (app.detail.mode_of(is_key) == DecodeMode::Auto)
             .then(|| fmt::decompress(window))
@@ -1177,7 +1186,7 @@ fn kv_card(
             .and_then(|(_, inner)| {
                 json_color_mode(DecodeMode::Auto, &inner).map(|m| (m, inner))
             });
-        let syntax_json = json_mode.is_some() || decomp.is_some();
+        let syntax_json = json_mode.is_some() || decomp.is_some() || proto_pretty.is_some();
         // 详情文本区"实际显示"的文本：Auto 命中 JSON/BSON 时改用 pretty。
         // guess 返回的是紧凑原文（保证表格单行预览不被破坏），故这里要重解码一次。
         // 高度估算与下方渲染必须共用这份文本，否则 pretty 后行数变多却仍按紧凑文本
@@ -1189,15 +1198,21 @@ fn kv_card(
                 app.endian,
                 inner.len().saturating_mul(4) + 256,
             ),
-            None => match (json_mode, app.detail.mode_of(is_key)) {
-                (Some(m), DecodeMode::Auto) => fmt::decode(
-                    window,
-                    m,
-                    app.endian,
-                    window.len().saturating_mul(4) + 256,
-                ),
-                _ => text.to_string(),
-            },
+            None => {
+                if let Some(pretty) = proto_pretty {
+                    pretty
+                } else {
+                    match (json_mode, app.detail.mode_of(is_key)) {
+                        (Some(m), DecodeMode::Auto) => fmt::decode(
+                            window,
+                            m,
+                            app.endian,
+                            window.len().saturating_mul(4) + 256,
+                        ),
+                        _ => text.to_string(),
+                    }
+                }
+            }
         };
         let syntax_palette = json_palette(ui.visuals().dark_mode);
         // hex 份额不在这里定：渲染时按游标实测回填（见下），此处只分文本区
@@ -1514,6 +1529,21 @@ fn json_color_mode(mode: DecodeMode, window: &[u8]) -> Option<DecodeMode> {
         }
         _ => None,
     }
+}
+
+/// Auto 模式 + 已载入协议池：全池试探解码（unknown 字段判别），命中时
+/// 返回按该类型的 proto3 JSON pretty 文本（着色层复用 JSON 语法渲染）。
+/// 未载入池/非 Auto/超长/无 0-unknown 候选时返回 None，走原文本管线。
+fn proto_auto_pretty(mode: DecodeMode, bytes: &[u8]) -> Option<String> {
+    if mode != DecodeMode::Auto || !crate::proto::is_loaded() || bytes.len() > crate::proto::GUESS_MAX
+    {
+        return None;
+    }
+
+    crate::proto::guess_candidates(bytes)
+        .into_iter()
+        .find(|(_, unknown)| *unknown == 0)
+        .and_then(|(name, _)| crate::proto::decode_with(&name, bytes))
 }
 
 /// 对 pretty JSON 文本做轻量词法切分。

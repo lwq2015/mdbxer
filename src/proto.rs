@@ -5,12 +5,17 @@
 //! 按用户选择的 message 类型把字节解码为 JSON 显示。
 //!
 //! 全局状态（进程单例）：已编译的类型池 + 已载入文件列表 + 当前 message 全名。
-//! wire format 与随机二进制不可区分，故不进 Auto 猜测——只在用户显式选择
-//! "proto" 排版时解码；未载入/未选类型/解码失败一律回退 UTF-8 文本。
+//! wire format 与随机二进制不可区分，故"未载入协议池"时不进 Auto 猜测；
+//! 已载入后可全池试探解码（unknown 字段判别，见 [`guess_candidates`]），
+//! 手动排版按 current 类型解码；未载入/未选类型/解码失败回退 UTF-8 文本。
 
 use prost_reflect::{DescriptorPool, DynamicMessage};
 use std::path::Path;
 use std::sync::RwLock;
+
+/// 参与自动猜测的字节上限：全池试探解码的代价随值大小线性增长，
+/// 表格渲染每行都会调用；超过上限的值不猜（显示 hex，手动排版仍可看）。
+pub const GUESS_MAX: usize = 2 * 1024;
 
 /// 已编译的类型池（None = 未载入任何 .proto）。
 static POOL: RwLock<Option<DescriptorPool>> = RwLock::new(None);
@@ -87,6 +92,57 @@ pub fn files() -> Vec<String> {
     FILES.read().unwrap().clone()
 }
 
+/// 是否已载入协议池。
+pub fn is_loaded() -> bool {
+    POOL.read().unwrap().is_some()
+}
+
+/// 自动猜测候选：对池内全部 message 类型（跳过 map entry 内部类型）
+/// 试探解码，返回 (类型全名, unknown 字段个数) 按 unknown 升序。
+///
+/// 原理：proto3 解码容忍未知字段——错误类型解码"成功"时字段几乎都落进
+/// unknown；正确类型 unknown 为空。因此 unknown == 0 是强判别信号；
+/// 全部候选都有 unknown 时（随机二进制/截断数据）调用方应放弃猜测。
+pub fn guess_candidates(bytes: &[u8]) -> Vec<(String, usize)> {
+    if bytes.is_empty() {
+        return Vec::new();
+    }
+
+    let pool = POOL.read().unwrap();
+    let Some(p) = pool.as_ref() else {
+        return Vec::new();
+    };
+
+    let mut out: Vec<(String, usize)> = Vec::new();
+
+    for m in p.all_messages() {
+        if m.is_map_entry() {
+            continue;
+        }
+
+        let Ok(msg) = DynamicMessage::decode(m.clone(), bytes) else {
+            continue;
+        };
+
+        let unknown = msg.unknown_fields().count();
+        out.push((m.full_name().to_string(), unknown));
+    }
+
+    out.sort_by_key(|(_, unknown)| *unknown);
+    out
+}
+
+/// 按指定 message 全名解码为 DynamicMessage（内部共用）。
+fn decode_msg(name: &str, bytes: &[u8]) -> Option<DynamicMessage> {
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let pool = POOL.read().unwrap();
+    let desc = pool.as_ref()?.get_message_by_name(name)?;
+    DynamicMessage::decode(desc, bytes).ok()
+}
+
 /// 按当前 message 类型解码字节为 pretty JSON。
 /// 未载入/未选类型/解码失败 → None（调用方回退 UTF-8 文本）。
 pub fn decode_current(bytes: &[u8]) -> Option<String> {
@@ -100,10 +156,18 @@ pub fn decode_with(name: &str, bytes: &[u8]) -> Option<String> {
         return Some(String::new());
     }
 
-    let pool = POOL.read().unwrap();
-    let desc = pool.as_ref()?.get_message_by_name(name)?;
-    let msg = DynamicMessage::decode(desc, bytes).ok()?;
+    let msg = decode_msg(name, bytes)?;
     serde_json::to_string_pretty(&msg).ok()
+}
+
+/// 按指定 message 全名解码字节为紧凑 JSON（单行，表格 Auto 列预览用）。
+pub fn decode_compact(name: &str, bytes: &[u8]) -> Option<String> {
+    if bytes.is_empty() {
+        return Some(String::new());
+    }
+
+    let msg = decode_msg(name, bytes)?;
+    serde_json::to_string(&msg).ok()
 }
 
 #[cfg(test)]
@@ -170,6 +234,54 @@ mod tests {
         assert!(load_files(&[&bad]).is_err());
         assert!(message_names().contains(&"t.Msg".to_string()));
 
+        set_current(None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn guess_candidates_and_auto_label() {
+        let _g = TEST_LOCK.lock().unwrap();
+
+        let dir = std::env::temp_dir().join(format!("mdbxer_proto_guess_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let path = dir.join("g.proto");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"syntax = "proto3"; package t2;"#,
+                "\n",
+                r#"message A { int32 x = 1; }"#,
+                "\n",
+                r#"message B { string y = 2; }"#,
+            ),
+        )
+        .unwrap();
+        load_files(&[&path]).unwrap();
+        assert!(is_loaded());
+
+        // field1 varint 42：A 全部已知（unknown=0）排第一；B 无 field1，
+        // 字节落进 unknown（unknown>0）
+        let bytes = [0x08, 0x2A];
+        let cands = guess_candidates(&bytes);
+        assert_eq!(cands[0], ("t2.A".to_string(), 0), "cands={cands:?}");
+        assert!(cands.iter().any(|(n, u)| n == "t2.B" && *u > 0));
+
+        // Auto 集成：fmt::guess 标签带类型全名，文本为紧凑 JSON
+        let (label, text) = crate::fmt::guess(&bytes, crate::fmt::Endian::Little);
+        assert_eq!(label, "PROTO · t2.A", "label={label}");
+        assert_eq!(text, r#"{"x":42}"#, "text={text}");
+
+        // 紧凑/pretty 两个出口
+        assert_eq!(decode_compact("t2.A", &bytes).as_deref(), Some(r#"{"x":42}"#));
+        assert!(decode_with("t2.A", &bytes).unwrap().contains("\n"));
+
+        // 截断的 varint：解码失败 → 无候选；fmt::guess 不猜 proto
+        assert!(guess_candidates(&[0x08]).is_empty());
+        let (label2, _) = crate::fmt::guess(&[0x08], crate::fmt::Endian::Little);
+        assert!(!label2.starts_with("PROTO"), "label2={label2}");
+
+        // 空池（未载入时）——这里已载入，验证清理路径即可
         set_current(None);
         let _ = std::fs::remove_dir_all(&dir);
     }
