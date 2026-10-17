@@ -103,6 +103,12 @@ pub struct UiPrefs {
     /// 导出格式（csv/json）
     #[serde(default)]
     pub export_format: Option<String>,
+    /// 已载入的 .proto 文件路径列表（Protobuf 动态解码）
+    #[serde(default)]
+    pub proto_files: Option<Vec<String>>,
+    /// Protobuf 当前 message 类型全名
+    #[serde(default)]
+    pub proto_msg: Option<String>,
 }
 
 /// 一个库的独立记录。
@@ -252,6 +258,20 @@ pub fn save_ui_prefs(p: &UiPrefs) {
     write_config(|c| c.ui = p.clone());
 }
 
+/// 读取 Protobuf 偏好：(已载入 .proto 文件列表, 当前 message 全名)。
+pub fn load_proto_prefs() -> (Vec<String>, Option<String>) {
+    let ui = read_config().ui;
+    (ui.proto_files.unwrap_or_default(), ui.proto_msg)
+}
+
+/// 保存 Protobuf 偏好（文件列表 + 当前 message 全名）。
+pub fn save_proto_prefs(files: &[String], msg: Option<&str>) {
+    write_config(|c| {
+        c.ui.proto_files = Some(files.to_vec());
+        c.ui.proto_msg = msg.map(|s| s.to_string());
+    });
+}
+
 /// 读取某库的记录；无记录时返回以归一化路径初始化的默认记录。
 pub fn load_per_db(path: &str) -> PerDbRecord {
     let norm = crate::history::normalize_path(path);
@@ -371,6 +391,8 @@ mod tests {
             detail_visible: Some(true),
             table_sort: Some("count_desc".to_string()),
             export_format: Some("json".to_string()),
+            proto_files: Some(vec!["a.proto".to_string()]),
+            proto_msg: Some("pkg.Msg".to_string()),
         };
 
         let s = serde_json::to_string(&p).unwrap();
@@ -388,6 +410,8 @@ mod tests {
         assert_eq!(back.detail_visible, Some(true));
         assert_eq!(back.table_sort.as_deref(), Some("count_desc"));
         assert_eq!(back.export_format.as_deref(), Some("json"));
+        assert_eq!(back.proto_files.as_deref(), Some(["a.proto".to_string()].as_slice()));
+        assert_eq!(back.proto_msg.as_deref(), Some("pkg.Msg"));
     }
 
     #[test]
@@ -407,6 +431,8 @@ mod tests {
         assert!(back.detail_visible.is_none());
         assert!(back.table_sort.is_none());
         assert!(back.export_format.is_none());
+        assert!(back.proto_files.is_none());
+        assert!(back.proto_msg.is_none());
     }
 
     #[test]

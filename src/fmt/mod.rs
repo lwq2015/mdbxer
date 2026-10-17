@@ -95,10 +95,12 @@ pub enum DecodeMode {
     Json,
     /// BSON 文档 → 宽松扩展 JSON 显示（非法 BSON 回退 UTF-8 文本）
     Bson,
+    /// Protobuf 动态解码为 JSON（需载入 .proto 并选择 message 类型；失败回退 UTF-8 文本）
+    Proto,
 }
 
 impl DecodeMode {
-    pub const ALL: [DecodeMode; 23] = [
+    pub const ALL: [DecodeMode; 24] = [
         DecodeMode::Auto,
         DecodeMode::Utf8,
         DecodeMode::Utf16Le,
@@ -122,6 +124,7 @@ impl DecodeMode {
         DecodeMode::Uuid,
         DecodeMode::Json,
         DecodeMode::Bson,
+        DecodeMode::Proto,
     ];
 
     /// 下拉框显示文本（"自动"随界面语言；类型名为国际通用写法不翻译）。
@@ -160,6 +163,7 @@ impl DecodeMode {
             DecodeMode::Uuid => "uuid".to_string(),
             DecodeMode::Json => "json".to_string(),
             DecodeMode::Bson => "bson".to_string(),
+            DecodeMode::Proto => "proto".to_string(),
         }
     }
 
@@ -199,6 +203,7 @@ impl DecodeMode {
             DecodeMode::Uuid => "uuid",
             DecodeMode::Json => "json",
             DecodeMode::Bson => "bson",
+            DecodeMode::Proto => "proto",
         }
     }
 
@@ -236,6 +241,7 @@ impl DecodeMode {
             "uuid" => DecodeMode::Uuid,
             "json" => DecodeMode::Json,
             "bson" => DecodeMode::Bson,
+            "proto" => DecodeMode::Proto,
 
             // 未知值回退 Auto
             _ => DecodeMode::Auto,
@@ -284,6 +290,7 @@ impl DecodeMode {
             DecodeMode::Uuid => "uuid".to_string(),
             DecodeMode::Json => "JSON".to_string(),
             DecodeMode::Bson => "BSON".to_string(),
+            DecodeMode::Proto => "PROTO".to_string(),
         })
     }
 }
@@ -325,7 +332,7 @@ mod tests {
 
     #[test]
     fn decode_mode_all_complete() {
-        assert_eq!(DecodeMode::ALL.len(), 23);
+        assert_eq!(DecodeMode::ALL.len(), 24);
     }
 
     #[test]

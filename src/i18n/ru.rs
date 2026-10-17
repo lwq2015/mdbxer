@@ -28,6 +28,10 @@ pub(super) const RU: I18n = I18n {
     mode_dir: "Режим каталога",
 
     mode_auto: "Авто",
+    proto_load: "Загрузить .proto",
+    proto_load_tip: "Загрузить файлы .proto (можно несколько) и скомпилировать все типы message; запоминается глобально и сохраняется после перезапуска",
+    proto_pick: "Выбрать тип message",
+    proto_no_types: "(.proto не загружен)",
 
     tables_title: "Таблицы (subDB)",
     filter_hint: "Фильтр таблиц",

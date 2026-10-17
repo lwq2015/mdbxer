@@ -71,6 +71,8 @@ pub struct DetailState {
     pub hex_val_fp: Option<(usize, usize, Option<usize>, usize)>,
     /// Value 卡片 hex 视图选区
     pub hex_val_sel: Option<(usize, usize)>,
+    /// Protobuf 载入 .proto 失败的错误信息（会话态，成功载入后清空）
+    pub proto_err: Option<String>,
 }
 
 impl Default for DetailState {
@@ -109,6 +111,8 @@ impl Default for DetailState {
             hex_key_sel: None,
             hex_val_fp: None,
             hex_val_sel: None,
+
+            proto_err: None,
         }
     }
 }
@@ -880,6 +884,67 @@ fn kv_card(
                 }
             });
         });
+
+        // Protobuf：message 类型选择 + .proto 载入。类型池与当前选择是全局的
+        // （Key/Value 两卡共用、重启沿用），仅在选择 proto 排版时显示本行。
+        if app.detail.mode_of(is_key) == DecodeMode::Proto {
+            ui.horizontal(|ui| {
+                let names = crate::proto::message_names();
+                let mut cur = crate::proto::current();
+                let sel_text = cur.clone().unwrap_or_else(|| t.proto_pick.to_string());
+
+                // message 类型下拉（全名 pkg.Msg；空池显示占位项）
+                let ir = egui::ComboBox::from_id_salt(("proto_type", is_key))
+                    .selected_text(sel_text)
+                    .width(180.0)
+                    .height(430.0)
+                    .show_ui(ui, |ui| {
+                        if names.is_empty() {
+                            ui.add_enabled(false, egui::Label::new(t.proto_no_types));
+                        }
+                        for n in &names {
+                            if ui.selectable_value(&mut cur, Some(n.clone()), n).changed() {
+                                crate::proto::set_current(cur.clone());
+                                crate::config::save_proto_prefs(
+                                    &crate::proto::files(),
+                                    cur.as_deref(),
+                                );
+                            }
+                        }
+                    });
+                ir.response.on_hover_text(t.proto_pick);
+
+                // 载入 .proto（可多选；失败保留旧池并显示错误）
+                if ui
+                    .small_button(t.proto_load)
+                    .on_hover_text(t.proto_load_tip)
+                    .clicked()
+                {
+                    if let Some(paths) = rfd::FileDialog::new()
+                        .add_filter("Protobuf", &["proto"])
+                        .pick_files()
+                    {
+                        match crate::proto::load_files(&paths) {
+                            Ok(_) => {
+                                app.detail.proto_err = None;
+                                crate::config::save_proto_prefs(
+                                    &crate::proto::files(),
+                                    crate::proto::current().as_deref(),
+                                );
+                            }
+                            Err(e) => app.detail.proto_err = Some(e),
+                        }
+                    }
+                }
+
+                // 载入失败提示：截断显示，hover 看全文
+                if let Some(e) = &app.detail.proto_err {
+                    let short: String = e.chars().take(60).collect();
+                    ui.label(egui::RichText::new(format!("⚠ {short}")).small().weak())
+                        .on_hover_text(e);
+                }
+            });
+        }
 
         // 大字段分段：固定放在标题行正下方，避免随字节数/多值导航行数上下位移。
         // 每段 fmt::PAGE_BYTES 字节，超出时显示导航条。

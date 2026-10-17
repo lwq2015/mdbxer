@@ -112,6 +112,14 @@ pub struct I18n {
 
     // ── 解码格式 ──
     pub mode_auto: &'static str,
+    /// Protobuf：载入 .proto 按钮
+    pub proto_load: &'static str,
+    /// Protobuf：载入按钮 hover 提示
+    pub proto_load_tip: &'static str,
+    /// Protobuf：类型下拉未选时的占位文本
+    pub proto_pick: &'static str,
+    /// Protobuf：未载入 .proto 时类型下拉的占位项
+    pub proto_no_types: &'static str,
 
     // ── 左栏 ──
     pub tables_title: &'static str,

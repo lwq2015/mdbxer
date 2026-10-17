@@ -16,6 +16,7 @@ mod export;
 mod fmt;
 mod history;
 mod i18n;
+mod proto;
 mod ui;
 
 /// 程序入口：确定界面语言、设置窗口选项、加载 CJK 字体、启动 eframe 事件循环。

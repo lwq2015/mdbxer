@@ -28,6 +28,10 @@ pub(super) const ZH: I18n = I18n {
     mode_dir: "目录模式",
 
     mode_auto: "自动",
+    proto_load: "载入 .proto",
+    proto_load_tip: "载入 .proto 文件（可多选），编译全部 message 类型；全局记忆，重启沿用",
+    proto_pick: "选择 message 类型",
+    proto_no_types: "（未载入 .proto）",
 
     tables_title: "表 (subDB)",
     filter_hint: "过滤表名",

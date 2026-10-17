@@ -28,6 +28,10 @@ pub(super) const EN: I18n = I18n {
     mode_dir: "Folder mode",
 
     mode_auto: "Auto",
+    proto_load: "Load .proto",
+    proto_load_tip: "Load .proto files (multi-select) and compile all message types; remembered globally across restarts",
+    proto_pick: "Pick message type",
+    proto_no_types: "(no .proto loaded)",
 
     tables_title: "Tables (subDB)",
     filter_hint: "Filter tables",

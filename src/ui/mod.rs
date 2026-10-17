@@ -513,6 +513,16 @@ impl MdbxerApp {
             crate::fmt::set_thousands_sep(ts);
         }
 
+        // Protobuf 类型池：恢复上次载入的 .proto 文件与 message 选择（失败静默跳过）
+        let (proto_files, proto_msg) = crate::config::load_proto_prefs();
+        if !proto_files.is_empty() {
+            let paths: Vec<std::path::PathBuf> =
+                proto_files.iter().map(std::path::PathBuf::from).collect();
+            if crate::proto::load_files(&paths).is_ok() {
+                crate::proto::set_current(proto_msg);
+            }
+        }
+
         let cell_max = prefs
             .cell_max
             .filter(|v| [64usize, 128, 256, 512, 1024, 4096].contains(v))
@@ -1880,6 +1890,10 @@ impl MdbxerApp {
 
             table_sort: Some(self.table_sort.as_str().to_string()),
             export_format: Some(self.export_format.ext().to_string()),
+
+            // Protobuf 状态是全局的（类型池单例），保存时原样写回，避免覆盖丢失
+            proto_files: Some(crate::proto::files()),
+            proto_msg: crate::proto::current(),
         }
     }
 

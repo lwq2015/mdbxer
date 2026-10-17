@@ -163,6 +163,9 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) 
         DecodeMode::Uuid => uuid_text(bytes),
         DecodeMode::Json => json_text(bytes),
         DecodeMode::Bson => bson_text(bytes),
+        // Protobuf：按全局类型池与当前 message 解码；未载入/失败回退 UTF-8 文本
+        DecodeMode::Proto => crate::proto::decode_current(bytes)
+            .unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned()),
     };
     truncate_chars(s, max_chars)
 }
