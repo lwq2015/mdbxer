@@ -83,7 +83,7 @@ fn guess_at_depth(bytes: &[u8], endian: Endian, depth: usize) -> (String, String
     // 最后按 1/2/4/8 字节解释为整数，其余一律按二进制展示
     let sfx = endian.suffix();
     // match 保证长度后 try_into 必然成功
-    match bytes.len() {
+    let (label, mut text) = match bytes.len() {
         1 => {
             // 单字节无字节序，标签不带 LE/BE；可打印 ASCII 已被上面的 UTF-8 分支截走
             ("u8".to_string(), value::with_sep(bytes[0].to_string()))
@@ -113,7 +113,22 @@ fn guess_at_depth(bytes: &[u8], endian: Endian, depth: usize) -> (String, String
             (format!("u64 {sfx}"), value::u64_text(v))
         }
         _ => (t.guess_binary.to_string(), value::hex_spaced(bytes)),
+    };
+
+    // 值文本追加可读解读：4 字节 IPv4、16 字节 IPv6 与常见文件魔数。
+    // 8 字节 FILETIME 已由 u64_text 附日期（同一来源，不重复）；6 字节 MAC
+    // 与二进制 hex 原文重复，不标。
+    if matches!(bytes.len(), 4 | 16) {
+        if let Some(h) = addr_hint(bytes, endian) {
+            text = format!("{text} · {h}");
+        }
     }
+
+    if let Some(m) = magic_hint(bytes) {
+        text = format!("{text} · {m}");
+    }
+
+    (label, text)
 }
 
 /// 判断字节是否为"结构化"JSON（对象或数组），用于 Auto 自动识别与详情着色。
@@ -634,6 +649,36 @@ mod tests {
     }
 
     #[test]
+    fn guess_auto_text_appends_hints() {
+        // 4 字节：u32 数值后附 IPv4 解读（192.168.1.1 LE = 0x0101A8C0）
+        let bytes = [192u8, 168, 1, 1];
+        let (label, text) = guess(&bytes, Endian::Little);
+        assert_eq!(label, "u32 LE");
+        assert_eq!(text, "16,885,952 · IPv4 192.168.1.1");
+
+        // 16 字节：二进制 hex 后附 IPv6 解读
+        let v6 = [
+            0x20u8, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+        ];
+        let (label, text) = guess(&v6, Endian::Little);
+        assert_eq!(label, "二进制");
+        assert!(text.starts_with("20 01 0D B8 00"), "text={text}");
+        assert!(text.ends_with("· IPv6 2001:db8::1"), "text={text}");
+
+        // 文件魔数：PNG 签名开头的二进制附格式名（奇数长度使 UTF-16
+        // 启发式直接拒绝，落回二进制分支）
+        let png = [0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00];
+        let (_, text) = guess(&png, Endian::Little);
+        assert!(text.ends_with("· PNG"), "text={text}");
+
+        // 8 字节 FILETIME 已由 u64_text 附日期，不再重复拼 hint
+        let ft = (1_767_225_600u64 + 11_644_473_600) * 10_000_000;
+        let (_, text) = guess(&ft.to_le_bytes(), Endian::Little);
+        assert!(text.contains("→ 2026-"), "text={text}");
+        assert!(!text.contains("FILETIME"), "text={text}");
+    }
+
+    #[test]
     fn addr_hint_ipv4_mac_ipv6() {
         assert_eq!(
             addr_hint(&[192, 168, 1, 1], Endian::Little),
@@ -749,7 +794,8 @@ mod tests {
         let (label, text) = guess(&bytes, Endian::Little);
         assert!(label.contains("u32"));
         assert!(label.contains("LE"));
-        assert_eq!(text, "305,419,896");
+        // 值文本附 IPv4 解读（0x78 0x56 0x34 0x12）
+        assert_eq!(text, "305,419,896 · IPv4 120.86.52.18");
     }
 
     #[test]

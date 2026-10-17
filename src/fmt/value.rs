@@ -161,6 +161,9 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) 
         DecodeMode::Binary => binary_bits(bytes),
         DecodeMode::Base64 => base64_text(bytes),
         DecodeMode::Uuid => uuid_text(bytes),
+        DecodeMode::Mac => mac_text(bytes),
+        DecodeMode::Ip => ip_text(bytes),
+        DecodeMode::Time => time_text(bytes, endian),
         DecodeMode::Json => json_text(bytes),
         DecodeMode::Bson => bson_text(bytes),
         DecodeMode::Msgpack => msgpack_text(bytes),
@@ -346,6 +349,83 @@ fn uuid_text(bytes: &[u8]) -> String {
         bytes[14],
         bytes[15],
     )
+}
+
+/// MAC 地址（仅 6 字节）；其他长度回退 hex + 长度提示。
+fn mac_text(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    if bytes.len() != 6 {
+        let t = crate::i18n::tr();
+        return format!("{} {}", hex_spaced(bytes), t.mac_bad_len);
+    }
+
+    format!(
+        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]
+    )
+}
+
+/// IP 地址（4 字节 IPv4 / 16 字节 IPv6）；其他长度回退 hex + 长度提示。
+/// IPv6 用 std Display（RFC 5952 `::` 压缩、小写）。
+fn ip_text(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    match bytes.len() {
+        4 => format!("{}.{}.{}.{}", bytes[0], bytes[1], bytes[2], bytes[3]),
+        16 => {
+            let arr: [u8; 16] = bytes.try_into().unwrap_or_else(|_| unreachable!());
+            std::net::Ipv6Addr::from(arr).to_string()
+        }
+        _ => {
+            let t = crate::i18n::tr();
+            format!("{} {}", hex_spaced(bytes), t.ip_bad_len)
+        }
+    }
+}
+
+/// 时间戳（4 字节按 Unix 秒 / 8 字节自动判 Unix 秒·毫秒·FILETIME）；
+/// 其他长度回退 hex + 长度提示。u32 秒全域（1970~2106）都有效，直接转；
+/// u64 走 [`u64_text`]（三域判定，域外只显示数字）。
+fn time_text(bytes: &[u8], endian: Endian) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    match bytes.len() {
+        4 => {
+            let arr: [u8; 4] = bytes.try_into().unwrap_or_else(|_| unreachable!());
+            let v = match endian {
+                Endian::Little => u32::from_le_bytes(arr),
+                Endian::Big => u32::from_be_bytes(arr),
+            };
+            // u32 秒全域 1970~2106 均有效，from_timestamp 实际不会为 None
+            let dt = chrono::DateTime::from_timestamp(v as i64, 0)
+                .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+            format!(
+                "{} → {}",
+                with_sep(v.to_string()),
+                dt.with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d %H:%M:%S (%Z%:z)")
+            )
+        }
+        8 => {
+            let arr: [u8; 8] = bytes.try_into().unwrap_or_else(|_| unreachable!());
+            let v = match endian {
+                Endian::Little => u64::from_le_bytes(arr),
+                Endian::Big => u64::from_be_bytes(arr),
+            };
+            u64_text(v)
+        }
+        _ => {
+            let t = crate::i18n::tr();
+            format!("{} {}", hex_spaced(bytes), t.time_bad_len)
+        }
+    }
 }
 
 /// JSON 美化：合法 JSON → pretty；非法 → UTF-8 文本。
@@ -870,6 +950,58 @@ mod tests {
         assert!(decode(&bytes, DecodeMode::Uuid, Endian::Little, 500).contains(t.uuid_bad_len));
         // 空输入为空串
         assert_eq!(decode(&[], DecodeMode::Uuid, Endian::Little, 100), "");
+    }
+
+    #[test]
+    fn decode_mac_ip_time() {
+        setup();
+        let t = crate::i18n::tr();
+
+        // MAC：6 字节大写冒号格式；不符长度回退 hex + 标注
+        let mac = [0x00u8, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E];
+        assert_eq!(
+            decode(&mac, DecodeMode::Mac, Endian::Little, 100),
+            "00:1A:2B:3C:4D:5E"
+        );
+        let s = decode(&[0xABu8; 5], DecodeMode::Mac, Endian::Little, 100);
+        assert!(s.contains(t.mac_bad_len));
+
+        // IP：4 字节 IPv4 / 16 字节 IPv6（RFC 5952 压缩）；不符回退
+        assert_eq!(
+            decode(&[192, 168, 1, 1], DecodeMode::Ip, Endian::Little, 100),
+            "192.168.1.1"
+        );
+        let v6 = [
+            0x20u8, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+        ];
+        assert_eq!(decode(&v6, DecodeMode::Ip, Endian::Little, 100), "2001:db8::1");
+        let s = decode(&[0u8; 8], DecodeMode::Ip, Endian::Little, 100);
+        assert!(s.contains(t.ip_bad_len));
+
+        // 时间：4 字节 Unix 秒（LE）；8 字节自动判秒/毫秒/FILETIME；不符回退
+        let ts = 1_704_067_200u32; // 2024-01-01 00:00:00 UTC
+        let s = decode(&ts.to_le_bytes(), DecodeMode::Time, Endian::Little, 100);
+        assert!(s.starts_with("1,704,067,200 → "), "s={s}");
+        assert!(s.contains("2024"), "s={s}");
+
+        // 8 字节 FILETIME 走三域判定（u64_text 同一套）
+        let ft = (1_767_225_600u64 + 11_644_473_600) * 10_000_000;
+        let s = decode(&ft.to_le_bytes(), DecodeMode::Time, Endian::Little, 100);
+        assert!(s.contains("2026"), "s={s}");
+
+        // 8 字节域外大数：只显示数字
+        assert_eq!(
+            decode(&u64::MAX.to_le_bytes(), DecodeMode::Time, Endian::Little, 100),
+            with_sep(u64::MAX.to_string())
+        );
+
+        let s = decode(&[0u8; 6], DecodeMode::Time, Endian::Little, 100);
+        assert!(s.contains(t.time_bad_len));
+
+        // 空输入为空串
+        assert_eq!(decode(&[], DecodeMode::Mac, Endian::Little, 100), "");
+        assert_eq!(decode(&[], DecodeMode::Ip, Endian::Little, 100), "");
+        assert_eq!(decode(&[], DecodeMode::Time, Endian::Little, 100), "");
     }
 
     #[test]

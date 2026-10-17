@@ -93,6 +93,12 @@ pub enum DecodeMode {
     Base64,
     /// UUID（仅 16 字节；其他长度回退 hex）
     Uuid,
+    /// MAC 地址（仅 6 字节；其他长度回退 hex）
+    Mac,
+    /// IP 地址（4 字节 IPv4 / 16 字节 IPv6；其他长度回退 hex）
+    Ip,
+    /// 时间戳（4 字节按 Unix 秒 / 8 字节自动判 Unix 秒·毫秒·FILETIME；其他长度回退 hex）
+    Time,
     /// JSON 美化（非法 JSON 回退 UTF-8 文本）
     Json,
     /// BSON 文档 → 宽松扩展 JSON 显示（非法 BSON 回退 UTF-8 文本）
@@ -106,7 +112,7 @@ pub enum DecodeMode {
 }
 
 impl DecodeMode {
-    pub const ALL: [DecodeMode; 26] = [
+    pub const ALL: [DecodeMode; 29] = [
         DecodeMode::Auto,
         DecodeMode::Utf8,
         DecodeMode::Utf16Le,
@@ -128,6 +134,9 @@ impl DecodeMode {
         DecodeMode::Binary,
         DecodeMode::Base64,
         DecodeMode::Uuid,
+        DecodeMode::Mac,
+        DecodeMode::Ip,
+        DecodeMode::Time,
         DecodeMode::Json,
         DecodeMode::Bson,
         DecodeMode::Msgpack,
@@ -169,6 +178,9 @@ impl DecodeMode {
             // 编码文本类
             DecodeMode::Base64 => "base64".to_string(),
             DecodeMode::Uuid => "uuid".to_string(),
+            DecodeMode::Mac => "mac".to_string(),
+            DecodeMode::Ip => "ip".to_string(),
+            DecodeMode::Time => "time".to_string(),
             DecodeMode::Json => "json".to_string(),
             DecodeMode::Bson => "bson".to_string(),
             DecodeMode::Msgpack => "msgpack".to_string(),
@@ -211,6 +223,9 @@ impl DecodeMode {
             // 编码文本类
             DecodeMode::Base64 => "b64",
             DecodeMode::Uuid => "uuid",
+            DecodeMode::Mac => "mac",
+            DecodeMode::Ip => "ip",
+            DecodeMode::Time => "time",
             DecodeMode::Json => "json",
             DecodeMode::Bson => "bson",
             DecodeMode::Msgpack => "msgpack",
@@ -251,6 +266,9 @@ impl DecodeMode {
             // 编码文本类
             "b64" => DecodeMode::Base64,
             "uuid" => DecodeMode::Uuid,
+            "mac" => DecodeMode::Mac,
+            "ip" => DecodeMode::Ip,
+            "time" => DecodeMode::Time,
             "json" => DecodeMode::Json,
             "bson" => DecodeMode::Bson,
             "msgpack" => DecodeMode::Msgpack,
@@ -302,6 +320,9 @@ impl DecodeMode {
             // 编码文本类
             DecodeMode::Base64 => "base64".to_string(),
             DecodeMode::Uuid => "uuid".to_string(),
+            DecodeMode::Mac => "mac".to_string(),
+            DecodeMode::Ip => "ip".to_string(),
+            DecodeMode::Time => "time".to_string(),
             DecodeMode::Json => "JSON".to_string(),
             DecodeMode::Bson => "BSON".to_string(),
             DecodeMode::Msgpack => "MSGPACK".to_string(),
@@ -348,7 +369,7 @@ mod tests {
 
     #[test]
     fn decode_mode_all_complete() {
-        assert_eq!(DecodeMode::ALL.len(), 26);
+        assert_eq!(DecodeMode::ALL.len(), 29);
     }
 
     #[test]

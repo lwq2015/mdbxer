@@ -336,6 +336,10 @@ pub struct I18n {
     pub padded: &'static str,
     /// uuid 模式输入非 16 字节时的标注
     pub uuid_bad_len: &'static str,
+    /// mac/ip/time 手动格式长度不符提示
+    pub mac_bad_len: &'static str,
+    pub ip_bad_len: &'static str,
+    pub time_bad_len: &'static str,
     pub guess_empty_label: &'static str,
     pub guess_empty_sym: &'static str,
     pub guess_utf8: &'static str,
