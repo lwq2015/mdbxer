@@ -1,5 +1,5 @@
 // mdbxer 测试协议：UI Protobuf 排版载入本文件后，
-// 选择 mdbxer.test.Simple 或 mdbxer.test.Mixed 即可解码 proto_* 样本。
+// 选择 mdbxer.test.* 任意 message 即可解码 proto_* 样本。
 syntax = "proto3";
 
 package mdbxer.test;
@@ -19,6 +19,57 @@ enum Status {
   STATUS_UNKNOWN = 0;
   STATUS_OK = 1;
   STATUS_FAIL = 2;
+}
+
+// 全 15 种标量。注意 proto3 默认值不序列化（JSON 中字段缺席），
+// 故样本全部填非零值；int/sint 负数可对照 varint 与 zigzag 编码差异。
+message Scalars {
+  int32 int32_v = 1;
+  int64 int64_v = 2;
+  uint32 uint32_v = 3;
+  uint64 uint64_v = 4;
+  sint32 sint32_v = 5;
+  sint64 sint64_v = 6;
+  fixed32 fixed32_v = 7;
+  fixed64 fixed64_v = 8;
+  sfixed32 sfixed32_v = 9;
+  sfixed64 sfixed64_v = 10;
+  float float_v = 11;
+  double double_v = 12;
+  bool bool_v = 13;
+  string string_v = 14;
+  bytes bytes_v = 15;
+}
+
+// oneof 三选一 + optional 显式 presence + repeated enum + 嵌套消息定义。
+message Shapes {
+  message Circle {
+    double radius = 1;
+  }
+
+  message Rect {
+    double w = 1;
+    double h = 2;
+  }
+
+  // optional：设置与否决定 JSON 中字段是否出现（显式 field presence）
+  optional string label = 1;
+
+  // oneof：同一时刻至多一个成员被设置
+  oneof kind {
+    Circle circle = 2;
+    Rect rect = 3;
+    string raw = 4;
+  }
+
+  repeated Status history = 5;
+}
+
+// map 三种值型：字符串值 / 枚举值 / 消息值（int32 键展示非字符串键序）。
+message Tables {
+  map<string, string> labels = 1;
+  map<int32, Status> states = 2;
+  map<string, Nested> rows = 3;
 }
 
 message Mixed {

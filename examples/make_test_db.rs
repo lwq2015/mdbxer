@@ -13,11 +13,13 @@ use libmdbx::{Database, DatabaseOptions, NoWriteMap, TableFlags, WriteFlags};
 use std::io::Write;
 use std::path::Path;
 
-/// 测试协议：覆盖 proto3 常见类型（标量/bytes/enum/repeated/嵌套消息/map）。
+/// 测试协议：覆盖 proto3 常见类型与结构——全 15 种标量（含 zigzag/fixed
+/// 变体与负数）、enum、repeated（字符串/整数/enum/消息）、嵌套消息、
+/// map（标量值/枚举值/消息值）、oneof、optional 显式 presence。
 /// Simple 与 json_object / bson_simple / msgpack_simple 同内容，
 /// 可对照 JSON/BSON/MSGPACK/CBOR/PROTO 五种排版输出。
 const TEST_PROTO: &str = r#"// mdbxer 测试协议：UI Protobuf 排版载入本文件后，
-// 选择 mdbxer.test.Simple 或 mdbxer.test.Mixed 即可解码 proto_* 样本。
+// 选择 mdbxer.test.* 任意 message 即可解码 proto_* 样本。
 syntax = "proto3";
 
 package mdbxer.test;
@@ -37,6 +39,57 @@ enum Status {
   STATUS_UNKNOWN = 0;
   STATUS_OK = 1;
   STATUS_FAIL = 2;
+}
+
+// 全 15 种标量。注意 proto3 默认值不序列化（JSON 中字段缺席），
+// 故样本全部填非零值；int/sint 负数可对照 varint 与 zigzag 编码差异。
+message Scalars {
+  int32 int32_v = 1;
+  int64 int64_v = 2;
+  uint32 uint32_v = 3;
+  uint64 uint64_v = 4;
+  sint32 sint32_v = 5;
+  sint64 sint64_v = 6;
+  fixed32 fixed32_v = 7;
+  fixed64 fixed64_v = 8;
+  sfixed32 sfixed32_v = 9;
+  sfixed64 sfixed64_v = 10;
+  float float_v = 11;
+  double double_v = 12;
+  bool bool_v = 13;
+  string string_v = 14;
+  bytes bytes_v = 15;
+}
+
+// oneof 三选一 + optional 显式 presence + repeated enum + 嵌套消息定义。
+message Shapes {
+  message Circle {
+    double radius = 1;
+  }
+
+  message Rect {
+    double w = 1;
+    double h = 2;
+  }
+
+  // optional：设置与否决定 JSON 中字段是否出现（显式 field presence）
+  optional string label = 1;
+
+  // oneof：同一时刻至多一个成员被设置
+  oneof kind {
+    Circle circle = 2;
+    Rect rect = 3;
+    string raw = 4;
+  }
+
+  repeated Status history = 5;
+}
+
+// map 三种值型：字符串值 / 枚举值 / 消息值（int32 键展示非字符串键序）。
+message Tables {
+  map<string, string> labels = 1;
+  map<int32, Status> states = 2;
+  map<string, Nested> rows = 3;
 }
 
 message Mixed {
@@ -120,9 +173,82 @@ fn proto_samples() -> Vec<(Vec<u8>, Vec<u8>)> {
         ),
     );
 
+    // proto_scalars：全 15 种标量，负数对照 int varint 与 sint zigzag 编码，
+    // fixed* 展示定宽字节序，string/bytes 含中文与二进制
+    let mut scalars = DynamicMessage::new(desc("mdbxer.test.Scalars"));
+    scalars.set_field_by_name("int32_v", Value::I32(-1));
+    scalars.set_field_by_name("int64_v", Value::I64(-2));
+    scalars.set_field_by_name("uint32_v", Value::U32(4_000_000_000));
+    scalars.set_field_by_name("uint64_v", Value::U64(12_345_678_901_234_567_890));
+    scalars.set_field_by_name("sint32_v", Value::I32(-3));
+    scalars.set_field_by_name("sint64_v", Value::I64(-4));
+    scalars.set_field_by_name("fixed32_v", Value::U32(0xDEAD_BEEF));
+    scalars.set_field_by_name("fixed64_v", Value::U64(0x0123_4567_89AB_CDEF));
+    scalars.set_field_by_name("sfixed32_v", Value::I32(-5));
+    scalars.set_field_by_name("sfixed64_v", Value::I64(-6));
+    scalars.set_field_by_name("float_v", Value::F32(2.71828_f32));
+    scalars.set_field_by_name("double_v", Value::F64(-0.577));
+    scalars.set_field_by_name("bool_v", Value::Bool(true));
+    scalars.set_field_by_name("string_v", Value::String("你好 proto3".to_string()));
+    scalars.set_field_by_name("bytes_v", Value::Bytes(vec![0x00, 0xFF, 0x10, 0x80].into()));
+
+    // proto_shapes：oneof（设置 circle 分支）+ optional 显式 presence +
+    // repeated enum；嵌套 message 类型（Shapes.Circle）
+    let mut circle = DynamicMessage::new(desc("mdbxer.test.Shapes.Circle"));
+    circle.set_field_by_name("radius", Value::F64(2.5));
+
+    let mut shapes = DynamicMessage::new(desc("mdbxer.test.Shapes"));
+    shapes.set_field_by_name("label", Value::String("圆".to_string()));
+    shapes.set_field_by_name("circle", Value::Message(circle));
+    shapes.set_field_by_name(
+        "history",
+        Value::List(vec![
+            Value::EnumNumber(1),
+            Value::EnumNumber(2),
+            Value::EnumNumber(1),
+        ]),
+    );
+
+    // proto_tables：map 三种值型——字符串值 / 枚举值（int32 键）/ 消息值
+    let mut row_nested = DynamicMessage::new(desc("mdbxer.test.Nested"));
+    row_nested.set_field_by_name("x", Value::I32(7));
+    row_nested.set_field_by_name("y", Value::F64(8.25));
+
+    let mut tables = DynamicMessage::new(desc("mdbxer.test.Tables"));
+    tables.set_field_by_name(
+        "labels",
+        Value::Map(
+            [("主表".to_string(), Value::String("main".to_string()))]
+                .into_iter()
+                .map(|(k, v)| (MapKey::String(k), v))
+                .collect(),
+        ),
+    );
+    tables.set_field_by_name(
+        "states",
+        Value::Map(
+            [(1, Value::EnumNumber(1)), (2, Value::EnumNumber(2))]
+                .into_iter()
+                .map(|(k, v)| (MapKey::I32(k), v))
+                .collect(),
+        ),
+    );
+    tables.set_field_by_name(
+        "rows",
+        Value::Map(
+            [("r1".to_string(), Value::Message(row_nested))]
+                .into_iter()
+                .map(|(k, v)| (MapKey::String(k), v))
+                .collect(),
+        ),
+    );
+
     vec![
         (b"proto_simple".to_vec(), simple.encode_to_vec()),
         (b"proto_mixed".to_vec(), mixed.encode_to_vec()),
+        (b"proto_scalars".to_vec(), scalars.encode_to_vec()),
+        (b"proto_shapes".to_vec(), shapes.encode_to_vec()),
+        (b"proto_tables".to_vec(), tables.encode_to_vec()),
     ]
 }
 
