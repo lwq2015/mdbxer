@@ -2187,6 +2187,7 @@ dependencies = [
  "libmdbx",
  "lz4_flex",
  "lzma-rs",
+ "prost",
  "prost-reflect",
  "protox",
  "rfd",

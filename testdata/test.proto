@@ -1,0 +1,37 @@
+// mdbxer 测试协议：UI Protobuf 排版载入本文件后，
+// 选择 mdbxer.test.Simple 或 mdbxer.test.Mixed 即可解码 proto_* 样本。
+syntax = "proto3";
+
+package mdbxer.test;
+
+message Simple {
+  string name = 1;
+  int64 version = 2;
+  bool active = 3;
+}
+
+message Nested {
+  int32 x = 1;
+  double y = 2;
+}
+
+enum Status {
+  STATUS_UNKNOWN = 0;
+  STATUS_OK = 1;
+  STATUS_FAIL = 2;
+}
+
+message Mixed {
+  string title = 1;
+  int32 count = 2;
+  int64 big = 3;
+  float pi = 4;
+  double ratio = 5;
+  bool ok = 6;
+  bytes blob = 7;
+  Status status = 8;
+  repeated string tags = 9;
+  repeated int32 nums = 10;
+  Nested nested = 11;
+  map<string, int32> attrs = 12;
+}

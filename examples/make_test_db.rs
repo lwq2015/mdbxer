@@ -13,9 +13,125 @@ use libmdbx::{Database, DatabaseOptions, NoWriteMap, TableFlags, WriteFlags};
 use std::io::Write;
 use std::path::Path;
 
+/// 测试协议：覆盖 proto3 常见类型（标量/bytes/enum/repeated/嵌套消息/map）。
+/// Simple 与 json_object / bson_simple / msgpack_simple 同内容，
+/// 可对照 JSON/BSON/MSGPACK/CBOR/PROTO 五种排版输出。
+const TEST_PROTO: &str = r#"// mdbxer 测试协议：UI Protobuf 排版载入本文件后，
+// 选择 mdbxer.test.Simple 或 mdbxer.test.Mixed 即可解码 proto_* 样本。
+syntax = "proto3";
+
+package mdbxer.test;
+
+message Simple {
+  string name = 1;
+  int64 version = 2;
+  bool active = 3;
+}
+
+message Nested {
+  int32 x = 1;
+  double y = 2;
+}
+
+enum Status {
+  STATUS_UNKNOWN = 0;
+  STATUS_OK = 1;
+  STATUS_FAIL = 2;
+}
+
+message Mixed {
+  string title = 1;
+  int32 count = 2;
+  int64 big = 3;
+  float pi = 4;
+  double ratio = 5;
+  bool ok = 6;
+  bytes blob = 7;
+  Status status = 8;
+  repeated string tags = 9;
+  repeated int32 nums = 10;
+  Nested nested = 11;
+  map<string, int32> attrs = 12;
+}
+"#;
+
+/// 用 TEST_PROTO 的 schema 动态编码 proto_* 样本（与 UI 同一管线：
+/// protox 编译 → DescriptorPool → DynamicMessage）。
+fn proto_samples() -> Vec<(Vec<u8>, Vec<u8>)> {
+    use prost::Message as _;
+    use prost_reflect::{DescriptorPool, DynamicMessage, MapKey, Value};
+
+    // protox::compile 要求文件路径，写临时目录编译
+    let dir = std::env::temp_dir().join(format!("mdbxer_makedb_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let proto_path = dir.join("test.proto");
+    std::fs::write(&proto_path, TEST_PROTO).expect("write test.proto");
+
+    let fds = protox::compile([&proto_path], [&dir]).expect("compile test.proto");
+    let pool = DescriptorPool::from_file_descriptor_set(fds).expect("descriptor pool");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let desc = |name| pool.get_message_by_name(name).expect("known message");
+
+    // proto_simple：name/version/active，与 json_object 等同内容
+    let mut simple = DynamicMessage::new(desc("mdbxer.test.Simple"));
+    simple.set_field_by_name("name", Value::String("mdbx".to_string()));
+    simple.set_field_by_name("version", Value::I64(1));
+    simple.set_field_by_name("active", Value::Bool(true));
+
+    // proto_mixed：标量/bytes/enum/repeated/嵌套消息/map 全覆盖，
+    // 数值与 bson_mixed/msgpack_mixed 对应
+    let mut nested = DynamicMessage::new(desc("mdbxer.test.Nested"));
+    nested.set_field_by_name("x", Value::I32(1));
+    nested.set_field_by_name("y", Value::F64(-2.5));
+
+    let mut mixed = DynamicMessage::new(desc("mdbxer.test.Mixed"));
+    mixed.set_field_by_name("title", Value::String("混合类型".to_string()));
+    mixed.set_field_by_name("count", Value::I32(42));
+    mixed.set_field_by_name("big", Value::I64(9_000_000_000_000));
+    mixed.set_field_by_name("pi", Value::F32(3.14159_f32));
+    mixed.set_field_by_name("ratio", Value::F64(1.5));
+    mixed.set_field_by_name("ok", Value::Bool(false));
+    mixed.set_field_by_name("blob", Value::Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF].into()));
+    mixed.set_field_by_name("status", Value::EnumNumber(1));
+    mixed.set_field_by_name(
+        "tags",
+        Value::List(vec![
+            Value::String("db".to_string()),
+            Value::String("gui".to_string()),
+        ]),
+    );
+    mixed.set_field_by_name(
+        "nums",
+        Value::List(vec![Value::I32(1), Value::I32(2), Value::I32(300)]),
+    );
+    mixed.set_field_by_name("nested", Value::Message(nested));
+    mixed.set_field_by_name(
+        "attrs",
+        // map 字段的键为 MapKey（字符串键）
+        Value::Map(
+            [
+                ("env".to_string(), Value::I32(1)),
+                ("ver".to_string(), Value::I32(2)),
+            ]
+            .into_iter()
+            .map(|(k, v)| (MapKey::String(k), v))
+            .collect(),
+        ),
+    );
+
+    vec![
+        (b"proto_simple".to_vec(), simple.encode_to_vec()),
+        (b"proto_mixed".to_vec(), mixed.encode_to_vec()),
+    ]
+}
+
 fn main() -> libmdbx::Result<()> {
     let base = Path::new("testdata");
     std::fs::create_dir_all(base).ok();
+
+    // 测试协议：proto_* 样本的 schema，供 UI Protobuf 排版载入
+    std::fs::write(base.join("test.proto"), TEST_PROTO).ok();
 
     // 目录模式：传入目录路径，mdbx 在内部创建 data.mdbx
     let dir_db = base.join("dir_db");
@@ -108,6 +224,10 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
             (-9876543210.5f64).to_le_bytes().to_vec(),
         ),
     ];
+    // proto 样本：TEST_PROTO 动态编码（proto_simple / proto_mixed 各一条）
+    let proto = proto_samples();
+    let (proto_simple, proto_mixed) = (proto[0].1.clone(), proto[1].1.clone());
+
     let entries: Vec<(&[u8], Vec<u8>)> = vec![
         (b"hello", b"world".to_vec()),
         (
@@ -117,6 +237,8 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
         (b"empty_value", Vec::new()),
         (b"ts_seconds", now_s.to_le_bytes().to_vec()),
         (b"ts_millis", now_ms.to_le_bytes().to_vec()),
+        // 4 字节 Unix 秒：手动切到 Time 排版应显示"值 → 日期"
+        (b"ts_seconds_u32", (now_s as u32).to_le_bytes().to_vec()),
         (b"big_blob", (0u8..=255).cycle().take(4096).collect()),
         // 略超一段（64 KiB）：测试分段查看/另存，应分 2 段
         (b"blob_70k", english_blob(70_000)),
@@ -127,6 +249,15 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
             "UTF-16 文本"
                 .encode_utf16()
                 .flat_map(|u| u.to_le_bytes())
+                .collect(),
+        ),
+        // 手动切到 utf16(BE) 排版时应显示同样文本；Auto 也会按字节序
+        // 启发式识别（无 BOM 时打分选 BE）
+        (
+            b"utf16be_text",
+            "UTF-16 文本"
+                .encode_utf16()
+                .flat_map(|u| u.to_be_bytes())
                 .collect(),
         ),
         // 手动切到 gb18030 排版时，应显示简体中文（GBK 是 GB18030 子集）
@@ -303,15 +434,21 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
                 ),
             ])),
         ),
+        // ── Protobuf 样本（需在 UI 载入 testdata/test.proto 后选类型解码）──
+        // proto_simple → mdbxer.test.Simple；proto_mixed → mdbxer.test.Mixed
+        (b"proto_simple", proto_simple.clone()),
+        (b"proto_mixed", proto_mixed.clone()),
         // ── 压缩容器穿透：Auto 应识别魔数并解压，显示 `gzip → JSON` 等 ──
         // 四种算法压同一份紧凑 JSON，可对照未压缩的 json_object
         (b"gz_json_object", gz(JSON_SAMPLE)),
         (b"zstd_json_object", zstd::stream::encode_all(JSON_SAMPLE, 3).unwrap()),
         (b"bz2_json_object", bz2(JSON_SAMPLE)),
         (b"xz_json_object", xz(JSON_SAMPLE)),
-        // ── 地址 / FILETIME 标注：Auto 猜测行应追加解读 ──
+        // ── 地址 / FILETIME 样本：表格 Auto 列值文本应追加解读 ──
         // 4 字节 → `IPv4 192.168.1.1`；6 字节 → `MAC 00:1A:2B:3C:4D:5E`；
-        // 16 字节 → `IPv6 2001:db8::1`；8 字节 → `FILETIME → <本地时间>`
+        // 16 字节 → `IPv6 2001:db8::1`；8 字节 → FILETIME 附本地日期。
+        // 详情猜测行不再标注地址（对任意字节都命中、纯噪音）；
+        // 手动切 mac/ip/time 排版可看对应格式化输出
         (b"ipv4_sample", vec![192, 168, 1, 1]),
         (b"mac_sample", vec![0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E]),
         (
