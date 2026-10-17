@@ -891,15 +891,16 @@ fn kv_card(
                 }
                 // 格式下拉
                 let mut mode = app.detail.mode_of(is_key);
+                let sorted = DecodeMode::sorted_all();
                 let ir = egui::ComboBox::from_id_salt(("detail_mode", is_key))
                     .selected_text(mode.label())
                     .height(430.0)
                     .show_ui(ui, |ui| {
-                        for m in DecodeMode::ALL {
-                            ui.selectable_value(&mut mode, m, m.label());
+                        for m in &sorted {
+                            ui.selectable_value(&mut mode, *m, m.label());
                         }
                     });
-                super::wheel_cycle(ui.ctx(), &ir.response, &DecodeMode::ALL, &mut mode);
+                super::wheel_cycle(ui.ctx(), &ir.response, &sorted, &mut mode);
                 // 详情卡片排版独立于顶栏表格排版：只改本卡片，不回写全局、不存偏好。
                 if app.detail.mode_of(is_key) != mode {
                     app.detail.set_mode(is_key, mode);

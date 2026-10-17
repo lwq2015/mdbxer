@@ -144,6 +144,18 @@ impl DecodeMode {
         DecodeMode::Proto,
     ];
 
+    /// 下拉框展示顺序：Auto（默认项）置顶不参与排序，其余按当前界面语言
+    /// 的 label 排序——label 随语言变化时顺序自动跟随。每次调用重新计算，
+    /// 代价可忽略（29 项）。
+    pub fn sorted_all() -> Vec<DecodeMode> {
+        let mut rest: Vec<DecodeMode> = Self::ALL
+            .into_iter()
+            .filter(|m| *m != Self::Auto)
+            .collect();
+        rest.sort_by(|a, b| a.label().cmp(&b.label()));
+        std::iter::once(Self::Auto).chain(rest).collect()
+    }
+
     /// 下拉框显示文本（"自动"随界面语言；类型名为国际通用写法不翻译）。
     pub fn label(self) -> String {
         match self {
@@ -370,6 +382,22 @@ mod tests {
     #[test]
     fn decode_mode_all_complete() {
         assert_eq!(DecodeMode::ALL.len(), 29);
+    }
+
+    #[test]
+    fn decode_mode_sorted_all_auto_first_rest_by_label() {
+        let sorted = DecodeMode::sorted_all();
+
+        // 全量：29 项一个不少
+        assert_eq!(sorted.len(), DecodeMode::ALL.len());
+
+        // Auto 置顶不参与排序
+        assert_eq!(sorted[0], DecodeMode::Auto);
+
+        // 其余按当前语言 label 升序（排序与界面语言关联）
+        assert!(sorted[1..]
+            .windows(2)
+            .all(|w| w[0].label() <= w[1].label()));
     }
 
     #[test]
