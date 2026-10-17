@@ -350,7 +350,7 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
             (-9876543210.5f64).to_le_bytes().to_vec(),
         ),
     ];
-    // proto 样本：TEST_PROTO 动态编码（proto_simple / proto_mixed 各一条）
+    // proto 样本：TEST_PROTO 动态编码（5 条，见 proto_samples）
     let proto = proto_samples();
     let (proto_simple, proto_mixed) = (proto[0].1.clone(), proto[1].1.clone());
 
@@ -560,8 +560,8 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
                 ),
             ])),
         ),
-        // ── Protobuf 样本（需在 UI 载入 testdata/test.proto 后选类型解码）──
-        // proto_simple → mdbxer.test.Simple；proto_mixed → mdbxer.test.Mixed
+        // ── Protobuf 样本（5 条；UI 载入 testdata/test.proto 后可选类型，
+        //    已载入时 Auto 自动识别）──
         (b"proto_simple", proto_simple.clone()),
         (b"proto_mixed", proto_mixed.clone()),
         // ── 压缩容器穿透：Auto 应识别魔数并解压，显示 `gzip → JSON` 等 ──
