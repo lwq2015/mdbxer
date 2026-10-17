@@ -5,12 +5,14 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+mod compress;
 mod guess;
 mod hexdump;
 mod value;
 
 pub use guess::guess;
-pub(crate) use guess::{is_bson, is_structured_json};
+pub(crate) use compress::decompress;
+pub(crate) use guess::{addr_hint, is_bson, is_cbor, is_msgpack, is_structured_json};
 pub(crate) use hexdump::{
     addr_chars, addr_digits, hex_copy_selection, hex_line, hex_section_chars, mid_gap_index,
 };
@@ -95,12 +97,16 @@ pub enum DecodeMode {
     Json,
     /// BSON 文档 → 宽松扩展 JSON 显示（非法 BSON 回退 UTF-8 文本）
     Bson,
+    /// MessagePack → JSON 显示（非法数据回退 UTF-8 文本）
+    Msgpack,
+    /// CBOR → JSON 显示（非法数据回退 UTF-8 文本）
+    Cbor,
     /// Protobuf 动态解码为 JSON（需载入 .proto 并选择 message 类型；失败回退 UTF-8 文本）
     Proto,
 }
 
 impl DecodeMode {
-    pub const ALL: [DecodeMode; 24] = [
+    pub const ALL: [DecodeMode; 26] = [
         DecodeMode::Auto,
         DecodeMode::Utf8,
         DecodeMode::Utf16Le,
@@ -124,6 +130,8 @@ impl DecodeMode {
         DecodeMode::Uuid,
         DecodeMode::Json,
         DecodeMode::Bson,
+        DecodeMode::Msgpack,
+        DecodeMode::Cbor,
         DecodeMode::Proto,
     ];
 
@@ -163,6 +171,8 @@ impl DecodeMode {
             DecodeMode::Uuid => "uuid".to_string(),
             DecodeMode::Json => "json".to_string(),
             DecodeMode::Bson => "bson".to_string(),
+            DecodeMode::Msgpack => "msgpack".to_string(),
+            DecodeMode::Cbor => "cbor".to_string(),
             DecodeMode::Proto => "proto".to_string(),
         }
     }
@@ -203,6 +213,8 @@ impl DecodeMode {
             DecodeMode::Uuid => "uuid",
             DecodeMode::Json => "json",
             DecodeMode::Bson => "bson",
+            DecodeMode::Msgpack => "msgpack",
+            DecodeMode::Cbor => "cbor",
             DecodeMode::Proto => "proto",
         }
     }
@@ -241,6 +253,8 @@ impl DecodeMode {
             "uuid" => DecodeMode::Uuid,
             "json" => DecodeMode::Json,
             "bson" => DecodeMode::Bson,
+            "msgpack" => DecodeMode::Msgpack,
+            "cbor" => DecodeMode::Cbor,
             "proto" => DecodeMode::Proto,
 
             // 未知值回退 Auto
@@ -290,6 +304,8 @@ impl DecodeMode {
             DecodeMode::Uuid => "uuid".to_string(),
             DecodeMode::Json => "JSON".to_string(),
             DecodeMode::Bson => "BSON".to_string(),
+            DecodeMode::Msgpack => "MSGPACK".to_string(),
+            DecodeMode::Cbor => "CBOR".to_string(),
             DecodeMode::Proto => "PROTO".to_string(),
         })
     }
@@ -332,7 +348,7 @@ mod tests {
 
     #[test]
     fn decode_mode_all_complete() {
-        assert_eq!(DecodeMode::ALL.len(), 24);
+        assert_eq!(DecodeMode::ALL.len(), 26);
     }
 
     #[test]

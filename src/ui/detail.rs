@@ -854,15 +854,31 @@ fn kv_card(
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(t.copy).clicked() {
-                    // Auto 下完整值是结构化 JSON/BSON 时按对应格式复制（得到 pretty），
-                    // 与详情显示一致；其余情况按当前实际模式复制原文。
-                    let copy_mode = match app.detail.mode_of(is_key) {
-                        DecodeMode::Auto if fmt::is_structured_json(bytes) => DecodeMode::Json,
-                        DecodeMode::Auto if fmt::is_bson(bytes) => DecodeMode::Bson,
-                        m => m,
-                    };
-                    ui.ctx()
-                        .copy_text(text_of(bytes, copy_mode, app.endian));
+                    // Auto 下压缩容器：解压后内层为结构化 JSON/BSON/MSGPACK
+                    // 时按内层格式复制 pretty，与详情显示一致。
+                    let decomp_copy = (app.detail.mode_of(is_key) == DecodeMode::Auto)
+                        .then(|| fmt::decompress(bytes))
+                        .flatten()
+                        .and_then(|(_, inner)| {
+                            json_color_mode(DecodeMode::Auto, &inner).map(|m| (m, inner))
+                        });
+
+                    if let Some((m, inner)) = decomp_copy {
+                        ui.ctx()
+                            .copy_text(fmt::decode(&inner, m, app.endian, usize::MAX));
+                    } else {
+                        // Auto 下完整值是结构化 JSON/BSON/MSGPACK/CBOR 时按对应格式复制
+                        //（得到 pretty），与详情显示一致；其余情况按当前实际模式复制原文。
+                        let copy_mode = match app.detail.mode_of(is_key) {
+                            DecodeMode::Auto if fmt::is_structured_json(bytes) => DecodeMode::Json,
+                            DecodeMode::Auto if fmt::is_bson(bytes) => DecodeMode::Bson,
+                            DecodeMode::Auto if fmt::is_msgpack(bytes) => DecodeMode::Msgpack,
+                            DecodeMode::Auto if fmt::is_cbor(bytes) => DecodeMode::Cbor,
+                            m => m,
+                        };
+                        ui.ctx()
+                            .copy_text(text_of(bytes, copy_mode, app.endian));
+                    }
                 }
                 if ui.button(t.save_as).on_hover_text(t.save_tip).clicked() {
                     app.save_bytes(&save_name, bytes);
@@ -1154,19 +1170,34 @@ fn kv_card(
         // JSON/BSON 语法着色：手动 Json（合法 JSON）或 Auto 命中结构化 JSON/BSON
         // 时启用；Some 同时给出 Auto 下 pretty 重解码应使用的格式。
         let json_mode = json_color_mode(app.detail.mode_of(is_key), window);
-        let syntax_json = json_mode.is_some();
+        // Auto 下压缩容器穿透：解压后内层仍是结构化数据时按内层格式 pretty/着色
+        let decomp = (app.detail.mode_of(is_key) == DecodeMode::Auto)
+            .then(|| fmt::decompress(window))
+            .flatten()
+            .and_then(|(_, inner)| {
+                json_color_mode(DecodeMode::Auto, &inner).map(|m| (m, inner))
+            });
+        let syntax_json = json_mode.is_some() || decomp.is_some();
         // 详情文本区"实际显示"的文本：Auto 命中 JSON/BSON 时改用 pretty。
         // guess 返回的是紧凑原文（保证表格单行预览不被破坏），故这里要重解码一次。
         // 高度估算与下方渲染必须共用这份文本，否则 pretty 后行数变多却仍按紧凑文本
         // 的 1 行估高，文本区会被裁掉大半、也无法占满折叠 hex 释放出的空间。
-        let display_text: String = match (json_mode, app.detail.mode_of(is_key)) {
-            (Some(m), DecodeMode::Auto) => fmt::decode(
-                window,
+        let display_text: String = match decomp {
+            Some((m, inner)) => fmt::decode(
+                &inner,
                 m,
                 app.endian,
-                window.len().saturating_mul(4) + 256,
+                inner.len().saturating_mul(4) + 256,
             ),
-            _ => text.to_string(),
+            None => match (json_mode, app.detail.mode_of(is_key)) {
+                (Some(m), DecodeMode::Auto) => fmt::decode(
+                    window,
+                    m,
+                    app.endian,
+                    window.len().saturating_mul(4) + 256,
+                ),
+                _ => text.to_string(),
+            },
         };
         let syntax_palette = json_palette(ui.visuals().dark_mode);
         // hex 份额不在这里定：渲染时按游标实测回填（见下），此处只分文本区
@@ -1183,7 +1214,12 @@ fn kv_card(
         // 猜测/字节数信息紧跟"文本"标题文字同一行右侧（自定义标题行），
         // 不再单列一行占据文本框与 hex 之间的位置
         let guess_text = if app.detail.mode_of(is_key) == DecodeMode::Auto {
-            t.guess_line(&fmt::guess(bytes, app.endian).0, bytes.len())
+            let (label, _) = fmt::guess(bytes, app.endian);
+            // 4/6 字节附加 IPv4/MAC 地址解读（地址无字节序，仅作标注视角）
+            match fmt::addr_hint(bytes) {
+                Some(hint) => t.guess_line(&format!("{label} · {hint}"), bytes.len()),
+                None => t.guess_line(&label, bytes.len()),
+            }
         } else {
             t.bytes(bytes.len())
         };
@@ -1459,11 +1495,17 @@ fn json_color_mode(mode: DecodeMode, window: &[u8]) -> Option<DecodeMode> {
         DecodeMode::Json => serde_json::from_slice::<serde_json::Value>(window)
             .is_ok()
             .then_some(DecodeMode::Json),
+        DecodeMode::Msgpack => fmt::is_msgpack(window).then_some(DecodeMode::Msgpack),
+        DecodeMode::Cbor => fmt::is_cbor(window).then_some(DecodeMode::Cbor),
         DecodeMode::Auto => {
             if fmt::is_bson(window) {
                 Some(DecodeMode::Bson)
             } else if fmt::is_structured_json(window) {
                 Some(DecodeMode::Json)
+            } else if fmt::is_msgpack(window) {
+                Some(DecodeMode::Msgpack)
+            } else if fmt::is_cbor(window) {
+                Some(DecodeMode::Cbor)
             } else {
                 None
             }

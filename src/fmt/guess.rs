@@ -8,6 +8,10 @@ use super::{Endian, value};
 /// 猜测字节内容的类型，返回 (类型标签, 显示文本)。
 /// 1 字节按 u8 解释（无字节序），多字节整数按 endian 解释。标签随当前界面语言。
 pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
+    guess_at_depth(bytes, endian, 0)
+}
+
+fn guess_at_depth(bytes: &[u8], endian: Endian, depth: usize) -> (String, String) {
     let t = crate::i18n::tr();
 
     // 空值：专有标签
@@ -16,6 +20,17 @@ pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
             t.guess_empty_label.to_string(),
             t.guess_empty_sym.to_string(),
         );
+    }
+
+    // 压缩容器最优先：解压后递归猜测，标签穿透（如 "zstd → JSON"）。
+    // 只穿一层（depth==0 才解压），防套娃压缩；输出上限见 compress::MAX_DECOMP。
+    if depth == 0 {
+        if let Some((algo, inner)) = super::decompress(bytes) {
+            if !inner.is_empty() {
+                let (label, text) = guess_at_depth(&inner, endian, depth + 1);
+                return (format!("{algo} → {label}"), text);
+            }
+        }
     }
 
     // 对象/数组形态的 JSON 优先识别为 JSON（在普通 UTF-8 之前，否则会被可打印
@@ -33,6 +48,21 @@ pub fn guess(bytes: &[u8], endian: Endian) -> (String, String) {
     if is_bson(bytes) {
         if let Some(s) = value::bson_compact(bytes) {
             return ("BSON".to_string(), s);
+        }
+    }
+
+    // MessagePack 与 BSON/JSON 同级（都是自描述结构化数据）。约束：容器头
+    // 开头 + 全量解析成功；显示紧凑 JSON，pretty/着色走详情层（同一套管线）。
+    if is_msgpack(bytes) {
+        if let Some(s) = value::msgpack_compact(bytes) {
+            return ("MSGPACK".to_string(), s);
+        }
+    }
+
+    // CBOR 同上：major type 4/5（array/map）开头 + 全量解析成功。
+    if is_cbor(bytes) {
+        if let Some(s) = value::cbor_compact(bytes) {
+            return ("CBOR".to_string(), s);
         }
     }
 
@@ -100,8 +130,23 @@ pub fn is_structured_json(bytes: &[u8]) -> bool {
         && serde_json::from_slice::<serde_json::Value>(bytes).is_ok()
 }
 
+/// 4/6 字节值的附加解读：IPv4 地址 / MAC 地址（地址按纯字节序读，无字节序
+/// 概念，也不影响 Auto 猜测本身）。用于详情面板猜测行的附加标注。
+pub fn addr_hint(bytes: &[u8]) -> Option<String> {
+    match bytes.len() {
+        4 => Some(format!(
+            "IPv4 {}.{}.{}.{}",
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        )),
+        6 => Some(format!(
+            "MAC {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]
+        )),
+        _ => None,
+    }
+}
+
 /// 判断字节是否为完整 BSON 文档，用于 Auto 自动识别与详情着色。
-///
 /// BSON 无魔数，靠三层约束把误判压到可忽略：
 /// 1. 至少 5 字节（最小 BSON 文档为 4 字节长度字段 + 1 字节终止符）；
 /// 2. 末字节 0x00（文档终止符）；
@@ -114,6 +159,45 @@ pub fn is_bson(bytes: &[u8]) -> bool {
         && bytes[bytes.len() - 1] == 0
         && u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize == bytes.len()
         && bson::Document::from_reader(bytes).is_ok()
+}
+
+/// 尝试把字节识别为 MessagePack 值（保守）：
+/// 至少 2 字节（单字节让位 u8 数值猜测），首字节必须是容器头
+/// （fixmap/fixarray/map16/32/array16/32），且整体必须恰好解析为一个值
+/// 并消耗完全部字节。文本/JSON/整数以 fixstr 或正 fixint 开头被直接排除，
+/// 几乎不会误判。
+pub fn is_msgpack(bytes: &[u8]) -> bool {
+    let Some(b0) = bytes.first() else {
+        return false;
+    };
+
+    if bytes.len() < 2 {
+        return false;
+    }
+
+    let container = matches!(b0, 0x80..=0x8f | 0x90..=0x9f | 0xdc | 0xdd | 0xde | 0xdf);
+    if !container {
+        return false;
+    }
+
+    let mut cur: &[u8] = bytes;
+    rmpv::decode::read_value(&mut cur).is_ok() && cur.is_empty()
+}
+
+/// 尝试把字节识别为 CBOR 值（保守）：至少 2 字节，首字节 major type 必须是
+/// array(4)/map(5)，且整体必须恰好解析为一个值并消耗完全部字节。
+/// 文本/JSON/整数以 major 0-3 开头被直接排除。
+pub fn is_cbor(bytes: &[u8]) -> bool {
+    let Some(b0) = bytes.first() else {
+        return false;
+    };
+
+    if bytes.len() < 2 || !matches!(b0 >> 5, 4 | 5) {
+        return false;
+    }
+
+    let mut cur: &[u8] = bytes;
+    ciborium::de::from_reader::<ciborium::value::Value, _>(&mut cur).is_ok() && cur.is_empty()
 }
 
 /// 尝试把字节识别为 UTF-16 文本。
@@ -423,6 +507,110 @@ mod tests {
         assert!(!is_bson(&int_le));
         assert!(!is_bson(b"hello"));
         assert!(!is_bson(br#"{"a":1}"#));
+    }
+
+    #[test]
+    fn guess_msgpack_document() {
+        // {"a":"hi"} → fixmap(1) + "a" + "hi"
+        let bytes = [0x81, 0xa1, b'a', 0xa2, b'h', b'i'];
+        assert_eq!(
+            guess(&bytes, Endian::Little),
+            ("MSGPACK".to_string(), "{\"a\":\"hi\"}".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_msgpack_rich_types() {
+        // {"n":42,"arr":[1,true,null],"bin":0x4142}
+        let bytes = [
+            0x83, 0xa1, b'n', 0x2a, // "n": positive fixint 42
+            0xa3, b'a', b'r', b'r', 0x93, 0x01, 0xc3, 0xc0, // "arr":[1,true,null]
+            0xa3, b'b', b'i', b'n', 0xc4, 0x02, 0x41, 0x42, // "bin": bin8 "AB"
+        ];
+        let (label, text) = guess(&bytes, Endian::Little);
+        assert_eq!(label, "MSGPACK");
+        assert!(text.contains("\"n\":42"), "text={text}");
+        assert!(text.contains("\"arr\":[1,true,null]"), "text={text}");
+        // binary 转 base64（"AB" → "QUI="）
+        assert!(text.contains("\"bin\":\"QUI=\""), "text={text}");
+    }
+
+    #[test]
+    fn msgpack_predicate_rejects_lookalikes() {
+        // 容器头开头才有可能命中：fixint/fixstr/JSON 文本直接排除
+        assert!(!is_msgpack(b"hi"));
+        assert!(!is_msgpack(br#"{"a":1}"#));
+        assert!(!is_msgpack(&[0x01, 0x02]));
+        // 容器头但解析失败 / 未消耗完全部字节（map2 只给 1 对）
+        assert!(!is_msgpack(&[0x81, 0xa1, b'a']));
+        assert!(!is_msgpack(&[0x82, 0xa1, b'a', 0x01]));
+        // 单字节空容器让位 u8 数值猜测
+        assert!(!is_msgpack(&[0x80]));
+        assert!(!is_msgpack(&[]));
+    }
+
+    #[test]
+    fn guess_cbor_document() {
+        // {1: 42} → map(1) + int 1 + uint8 头 0x18 + 0x2A
+        let bytes = [0xA1, 0x01, 0x18, 0x2A];
+        assert_eq!(
+            guess(&bytes, Endian::Little),
+            ("CBOR".to_string(), "{\"1\":42}".to_string())
+        );
+    }
+
+    #[test]
+    fn guess_cbor_nested() {
+        // {"a": [1, true]} → map(1) + text(1) "a" + array(2)
+        let bytes = [0xA1, 0x61, b'a', 0x82, 0x01, 0xF5];
+        let (label, text) = guess(&bytes, Endian::Little);
+        assert_eq!(label, "CBOR");
+        assert_eq!(text, "{\"a\":[1,true]}");
+    }
+
+    #[test]
+    fn cbor_predicate_rejects_lookalikes() {
+        // major type 0-3（整数/字节串/文本）直接排除
+        assert!(!is_cbor(b"hi"));
+        assert!(!is_cbor(br#"{"a":1}"#));
+        assert!(!is_cbor(&[0x01, 0x02]));
+        // 容器头但解析失败 / 未消耗完全部字节（map2 只给 1 对）
+        assert!(!is_cbor(&[0xA1, 0x61, b'a']));
+        assert!(!is_cbor(&[0xA2, 0x61, b'a', 0x01]));
+        // 单字节让位 u8 数值猜测
+        assert!(!is_cbor(&[0xA0]));
+        assert!(!is_cbor(&[]));
+    }
+
+    #[test]
+    fn addr_hint_ipv4_mac() {
+        assert_eq!(
+            addr_hint(&[192, 168, 1, 1]),
+            Some("IPv4 192.168.1.1".to_string())
+        );
+        assert_eq!(
+            addr_hint(&[0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E]),
+            Some("MAC 00:1A:2B:3C:4D:5E".to_string())
+        );
+        // 其他长度不标注
+        assert_eq!(addr_hint(&[1, 2, 3]), None);
+        assert_eq!(addr_hint(&[0; 7]), None);
+        assert_eq!(addr_hint(&[]), None);
+    }
+
+    #[test]
+    fn guess_penetrates_gzip_json() {
+        use std::io::Write;
+
+        // gzip( {"a":1,"b":"hi"} ) → 标签穿透，文本为内层紧凑 JSON
+        let json: &[u8] = br#"{"a":1,"b":"hi"}"#;
+        let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        e.write_all(json).unwrap();
+        let gz = e.finish().unwrap();
+
+        let (label, text) = guess(&gz, Endian::Little);
+        assert_eq!(label, "gzip → JSON");
+        assert_eq!(text, "{\"a\":1,\"b\":\"hi\"}");
     }
 
     #[test]

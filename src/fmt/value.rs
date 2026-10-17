@@ -163,6 +163,8 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) 
         DecodeMode::Uuid => uuid_text(bytes),
         DecodeMode::Json => json_text(bytes),
         DecodeMode::Bson => bson_text(bytes),
+        DecodeMode::Msgpack => msgpack_text(bytes),
+        DecodeMode::Cbor => cbor_text(bytes),
         // Protobuf：按全局类型池与当前 message 解码；未载入/失败回退 UTF-8 文本
         DecodeMode::Proto => crate::proto::decode_current(bytes)
             .unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned()),
@@ -366,6 +368,153 @@ fn bson_json_value(bytes: &[u8]) -> Option<serde_json::Value> {
     bson::Bson::Document(doc).into_relaxed_extjson().into()
 }
 
+// ── MessagePack ──
+
+/// rmpv Value → serde_json Value。类型映射：binary/ext 转 base64 字符串
+/// （与 proto3 JSON mapping 的 bytes 处理一致），非字符串键转 JSON 文本。
+fn msgpack_to_json(v: rmpv::Value) -> serde_json::Value {
+    use rmpv::Value as V;
+
+    match v {
+        V::Nil => serde_json::Value::Null,
+        V::Boolean(b) => serde_json::Value::Bool(b),
+        V::Integer(i) => match (i.as_i64(), i.as_u64()) {
+            (Some(n), _) => serde_json::json!(n),
+            (None, Some(n)) => serde_json::json!(n),
+            // as_i64/as_u64 覆盖 Integer 全部取值，到这里理论不可达
+            _ => serde_json::Value::Null,
+        },
+        V::F32(f) => serde_json::json!(f),
+        V::F64(f) => serde_json::json!(f),
+        V::String(s) => serde_json::json!(s.as_str().unwrap_or_default()),
+        V::Binary(b) => serde_json::json!(base64_text(&b)),
+        V::Array(a) => serde_json::Value::Array(a.into_iter().map(msgpack_to_json).collect()),
+        V::Map(m) => {
+            let mut obj = serde_json::Map::new();
+
+            for (k, v) in m {
+                let key = match k {
+                    V::String(s) => s.as_str().unwrap_or_default().to_string(),
+                    other => msgpack_to_json(other).to_string(),
+                };
+                obj.insert(key, msgpack_to_json(v));
+            }
+
+            serde_json::Value::Object(obj)
+        }
+        V::Ext(t, d) => serde_json::json!({ format!("_ext{t}"): base64_text(&d) }),
+    }
+}
+
+/// MessagePack 解析为 serde_json Value：整体必须恰好解析为一个值并消耗完。
+fn msgpack_json_value(bytes: &[u8]) -> Option<serde_json::Value> {
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let mut cur: &[u8] = bytes;
+    let v = rmpv::decode::read_value(&mut cur).ok()?;
+    cur.is_empty().then(|| msgpack_to_json(v))
+}
+
+/// MessagePack → pretty JSON；非法回退 UTF-8 文本。
+pub(crate) fn msgpack_text(bytes: &[u8]) -> String {
+    match msgpack_json_value(bytes) {
+        Some(v) => serde_json::to_string_pretty(&v)
+            .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned()),
+        None => {
+            if bytes.is_empty() {
+                String::new()
+            } else {
+                String::from_utf8_lossy(bytes).into_owned()
+            }
+        }
+    }
+}
+
+/// MessagePack → 单行紧凑 JSON（表格 Auto 列用）；非法返回 None。
+pub(crate) fn msgpack_compact(bytes: &[u8]) -> Option<String> {
+    msgpack_json_value(bytes).and_then(|v| serde_json::to_string(&v).ok())
+}
+
+// ── CBOR ──
+
+/// ciborium Value → serde_json Value。类型映射与 MessagePack 一致：
+/// bytes 转 base64，非字符串键转 JSON 文本，tag 包一层 `_tagN` 对象。
+fn cbor_to_json(v: ciborium::value::Value) -> serde_json::Value {
+    use ciborium::value::Value as V;
+
+    // match 分支按枚举声明顺序；枚举为 #[non_exhaustive]，末尾需通配兜底
+    match v {
+        V::Integer(i) => {
+            // serde_json Number 只支持 64 位；ciborium 的 Integer 内部为 i128
+            // 但仅公开 64 位转换，仍溢出时从 Debug 输出（"Integer(x)"）剥壳保真
+            match i64::try_from(i) {
+                Ok(v) => serde_json::json!(v),
+                Err(_) => match u64::try_from(i) {
+                    Ok(v) => serde_json::json!(v),
+                    Err(_) => {
+                        let dbg = format!("{i:?}");
+                        serde_json::json!(&dbg[8..dbg.len() - 1])
+                    }
+                },
+            }
+        }
+        V::Bytes(b) => serde_json::json!(base64_text(&b)),
+        V::Float(f) => serde_json::json!(f),
+        V::Text(s) => serde_json::json!(s),
+        V::Bool(b) => serde_json::Value::Bool(b),
+        V::Null => serde_json::Value::Null,
+        V::Tag(t, boxed) => serde_json::json!({ format!("_tag{t}"): cbor_to_json(*boxed) }),
+        V::Array(a) => serde_json::Value::Array(a.into_iter().map(cbor_to_json).collect()),
+        V::Map(m) => {
+            let mut obj = serde_json::Map::new();
+
+            for (k, v) in m {
+                let key = match k {
+                    V::Text(s) => s,
+                    other => cbor_to_json(other).to_string(),
+                };
+                obj.insert(key, cbor_to_json(v));
+            }
+
+            serde_json::Value::Object(obj)
+        }
+        _ => serde_json::Value::Null,
+    }
+}
+
+/// CBOR 解析为 serde_json Value：整体必须恰好解析为一个值并消耗完。
+fn cbor_json_value(bytes: &[u8]) -> Option<serde_json::Value> {
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let mut cur: &[u8] = bytes;
+    let v: ciborium::value::Value = ciborium::de::from_reader(&mut cur).ok()?;
+    cur.is_empty().then(|| cbor_to_json(v))
+}
+
+/// CBOR → pretty JSON；非法回退 UTF-8 文本。
+pub(crate) fn cbor_text(bytes: &[u8]) -> String {
+    match cbor_json_value(bytes) {
+        Some(v) => serde_json::to_string_pretty(&v)
+            .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned()),
+        None => {
+            if bytes.is_empty() {
+                String::new()
+            } else {
+                String::from_utf8_lossy(bytes).into_owned()
+            }
+        }
+    }
+}
+
+/// CBOR → 单行紧凑 JSON（表格 Auto 列用）；非法返回 None。
+pub(crate) fn cbor_compact(bytes: &[u8]) -> Option<String> {
+    cbor_json_value(bytes).and_then(|v| serde_json::to_string(&v).ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,6 +617,37 @@ mod tests {
         // Auto 模式：走 guess，返回 guess_empty_sym
         let s = decode(&[], Auto, Endian::Little, 100);
         assert_eq!(s, t.guess_empty_sym);
+    }
+
+    #[test]
+    fn decode_msgpack_pretty() {
+        // {"a":"hi"}
+        let bytes = [0x81, 0xa1, b'a', 0xa2, b'h', b'i'];
+        assert_eq!(
+            decode(&bytes, DecodeMode::Msgpack, Endian::Little, 100),
+            "{\n  \"a\": \"hi\"\n}"
+        );
+        // 非法数据回退 UTF-8 原文
+        assert_eq!(decode(b"hi", DecodeMode::Msgpack, Endian::Little, 100), "hi");
+    }
+
+    #[test]
+    fn decode_cbor_pretty() {
+        setup();
+        // {1: 42}：整数键转文本，uint8 头 0x18 + 0x2A
+        let bytes = [0xA1, 0x01, 0x18, 0x2A];
+        assert_eq!(
+            decode(&bytes, DecodeMode::Cbor, Endian::Little, 100),
+            "{\n  \"1\": 42\n}"
+        );
+        // {"a": true}：text(1) 头 0x61
+        let bytes = [0xA1, 0x61, b'a', 0xF5];
+        assert_eq!(
+            decode(&bytes, DecodeMode::Cbor, Endian::Little, 100),
+            "{\n  \"a\": true\n}"
+        );
+        // 非法数据回退 UTF-8 原文
+        assert_eq!(decode(b"hi", DecodeMode::Cbor, Endian::Little, 100), "hi");
     }
 
     #[test]
