@@ -138,8 +138,12 @@ jobs:
         run: |
           set -e
           REPO="lwq_yu/mdbxer"
+          # 前置诊断：secret 未配置时直接明确报错（避免 401 让人猜）
+          [ -n "$GITEE_TOKEN" ] || { echo "GITEE_TOKEN secret 未配置（GitHub 仓库 Settings → Secrets and variables → Actions）"; exit 1; }
+          # Gitee 对 GitHub 机房 IP 偶发拒连/限流：加连接与总超时 + 重试
+          CURL="curl -s --connect-timeout 15 --max-time 120 --retry 3 --retry-delay 5 --retry-all-errors"
           # 已存在则复用（按 tag 查列表），不存在则创建
-          ID=$(curl -s "https://gitee.com/api/v5/repos/${REPO}/releases?access_token=${GITEE_TOKEN}&per_page=100" \
+          ID=$($CURL "https://gitee.com/api/v5/repos/${REPO}/releases?access_token=${GITEE_TOKEN}&per_page=100" \
             | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id' | head -n1)
           if [ -z "$ID" ]; then
             jq -n \
@@ -148,7 +152,7 @@ jobs:
               --arg name "$TAG" \
               --arg body "$BODY" \
               '{access_token: $at, tag_name: $tag, name: $name, body: $body, target_commitish: "master"}' \
-              | curl -s -X POST -H "Content-Type: application/json" -d @- \
+              | $CURL -X POST -H "Content-Type: application/json" -d @- \
               "https://gitee.com/api/v5/repos/${REPO}/releases" > /tmp/rel.json
             ID=$(jq -r .id /tmp/rel.json)
           fi
@@ -163,7 +167,8 @@ jobs:
           REPO="lwq_yu/mdbxer"
           for f in dist/*; do
             echo "上传 $f"
-            curl -s -X POST \
+            # 大文件上传易断：加超时与重试
+            curl -s --connect-timeout 15 --max-time 600 --retry 3 --retry-delay 5 --retry-all-errors -X POST \
               -F "access_token=${GITEE_TOKEN}" \
               -F "file=@${f}" \
               "https://gitee.com/api/v5/repos/${REPO}/releases/${GITEE_RELEASE_ID}/attach_files" > /dev/null
