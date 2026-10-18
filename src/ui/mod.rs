@@ -10,6 +10,7 @@ mod hexview;
 mod settings;
 mod sidebar;
 mod statsview;
+mod syntax;
 mod topbar;
 
 pub use detail::DetailState;
