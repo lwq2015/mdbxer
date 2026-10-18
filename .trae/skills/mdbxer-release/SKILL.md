@@ -89,4 +89,35 @@ $rel.assets | Select-Object name, size, browser_download_url
 - **版本号必须递增**：用户明确要求，见 Cargo.toml
 - macOS 只有 ARM 包（GitHub 无 Intel macOS runner），Intel Mac 走 Rosetta 2
 - GitHub Actions runner 访问 Gitee API 经常超时，`gitee-release` 已设为可选，失败不影响整体发布
-- 若需紧急补发 Gitee Release（用户说"回传 Gitee"）：令牌在用户环境变量 `GITEE_TOKEN`（未设置时向用户要）。流程：① `curl.exe -sL` 从 GitHub Release 下三附件到 `%TEMP%\gitee_upload`（GitHub 直连慢，用 `--retry`，校验字节数）② POST `/api/v5/repos/lwq_yu/mdbxer/releases?access_token=` 建 Release（JSON 无 BOM、必带 target_commitish=master）③ `curl.exe -F access_token= -F file=@` 传到 `/releases/{id}/attach_files` ④ 验证用 GET `/releases` 列表过滤 tag_name（按 tag 单查返回空）；Gitee 会自动附 2 个源码包（v*.zip/tar.gz），共 5 个 assets 属正常
+- Gitee Release 回传失败属常态（v0.1.8 起约半数版本需要手动补发），用户说"回传 Gitee"或结果检查发现 Gitee 缺版时，按下方「补发 Gitee Release」执行，**不要每次问用户要不要补**
+
+## 补发 Gitee Release（手动，编码坑必读）
+
+令牌在用户环境变量 `GITEE_TOKEN`（未设置时向用户要）。
+
+```powershell
+# 1) 下载三附件到 %TEMP%\gitee_upload（GitHub 直连慢，加 --retry，完成后校验字节数）
+$files = @("mdbxer-x86_64-pc-windows-msvc.zip","mdbxer-x86_64-unknown-linux-gnu.tar.gz","mdbxer-aarch64-apple-darwin.tar.gz")
+foreach ($f in $files) { curl.exe -sL --retry 3 "https://github.com/lwq2015/mdbxer/releases/download/v0.1.x/$f" -o "$env:TEMP\gitee_upload\$f" }
+
+# 2) 正文 body 从 GitHub Release API 取（天然 UTF-8 正确），禁止在本地 PowerShell 拼中文
+$gh = Invoke-RestMethod "https://api.github.com/repos/lwq2015/mdbxer/releases/tags/v0.1.x"
+
+# 3) 建 Release（已存在则改为 PATCH /releases/{id} 更新 body）：
+#    【致命坑】PS 5.1 的 Invoke-RestMethod 字符串请求体默认非 UTF-8，中文全变 ? 且不可逆丢失！
+#    中文 JSON 必须写 UTF-8 无 BOM 文件后用 curl --data-binary 发送
+$body = @{ access_token = $t; tag_name = "v0.1.x"; name = "v0.1.x"; body = $gh.body; target_commitish = "master" } | ConvertTo-Json
+[IO.File]::WriteAllText("$env:TEMP\rel.json", $body, [Text.UTF8Encoding]::new($false))
+curl.exe -s -X POST "https://gitee.com/api/v5/repos/lwq_yu/mdbxer/releases" -H "Content-Type: application/json; charset=utf-8" --data-binary "@$env:TEMP\rel.json"
+
+# 4) 传附件（PS 5.1 无 -Form，必须 curl.exe -F）
+curl.exe -s -X POST "https://gitee.com/api/v5/repos/lwq_yu/mdbxer/releases/<id>/attach_files?access_token=$t" -F "file=@$env:TEMP\gitee_upload\<文件>"
+
+# 5) 验证（两个假象都别信）：
+#    假象 A：Invoke-RestMethod 读 Gitee 响应显示 mojibake（ãé«çº§…）——只是 PS 按 Latin-1 解码响应的显示问题，
+#            真实存储要看原始字节：curl.exe -s <url> -o file 后 [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes(file))
+#    假象 B：assets 的 size 字段显示 0——不代表附件坏，实际下载一份比对 SHA256 与 GitHub 侧一致即完好
+```
+
+- 验证 Release 列表用 GET `/releases` 过滤 tag_name（按 tag 单查返回空）
+- Gitee 自动附 2 个源码包（v*.zip/tar.gz），共 5 个 assets 属正常
