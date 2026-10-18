@@ -13,6 +13,7 @@ pub(super) const ZH: I18n = I18n {
     btn_dir: "目录",
     btn_close: "关闭",
     btn_reload_tip: "重新加载库：刷新表列表与条目数（保留当前表）",
+    btn_reveal_tip: "在文件管理器中打开库所在位置（单文件定位、目录打开）",
     history: "历史",
     history_empty: "（暂无历史记录）",
     history_del_tip: "从历史记录中删除该条",

@@ -11,6 +11,45 @@ use crate::db::OpenMode;
 use crate::fmt::DecodeMode;
 use crate::i18n::{self, Lang};
 
+/// 在系统文件管理器中打开库所在位置（平台相关）：单文件模式定位文件本身
+/// （选中高亮），目录模式直接打开该目录。打开失败静默忽略。
+fn reveal_in_folder(path: &str, is_single_file: bool) {
+    #[cfg(target_os = "windows")]
+    {
+        let mut c = std::process::Command::new("explorer");
+        if is_single_file {
+            c.arg("/select,").arg(path);
+        } else {
+            c.arg(path);
+        }
+        let _ = c.spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut c = std::process::Command::new("open");
+        if is_single_file {
+            // -R：在 Finder 中定位并高亮文件
+            c.arg("-R").arg(path);
+        } else {
+            c.arg(path);
+        }
+        let _ = c.spawn();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Linux 无统一"定位文件"，仅打开所在目录
+        let dir = if is_single_file {
+            std::path::Path::new(path)
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string())
+        } else {
+            path.to_string()
+        };
+        let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+    }
+}
+
 /// 顶栏面板：文件/目录/关闭 + 历史 + Key/Value 排版 + 导出 + 表/详情开关 + 语言。
 /// 打开模式不显示选择器：由各打开入口（文件钮=单文件、目录钮=目录、历史=记录值、拖入=自动）自行确定。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
@@ -45,6 +84,16 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     .clicked()
             {
                 app.reload_db();
+            }
+            // 打开库所在位置：单文件模式定位文件，目录模式打开目录
+            if let (Some(h), Some(p)) = (&app.db, &app.opened_path) {
+                if ui
+                    .button("📂")
+                    .on_hover_text(t.btn_reveal_tip)
+                    .clicked()
+                {
+                    reveal_in_folder(p, h.no_sub_dir);
+                }
             }
 
             // 历史记录

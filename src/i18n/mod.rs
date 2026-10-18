@@ -95,6 +95,7 @@ pub struct I18n {
     pub btn_dir: &'static str,
     pub btn_close: &'static str,
     pub btn_reload_tip: &'static str,
+    pub btn_reveal_tip: &'static str,
     pub history: &'static str,
     pub history_empty: &'static str,
     pub history_del_tip: &'static str,
@@ -750,6 +751,7 @@ mod tests {
             assert!(!table.btn_file.is_empty());
             assert!(!table.btn_close.is_empty());
             assert!(!table.btn_reload_tip.is_empty());
+            assert!(!table.btn_reveal_tip.is_empty());
             assert!(!table.tables_title.is_empty());
             assert!(!table.detail_select_hint.is_empty());
             assert!(!table.dup_tip_first.is_empty());

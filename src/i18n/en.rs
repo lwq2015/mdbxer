@@ -13,6 +13,7 @@ pub(super) const EN: I18n = I18n {
     btn_dir: "Folder",
     btn_close: "Close",
     btn_reload_tip: "Reload database: refresh table list and row counts (keep current table)",
+    btn_reveal_tip: "Open database location in file manager (single file: select in folder)",
     history: "History",
     history_empty: "(no history)",
     history_del_tip: "Remove this entry from history",
