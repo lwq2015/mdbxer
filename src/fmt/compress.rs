@@ -1,7 +1,8 @@
 // Copyright 2026 lwq_yu
 // SPDX-License-Identifier: Apache-2.0
 
-//! 压缩容器识别与解压：zstd / gzip / zlib / lz4（frame）/ bzip2 / xz。
+//! 压缩容器识别与解压：zstd / gzip / zlib / lz4（frame）/ bzip2 / xz /
+//! snappy（frame）/ brotli。
 //!
 //! MDBX 不提供内置压缩，应用常自行压缩后再存值；这里靠魔数识别
 //! （误判率≈0），解压后交回 Auto 猜测链递归解码，实现"套娃数据"穿透。
@@ -19,8 +20,8 @@ fn read_limited<R: Read>(r: R) -> Option<Vec<u8>> {
     (out.len() <= MAX_DECOMP).then_some(out)
 }
 
-/// 按魔数识别压缩容器并解压。返回 (算法名, 解压字节)；
-/// 无魔数 / 解压失败 / 超上限返回 None。
+/// 按魔数识别压缩容器并解压（brotli 无魔数，放最后试探解码兜底）。
+/// 返回 (算法名, 解压字节)；无魔数 / 解压失败 / 超上限返回 None。
 pub(crate) fn decompress(bytes: &[u8]) -> Option<(&'static str, Vec<u8>)> {
     // zstd：28 B5 2F FD（frame magic）
     if bytes.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
@@ -64,6 +65,23 @@ pub(crate) fn decompress(bytes: &[u8]) -> Option<(&'static str, Vec<u8>)> {
         };
         lzma_rs::xz_decompress(&mut std::io::Cursor::new(bytes), &mut w).ok()?;
         return (out.len() <= MAX_DECOMP).then_some(("xz", out));
+    }
+
+    // snappy framed 流：FF 06 00 00 "sNaPpY"（原始块格式无魔数，不识别）
+    if bytes.starts_with(&[0xFF, 0x06, 0x00, 0x00, b's', b'N', b'a', b'P', b'p', b'Y']) {
+        let dec = snap::read::FrameDecoder::new(bytes);
+        return read_limited(dec).map(|v| ("snappy", v));
+    }
+
+    // brotli：无魔数，只能试探解码，故放全部魔数识别之后兜底。短数据
+    // （<16 字节）有与小整数误撞的风险（单字节 0x03 即合法空流），跳过不解；
+    // 解压失败或输出为空按未命中处理。
+    if bytes.len() >= 16 {
+        if let Some(out) = read_limited(brotli_decompressor::Decompressor::new(bytes, 4096)) {
+            if !out.is_empty() {
+                return Some(("brotli", out));
+            }
+        }
     }
 
     None
@@ -162,5 +180,40 @@ mod tests {
         // 非压缩数据
         assert!(decompress(json).is_none());
         assert!(decompress(b"").is_none());
+    }
+
+    #[test]
+    fn decompress_snappy_and_brotli() {
+        let json: &[u8] = br#"{"a":1}"#;
+
+        // snappy framed
+        let mut e = snap::write::FrameEncoder::new(Vec::new());
+        e.write_all(json).unwrap();
+        let sn = e.into_inner().unwrap();
+        let (algo, out) = decompress(&sn).unwrap();
+        assert_eq!(algo, "snappy");
+        assert_eq!(out, json);
+        // 截断 → None
+        assert!(decompress(&sn[..sn.len() - 2]).is_none());
+
+        // brotli（样本用完整 brotli crate 生成，运行时只依赖 decompressor）。
+        // 样本取长一点：短数据压缩后不足 16 字节，会被试探门槛跳过。
+        let long: &[u8] = br#"{"a":1,"b":"hello world","n":[1,2,3,4,5,6,7,8]}"#;
+        let mut e = brotli::CompressorWriter::new(Vec::new(), 4096, 5, 22);
+        e.write_all(long).unwrap();
+        let br = e.into_inner();
+        assert!(br.len() >= 16, "brotli 样本应长于试探门槛: {}", br.len());
+        let (algo, out) = decompress(&br).unwrap();
+        assert_eq!(algo, "brotli");
+        assert_eq!(out, long);
+        // 截断 → None
+        assert!(decompress(&br[..br.len() - 2]).is_none());
+
+        // 短数据不试探 brotli：0x03 是合法空流，但太短不解（避免与小整数误撞）
+        assert!(decompress(&[0x03]).is_none());
+        assert!(decompress(&[0x03, 0x00, 0x00, 0x00]).is_none());
+
+        // 非压缩的较长文本不误判
+        assert!(decompress(b"hello, world, longer!").is_none());
     }
 }

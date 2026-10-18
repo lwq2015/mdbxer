@@ -12,7 +12,7 @@ mod value;
 
 pub use guess::{HintFlags, guess};
 pub(crate) use compress::decompress;
-pub(crate) use guess::{is_bson, is_cbor, is_msgpack, is_structured_json, magic_hint};
+pub(crate) use guess::{is_bson, is_cbor, is_msgpack, is_structured_json, is_xml, magic_hint};
 pub(crate) use hexdump::{
     addr_chars, addr_digits, hex_copy_selection, hex_line, hex_section_chars, mid_gap_index,
 };
@@ -76,6 +76,12 @@ pub enum DecodeMode {
     Gb18030,
     /// Windows-1251（西里尔字母，俄语传统编码）
     Cp1251,
+    /// Shift-JIS（日文传统编码）
+    Sjis,
+    /// Big5（繁体中文传统编码）
+    Big5,
+    /// Windows-1252（西欧语言传统编码，Latin-1 超集）
+    Cp1252,
     I8,
     I16,
     I32,
@@ -109,16 +115,25 @@ pub enum DecodeMode {
     Cbor,
     /// Protobuf 动态解码为 JSON（需载入 .proto 并选择 message 类型；失败回退 UTF-8 文本）
     Proto,
+    /// YAML 规范化重排（非法回退 UTF-8 文本）
+    Yaml,
+    /// TOML 规范化重排（非法回退 UTF-8 文本）
+    Toml,
+    /// XML 缩进重排（非法回退 UTF-8 文本）
+    Xml,
 }
 
 impl DecodeMode {
-    pub const ALL: [DecodeMode; 29] = [
+    pub const ALL: [DecodeMode; 35] = [
         DecodeMode::Auto,
         DecodeMode::Utf8,
         DecodeMode::Utf16Le,
         DecodeMode::Utf16Be,
         DecodeMode::Gb18030,
         DecodeMode::Cp1251,
+        DecodeMode::Sjis,
+        DecodeMode::Big5,
+        DecodeMode::Cp1252,
         DecodeMode::I8,
         DecodeMode::I16,
         DecodeMode::I32,
@@ -142,11 +157,14 @@ impl DecodeMode {
         DecodeMode::Msgpack,
         DecodeMode::Cbor,
         DecodeMode::Proto,
+        DecodeMode::Yaml,
+        DecodeMode::Toml,
+        DecodeMode::Xml,
     ];
 
     /// 下拉框展示顺序：Auto（默认项）置顶不参与排序，其余按当前界面语言
     /// 的 label 排序——label 随语言变化时顺序自动跟随。每次调用重新计算，
-    /// 代价可忽略（29 项）。
+    /// 代价可忽略（35 项）。
     pub fn sorted_all() -> Vec<DecodeMode> {
         let mut rest: Vec<DecodeMode> = Self::ALL
             .into_iter()
@@ -167,6 +185,9 @@ impl DecodeMode {
             DecodeMode::Utf16Be => "utf16 (BE)".to_string(),
             DecodeMode::Gb18030 => "gb18030".to_string(),
             DecodeMode::Cp1251 => "windows-1251".to_string(),
+            DecodeMode::Sjis => "shift_jis".to_string(),
+            DecodeMode::Big5 => "big5".to_string(),
+            DecodeMode::Cp1252 => "windows-1252".to_string(),
 
             // 整数
             DecodeMode::I8 => "int8".to_string(),
@@ -198,6 +219,9 @@ impl DecodeMode {
             DecodeMode::Msgpack => "msgpack".to_string(),
             DecodeMode::Cbor => "cbor".to_string(),
             DecodeMode::Proto => "proto".to_string(),
+            DecodeMode::Yaml => "yaml".to_string(),
+            DecodeMode::Toml => "toml".to_string(),
+            DecodeMode::Xml => "xml".to_string(),
         }
     }
 
@@ -212,6 +236,9 @@ impl DecodeMode {
             DecodeMode::Utf16Be => "utf16be",
             DecodeMode::Gb18030 => "gb18030",
             DecodeMode::Cp1251 => "cp1251",
+            DecodeMode::Sjis => "sjis",
+            DecodeMode::Big5 => "big5",
+            DecodeMode::Cp1252 => "cp1252",
 
             // 整数
             DecodeMode::I8 => "i8",
@@ -243,6 +270,9 @@ impl DecodeMode {
             DecodeMode::Msgpack => "msgpack",
             DecodeMode::Cbor => "cbor",
             DecodeMode::Proto => "proto",
+            DecodeMode::Yaml => "yaml",
+            DecodeMode::Toml => "toml",
+            DecodeMode::Xml => "xml",
         }
     }
 
@@ -255,6 +285,9 @@ impl DecodeMode {
             "utf16be" => DecodeMode::Utf16Be,
             "gb18030" => DecodeMode::Gb18030,
             "cp1251" => DecodeMode::Cp1251,
+            "sjis" => DecodeMode::Sjis,
+            "big5" => DecodeMode::Big5,
+            "cp1252" => DecodeMode::Cp1252,
 
             // 整数
             "i8" => DecodeMode::I8,
@@ -286,6 +319,9 @@ impl DecodeMode {
             "msgpack" => DecodeMode::Msgpack,
             "cbor" => DecodeMode::Cbor,
             "proto" => DecodeMode::Proto,
+            "yaml" => DecodeMode::Yaml,
+            "toml" => DecodeMode::Toml,
+            "xml" => DecodeMode::Xml,
 
             // 未知值回退 Auto
             _ => DecodeMode::Auto,
@@ -309,6 +345,9 @@ impl DecodeMode {
             DecodeMode::Utf16Be => t.guess_utf16_be.to_string(),
             DecodeMode::Gb18030 => "GB18030".to_string(),
             DecodeMode::Cp1251 => "Windows-1251".to_string(),
+            DecodeMode::Sjis => "SHIFT_JIS".to_string(),
+            DecodeMode::Big5 => "Big5".to_string(),
+            DecodeMode::Cp1252 => "Windows-1252".to_string(),
 
             // 单字节整数无字节序后缀
             DecodeMode::I8 => "i8".to_string(),
@@ -340,6 +379,9 @@ impl DecodeMode {
             DecodeMode::Msgpack => "MSGPACK".to_string(),
             DecodeMode::Cbor => "CBOR".to_string(),
             DecodeMode::Proto => "PROTO".to_string(),
+            DecodeMode::Yaml => "YAML".to_string(),
+            DecodeMode::Toml => "TOML".to_string(),
+            DecodeMode::Xml => "XML".to_string(),
         })
     }
 }
@@ -381,7 +423,7 @@ mod tests {
 
     #[test]
     fn decode_mode_all_complete() {
-        assert_eq!(DecodeMode::ALL.len(), 29);
+        assert_eq!(DecodeMode::ALL.len(), 35);
     }
 
     #[test]

@@ -102,6 +102,13 @@ fn guess_at_depth(bytes: &[u8], endian: Endian, depth: usize, hints: &HintFlags)
         }
     }
 
+    // XML 与上述结构化格式同级：UTF-8 + '<' 开头 + 整体解析成功。文本返回
+    // 紧凑原文（trim 首尾空白），缩进重排交给详情层。
+    if is_xml(bytes) {
+        let s = std::str::from_utf8(bytes).unwrap_or_default();
+        return ("XML".to_string(), s.trim().to_string());
+    }
+
     // Protobuf：已载入协议池时全池试探解码（unknown 字段判别）。wire format
     // 与随机二进制不可区分，但正确类型解码后 unknown 为空、错误类型几乎必有
     // unknown——强判别；未载入池/无 0-unknown 候选时静默跳过。限制字节数
@@ -335,6 +342,21 @@ pub fn is_cbor(bytes: &[u8]) -> bool {
 
     let mut cur: &[u8] = bytes;
     ciborium::de::from_reader::<ciborium::value::Value, _>(&mut cur).is_ok() && cur.is_empty()
+}
+
+/// 判断字节是否为合法 XML 文档：UTF-8 可解码、去前导 ASCII 空白后以 '<'
+/// 开头、且能被 roxmltree 整体解析（隐含存在根元素——仅注释/处理指令的
+/// 输入解析报 NoRootNode，不判 XML）。与 JSON 的 {/[ 开头约束同理，普通
+/// 文本几乎不会以 '<' 开头且恰好是配对完整的 XML。
+pub fn is_xml(bytes: &[u8]) -> bool {
+    let Ok(s) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+
+    s.bytes()
+        .find(|b| !b.is_ascii_whitespace())
+        .is_some_and(|b| b == b'<')
+        && roxmltree::Document::parse(s).is_ok()
 }
 
 /// 尝试把字节识别为 UTF-16 文本。
@@ -725,6 +747,31 @@ mod tests {
         // 单字节让位 u8 数值猜测
         assert!(!is_cbor(&[0xA0]));
         assert!(!is_cbor(&[]));
+    }
+
+    #[test]
+    fn guess_xml_document() {
+        // Auto 识别为 XML，文本为紧凑原文（trim 首尾空白）
+        let (label, text) = guess(br#"<root><a>1</a></root>"#, Endian::Little);
+        assert_eq!(label, "XML");
+        assert_eq!(text, "<root><a>1</a></root>");
+
+        // 允许前导空白
+        let (label, text) = guess(b"  <a/>", Endian::Little);
+        assert_eq!(label, "XML");
+        assert_eq!(text, "<a/>");
+    }
+
+    #[test]
+    fn xml_predicate() {
+        assert!(is_xml(b"<a/>"));
+        assert!(is_xml(br#"<?xml version="1.0"?><a/>"#));
+        assert!(is_xml(b" <a>\n<b/></a> "));
+        assert!(!is_xml(b"hello"));
+        assert!(!is_xml(b"a < b"));
+        assert!(!is_xml(b"<a><b></a>")); // 标签不配对
+        assert!(!is_xml("<!-- 仅注释 -->".as_bytes())); // 无根元素
+        assert!(!is_xml(&[]));
     }
 
     #[test]

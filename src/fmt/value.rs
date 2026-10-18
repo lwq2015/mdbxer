@@ -131,6 +131,9 @@ pub fn decode(
         DecodeMode::Utf16Be => utf16_text(bytes, true),
         DecodeMode::Gb18030 => legacy_text(bytes, encoding_rs::GB18030),
         DecodeMode::Cp1251 => legacy_text(bytes, encoding_rs::WINDOWS_1251),
+        DecodeMode::Sjis => legacy_text(bytes, encoding_rs::SHIFT_JIS),
+        DecodeMode::Big5 => legacy_text(bytes, encoding_rs::BIG5),
+        DecodeMode::Cp1252 => legacy_text(bytes, encoding_rs::WINDOWS_1252),
         DecodeMode::I8 => int!(i8),
         DecodeMode::U8 => int!(u8),
         DecodeMode::I16 => int!(i16),
@@ -198,6 +201,9 @@ pub fn decode(
         // Protobuf：按全局类型池与当前 message 解码；未载入/失败回退 UTF-8 文本
         DecodeMode::Proto => crate::proto::decode_current(bytes)
             .unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned()),
+        DecodeMode::Yaml => yaml_text(bytes),
+        DecodeMode::Toml => toml_text(bytes),
+        DecodeMode::Xml => xml_text(bytes),
     };
     truncate_chars(s, max_chars)
 }
@@ -664,6 +670,147 @@ pub(crate) fn cbor_compact(bytes: &[u8]) -> Option<String> {
     cbor_json_value(bytes).and_then(|v| serde_json::to_string(&v).ok())
 }
 
+// ── YAML / TOML / XML ──
+
+/// YAML 规范化重排：合法 YAML → 归一化文本；非法 → UTF-8 文本。
+/// 纯文本标量也是合法 YAML，会按 YAML 值重排（如 `123` → `123`）。
+fn yaml_text(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    match std::str::from_utf8(bytes) {
+        Ok(s) => match serde_yaml::from_str::<serde_yaml::Value>(s) {
+            Ok(v) => serde_yaml::to_string(&v)
+                .map(|t| t.trim_end().to_string())
+                .unwrap_or_else(|_| s.to_string()),
+            Err(_) => s.to_string(),
+        },
+        Err(_) => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
+/// TOML 规范化重排：合法 TOML（顶层必须是表）→ pretty；非法 → UTF-8 文本。
+fn toml_text(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    match std::str::from_utf8(bytes) {
+        Ok(s) => match toml::from_str::<toml::Value>(s) {
+            Ok(v) => toml::to_string_pretty(&v).unwrap_or_else(|_| s.to_string()),
+            Err(_) => s.to_string(),
+        },
+        Err(_) => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
+/// XML 缩进重排：合法 XML → 两空格缩进（单一文本子节点内联）；非法 → UTF-8 文本。
+fn xml_text(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    match xml_pretty(bytes) {
+        Some(s) => s,
+        None => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
+/// 解析 XML 并缩进重排。仅接受 UTF-8 输入（roxmltree 接口限制）；
+/// 解析失败或无根元素返回 None。注释与处理指令节点保留；XML 声明被
+/// roxmltree 作为文档信息消费，不产出节点、不保留。
+fn xml_pretty(bytes: &[u8]) -> Option<String> {
+    let s = std::str::from_utf8(bytes).ok()?;
+    let doc = roxmltree::Document::parse(s).ok()?;
+
+    let mut out = String::new();
+    xml_write_children(doc.root(), 0, &mut out);
+    let trimmed = out.trim_end();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+/// 递归输出 node 的子节点（node 自身不输出，便于从 Root 起步）。
+/// 纯空白文本节点视为原文排版噪音跳过；文本统一 trim 后转义重排。
+fn xml_write_children(node: roxmltree::Node, depth: usize, out: &mut String) {
+    let indent = "  ".repeat(depth);
+
+    for child in node.children() {
+        match child.node_type() {
+            roxmltree::NodeType::Element => {
+                out.push_str(&indent);
+                out.push('<');
+                out.push_str(child.tag_name().name());
+                for attr in child.attributes() {
+                    out.push_str(&format!(
+                        " {}=\"{}\"",
+                        attr.name(),
+                        xml_escape_attr(attr.value())
+                    ));
+                }
+
+                let children: Vec<_> = child.children().collect();
+                if children.len() == 1 && children[0].is_text() {
+                    // 单一文本子节点内联：<x>hi</x>
+                    let text = children[0].text().unwrap_or_default().trim();
+                    if text.is_empty() {
+                        out.push_str("/>\n");
+                    } else {
+                        out.push('>');
+                        out.push_str(&xml_escape_text(text));
+                        out.push_str(&format!("</{}>\n", child.tag_name().name()));
+                    }
+                } else if children.is_empty() {
+                    out.push_str("/>\n");
+                } else {
+                    out.push_str(">\n");
+                    xml_write_children(child, depth + 1, out);
+                    out.push_str(&indent);
+                    out.push_str(&format!("</{}>\n", child.tag_name().name()));
+                }
+            }
+            roxmltree::NodeType::Text => {
+                let text = child.text().unwrap_or_default().trim();
+                if !text.is_empty() {
+                    out.push_str(&indent);
+                    out.push_str(&xml_escape_text(text));
+                    out.push('\n');
+                }
+            }
+            roxmltree::NodeType::Comment => {
+                out.push_str(&indent);
+                out.push_str(&format!("<!--{}-->\n", child.text().unwrap_or_default()));
+            }
+            roxmltree::NodeType::PI => {
+                let data = child.text().unwrap_or_default();
+                if data.is_empty() {
+                    out.push_str(&format!("{indent}<?{}?>\n", child.tag_name().name()));
+                } else {
+                    out.push_str(&format!(
+                        "{indent}<?{} {}?>\n",
+                        child.tag_name().name(),
+                        data
+                    ));
+                }
+            }
+            // Root 自身不作为子节点出现，仅为穷举兜底
+            roxmltree::NodeType::Root => {}
+        }
+    }
+}
+
+/// 文本节点转义（还原 roxmltree 解码掉的实体）。
+fn xml_escape_text(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// 属性值转义：文本转义之外再加引号。
+fn xml_escape_attr(s: &str) -> String {
+    xml_escape_text(s).replace('"', "&quot;")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -764,7 +911,10 @@ mod tests {
         }
 
         // 字符串/进制模式：空数据返回空串（无内容可展示）
-        let textual = [Utf8, Utf16Le, Utf16Be, Gb18030, Cp1251, Hex, Dec, Binary];
+        let textual = [
+            Utf8, Utf16Le, Utf16Be, Gb18030, Cp1251, Sjis, Big5, Cp1252, Hex, Dec, Binary, Yaml,
+            Toml, Xml,
+        ];
         for mode in textual {
             let s = decode(&[], mode, Endian::Little, 100);
             assert_eq!(s, "", "mode={:?}", mode);
@@ -1112,5 +1262,79 @@ mod tests {
         assert_eq!(s, "not bson");
         // 空输入为空串
         assert_eq!(decode(&[], DecodeMode::Bson, Endian::Little, 100), "");
+    }
+
+    #[test]
+    fn decode_legacy_encodings() {
+        setup();
+        // "日本語" 的 Shift-JIS 字节（用 encoding_rs 生成，保证编码正确）
+        let (b, _, _) = encoding_rs::SHIFT_JIS.encode("日本語");
+        assert_eq!(decode(&b, DecodeMode::Sjis, Endian::Little, 100), "日本語");
+
+        // "中文" 的 Big5 字节
+        let (b, _, _) = encoding_rs::BIG5.encode("中文");
+        assert_eq!(decode(&b, DecodeMode::Big5, Endian::Little, 100), "中文");
+
+        // "Café" 的 Windows-1252 字节（0xE9 = é）
+        assert_eq!(
+            decode(&[0x43, 0x61, 0x66, 0xE9], DecodeMode::Cp1252, Endian::Little, 100),
+            "Café"
+        );
+
+        // 无法映射的字节输出 U+FFFD，与 UTF-8 lossy 行为一致
+        let s = decode(&[0x81], DecodeMode::Sjis, Endian::Little, 100);
+        assert!(s.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn decode_yaml() {
+        setup();
+        // 合法 YAML → 归一化重排（列表展开为块序列）
+        let s = decode(b"a: 1\nb: [x, y]", DecodeMode::Yaml, Endian::Little, 500);
+        assert!(s.contains("a: 1"), "s={s}");
+        assert!(s.contains("- x"), "s={s}");
+        assert!(s.contains("- y"), "s={s}");
+
+        // 缩进含 Tab 是非法 YAML → 回退 UTF-8 原文
+        let raw = "a:\n\t- 1";
+        let s = decode(raw.as_bytes(), DecodeMode::Yaml, Endian::Little, 100);
+        assert_eq!(s, raw);
+    }
+
+    #[test]
+    fn decode_toml() {
+        setup();
+        // 合法 TOML → 规范化重排
+        let s = decode(b"b = \"x\"\na = 1", DecodeMode::Toml, Endian::Little, 500);
+        assert!(s.contains("a = 1"), "s={s}");
+        assert!(s.contains("b = \"x\""), "s={s}");
+
+        // 非法 TOML 回退 UTF-8 原文
+        assert_eq!(decode(b"a =", DecodeMode::Toml, Endian::Little, 100), "a =");
+    }
+
+    #[test]
+    fn decode_xml() {
+        setup();
+        // 合法 XML → 两空格缩进重排，单一文本子节点内联
+        let raw: &[u8] = br#"<root a="1"><x>hi</x><y/></root>"#;
+        let s = decode(raw, DecodeMode::Xml, Endian::Little, 500);
+        assert!(s.contains("<root a=\"1\">"), "s={s}");
+        assert!(s.contains("  <x>hi</x>"), "s={s}");
+        assert!(s.contains("  <y/>"), "s={s}");
+        assert!(s.trim_end().ends_with("</root>"), "s={s}");
+
+        // 注释保留（XML 声明被 roxmltree 作为文档信息消费，不产出节点）
+        let raw: &[u8] = b"<a><!--note--></a>";
+        let s = decode(raw, DecodeMode::Xml, Endian::Little, 500);
+        assert!(s.contains("<!--note-->"), "s={s}");
+
+        // 文本实体转义还原
+        let raw: &[u8] = br#"<t>a &lt; b &amp; c</t>"#;
+        let s = decode(raw, DecodeMode::Xml, Endian::Little, 500);
+        assert!(s.contains("<t>a &lt; b &amp; c</t>"), "s={s}");
+
+        // 非法 XML 回退 UTF-8 原文
+        assert_eq!(decode(b"<a><b>", DecodeMode::Xml, Endian::Little, 100), "<a><b>");
     }
 }

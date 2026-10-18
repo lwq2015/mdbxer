@@ -399,6 +399,28 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
                 .0
                 .into_owned(),
         ),
+        // 手动切到 shift_jis 排版时，应显示日文；Auto 不猜传统编码（与 UTF-8
+        // 字节分布无法可靠区分），与 gb18030/windows-1251 同理
+        (
+            b"sjis_text",
+            encoding_rs::SHIFT_JIS
+                .encode("日本語テキスト")
+                .0
+                .into_owned(),
+        ),
+        // 手动切到 big5 排版时，应显示繁体中文
+        (
+            b"big5_text",
+            encoding_rs::BIG5.encode("繁體中文測試").0.into_owned(),
+        ),
+        // 手动切到 windows-1252 排版时，应显示西欧字符（é/ü/—）
+        (
+            b"cp1252_text",
+            encoding_rs::WINDOWS_1252
+                .encode("Café crème — über")
+                .0
+                .into_owned(),
+        ),
         // ── 新格式：base64 / uuid / json ──
         // 手动切到 Base64 排版时，值应显示为 SGVsbG8sIE1EQlgh
         (b"base64_hello", b"Hello, MDBX!".to_vec()),
@@ -560,6 +582,31 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
                 ),
             ])),
         ),
+        // ── 新格式：YAML / TOML / XML（手动排版规范化重排；XML 还进 Auto）──
+        // YAML：切 Yaml 排版应规范化重排（流式列表展开为块序列等）；Auto 不
+        // 识别 YAML（文本形态歧义大：纯标量/键值对与普通文本无法可靠区分）
+        (
+            b"yaml_config",
+            b"app:\n  name: mdbx\n  debug: false\nservers: [a, b, c]\ntimeout: 30\n".to_vec(),
+        ),
+        // 非法 YAML（缩进含 Tab）：切 Yaml 应回退原文
+        (b"yaml_invalid", b"a:\n\t- 1\n".to_vec()),
+        // TOML：切 Toml 排版应规范化重排
+        (
+            b"toml_config",
+            b"title = \"mdbx\"\n\n[owner]\nname = \"lwq\"\n\n[db]\nmax_readers = 126\n".to_vec(),
+        ),
+        // 非法 TOML：切 Toml 应回退原文
+        (b"toml_invalid", b"title =\n".to_vec()),
+        // XML：Auto 应识别为 XML（表格显示紧凑原文），详情按 XML 缩进重排；
+        // 手动切 Xml 排版同样缩进重排
+        (
+            b"xml_config",
+            br#"<config version="1.0"><app name="mdbx" debug="false"/><servers><s>alpha</s><s>beta</s></servers></config>"#
+                .to_vec(),
+        ),
+        // 非法 XML（标签不配对）：Auto 不识别，切 Xml 回退原文
+        (b"xml_invalid", b"<a><b></a>".to_vec()),
         // ── Protobuf 样本（5 条；UI 载入 testdata/test.proto 后可选类型，
         //    已载入时 Auto 自动识别）──
         (b"proto_simple", proto_simple.clone()),
@@ -570,6 +617,10 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
         (b"zstd_json_object", zstd::stream::encode_all(JSON_SAMPLE, 3).unwrap()),
         (b"bz2_json_object", bz2(JSON_SAMPLE)),
         (b"xz_json_object", xz(JSON_SAMPLE)),
+        // snappy（framed 流有魔数）/ brotli（无魔数试探解码，样本用长 JSON
+        // 保证压缩后仍超过 16 字节试探门槛）
+        (b"snappy_json_object", snappy(JSON_SAMPLE)),
+        (b"brotli_json_object", brotli(JSON_SAMPLE_LONG)),
         // ── 地址 / FILETIME 样本：表格 Auto 列值文本应追加解读 ──
         // 4 字节 → `IPv4 192.168.1.1`；6 字节 → `MAC 00:1A:2B:3C:4D:5E`；
         // 16 字节 → `IPv6 2001:db8::1`；8 字节 → FILETIME 附本地日期。
@@ -703,6 +754,10 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
 /// 压缩样本共用的紧凑 JSON（与 json_object 相同内容）
 const JSON_SAMPLE: &[u8] = br#"{"name":"mdbx","version":1,"tags":["fast","embedded"]}"#;
 
+/// brotli 样本专用的长 JSON：brotli 无魔数、靠试探解码（≥16 字节门槛），
+/// 短 JSON 经内置字典压缩后可能不足 16 字节导致不识别
+const JSON_SAMPLE_LONG: &[u8] = br#"{"name":"mdbx","version":1,"tags":["fast","embedded","mdbx"],"desc":"The fastest LMDB-compatible embedded key-value database","nested":{"debug":false,"retries":3,"hosts":["a.example.com","b.example.com","c.example.com"]}}"#;
+
 /// rmpv 字符串值简写
 fn s(v: &str) -> rmpv::Value {
     rmpv::Value::String(v.into())
@@ -746,6 +801,20 @@ fn xz(data: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     lzma_rs::xz_compress(&mut std::io::Cursor::new(data), &mut out).unwrap();
     out
+}
+
+/// snappy framed 压缩
+fn snappy(data: &[u8]) -> Vec<u8> {
+    let mut e = snap::write::FrameEncoder::new(Vec::new());
+    e.write_all(data).unwrap();
+    e.into_inner().unwrap()
+}
+
+/// brotli 压缩（仅测试样本生成用，运行时只依赖 brotli-decompressor）
+fn brotli(data: &[u8]) -> Vec<u8> {
+    let mut e = brotli::CompressorWriter::new(Vec::new(), 4096, 5, 22);
+    e.write_all(data).unwrap();
+    e.into_inner()
 }
 
 /// 生成完整的 1×1 透明 PNG（RGBA），另存后可正常打开
