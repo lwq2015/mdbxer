@@ -19,6 +19,8 @@ pub(crate) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         hint_section(ui, app);
         ui.add_space(10.0);
         display_section(ui, app);
+        ui.add_space(10.0);
+        shortcuts_section(ui);
     });
 }
 
@@ -163,3 +165,36 @@ fn display_section(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
 /// 单元格显示长度档位（与原顶栏一致）。
 const CELL_MAXES: &[usize] = &[64, 128, 256, 512, 1024, 4096];
+
+/// 节 3：快捷键清单（只读，仅供查阅）。
+fn shortcuts_section(ui: &mut egui::Ui) {
+    let t = crate::i18n::tr();
+
+    ui.group(|ui| {
+        ui.label(egui::RichText::new(t.shortcut_section).strong())
+            .on_hover_text(t.shortcut_section_tip);
+        ui.add_space(4.0);
+
+        let rows: [(&str, &str); 9] = [
+            ("Ctrl+O", t.sc_open),
+            ("Ctrl+F", t.sc_search),
+            ("F3 / Shift+F3", t.sc_f3),
+            ("Esc", t.sc_clear),
+            ("PgDn / PgUp", t.sc_page),
+            ("↑ / ↓", t.sc_rownav),
+            ("Ctrl+C", t.sc_copy_row),
+            ("Enter", t.sc_enter),
+            ("Esc", t.sc_hex_clear),
+        ];
+        egui::Grid::new("shortcuts_grid")
+            .num_columns(2)
+            .spacing([24.0, 4.0])
+            .show(ui, |ui| {
+                for (key, desc) in rows {
+                    ui.label(egui::RichText::new(key).monospace().strong());
+                    ui.label(desc);
+                    ui.end_row();
+                }
+            });
+    });
+}

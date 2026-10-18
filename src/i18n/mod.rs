@@ -375,6 +375,19 @@ pub struct I18n {
     /// 显示参数节标题与「千位分隔」标签
     pub disp_section: &'static str,
     pub thousands_label: &'static str,
+    /// 快捷键清单节标题与提示
+    pub shortcut_section: &'static str,
+    pub shortcut_section_tip: &'static str,
+    // 各快捷键说明（按键用等宽显示，列在说明前）
+    pub sc_open: &'static str,
+    pub sc_search: &'static str,
+    pub sc_f3: &'static str,
+    pub sc_clear: &'static str,
+    pub sc_page: &'static str,
+    pub sc_rownav: &'static str,
+    pub sc_copy_row: &'static str,
+    pub sc_enter: &'static str,
+    pub sc_hex_clear: &'static str,
     /// 「单元格显示长度」行标签（原顶栏无标签，高级配置页新增）
     pub cell_max_label: &'static str,
 
@@ -755,6 +768,9 @@ mod tests {
             assert!(!table.tables_title.is_empty());
             assert!(!table.detail_select_hint.is_empty());
             assert!(!table.dup_tip_first.is_empty());
+            assert!(!table.shortcut_section.is_empty());
+            assert!(!table.sc_open.is_empty());
+            assert!(!table.sc_hex_clear.is_empty());
         }
     }
 
