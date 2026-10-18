@@ -131,6 +131,20 @@ impl Status {
     }
 }
 
+/// DecodeMode 排版下拉的分组渲染数据：组名随界面语言，成员与顺序由
+/// `fmt::DecodeMode::GROUPS` 定义（下标一一对应）。自动项由调用方单独置顶；
+/// 滚轮循环遍历用 `DecodeMode::flat_all()`（平铺序）。
+pub fn format_groups() -> [(&'static str, &'static [DecodeMode]); 5] {
+    let t = crate::i18n::tr();
+    [
+        (t.grp_text, &DecodeMode::GROUPS[0]),
+        (t.grp_num, &DecodeMode::GROUPS[1]),
+        (t.grp_bytes, &DecodeMode::GROUPS[2]),
+        (t.grp_ident, &DecodeMode::GROUPS[3]),
+        (t.grp_struct, &DecodeMode::GROUPS[4]),
+    ]
+}
+
 /// 让 ComboBox 支持滚轮：悬停在按钮上（未展开）时逐格切换选项。
 /// - 鼠标滚轮：一个刻度事件切换一项（不跳格）
 /// - 触控板像素滚动：累计满 40 点切换一项

@@ -112,6 +112,13 @@ pub struct I18n {
 
     // ── 解码格式 ──
     pub mode_auto: &'static str,
+
+    /// 排版下拉分组标题（DecodeMode::GROUPS，顺序一一对应）
+    pub grp_text: &'static str,
+    pub grp_num: &'static str,
+    pub grp_bytes: &'static str,
+    pub grp_ident: &'static str,
+    pub grp_struct: &'static str,
     /// Protobuf：载入 .proto 按钮
     pub proto_load: &'static str,
     /// Protobuf：载入按钮 hover 提示

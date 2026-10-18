@@ -911,16 +911,22 @@ fn kv_card(
                     }
                     // 格式下拉
                     let mut mode = app.detail.mode_of(is_key);
-                    let sorted = DecodeMode::sorted_all();
+                    let flat = DecodeMode::flat_all();
                     let ir = egui::ComboBox::from_id_salt(("detail_mode", is_key))
                         .selected_text(mode.label())
                         .height(430.0)
                         .show_ui(ui, |ui| {
-                            for m in &sorted {
-                                ui.selectable_value(&mut mode, *m, m.label());
+                            // 自动项置顶；其余按"文本编码/数值/字节视图/标识与时间/结构化"分组
+                            ui.selectable_value(&mut mode, DecodeMode::Auto, DecodeMode::Auto.label());
+                            for (grp, items) in super::format_groups() {
+                                // 组标题：弱化小字，不可选中
+                                ui.add(egui::Label::new(egui::RichText::new(grp).weak().small()));
+                                for m in items {
+                                    ui.selectable_value(&mut mode, *m, m.label());
+                                }
                             }
                         });
-                    super::wheel_cycle(ui.ctx(), &ir.response, &sorted, &mut mode);
+                    super::wheel_cycle(ui.ctx(), &ir.response, &flat, &mut mode);
                     // 详情卡片排版独立于顶栏表格排版：只改本卡片，不回写全局、不存偏好。
                     if app.detail.mode_of(is_key) != mode {
                         app.detail.set_mode(is_key, mode);

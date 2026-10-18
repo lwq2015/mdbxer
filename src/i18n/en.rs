@@ -28,6 +28,12 @@ pub(super) const EN: I18n = I18n {
     mode_dir: "Folder mode",
 
     mode_auto: "Auto",
+
+    grp_text: "Text encoding",
+    grp_num: "Numeric",
+    grp_bytes: "Byte views",
+    grp_ident: "Identity & time",
+    grp_struct: "Structured",
     proto_load: "Load .proto",
     proto_load_tip: "Load .proto files (multi-select) and compile all message types; remembered globally across restarts",
     proto_pick: "Pick message type",

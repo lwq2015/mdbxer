@@ -162,16 +162,51 @@ impl DecodeMode {
         DecodeMode::Xml,
     ];
 
-    /// 下拉框展示顺序：Auto（默认项）置顶不参与排序，其余按当前界面语言
-    /// 的 label 排序——label 随语言变化时顺序自动跟随。每次调用重新计算，
-    /// 代价可忽略（35 项）。
-    pub fn sorted_all() -> Vec<DecodeMode> {
-        let mut rest: Vec<DecodeMode> = Self::ALL
-            .into_iter()
-            .filter(|m| *m != Self::Auto)
-            .collect();
-        rest.sort_by(|a, b| a.label().cmp(&b.label()));
-        std::iter::once(Self::Auto).chain(rest).collect()
+    /// 下拉分组（成员与顺序固定，组名经 UI 层 i18n 动态显示）：
+    /// 文本编码 / 数值 / 字节视图 / 标识与时间 / 结构化。
+    pub const GROUPS: [&'static [DecodeMode]; 5] = [
+        &[
+            Self::Utf8,
+            Self::Utf16Le,
+            Self::Utf16Be,
+            Self::Gb18030,
+            Self::Cp1251,
+            Self::Sjis,
+            Self::Big5,
+            Self::Cp1252,
+        ],
+        &[
+            Self::I8,
+            Self::I16,
+            Self::I32,
+            Self::I64,
+            Self::U8,
+            Self::U16,
+            Self::U32,
+            Self::U64,
+            Self::F32,
+            Self::F64,
+        ],
+        &[Self::Hex, Self::Dec, Self::Binary, Self::Base64],
+        &[Self::Uuid, Self::Mac, Self::Ip, Self::Time],
+        &[
+            Self::Json,
+            Self::Bson,
+            Self::Msgpack,
+            Self::Cbor,
+            Self::Proto,
+            Self::Yaml,
+            Self::Toml,
+            Self::Xml,
+        ],
+    ];
+
+    /// 滚轮循环遍历的平铺序：Auto 置顶 + 分组顺序拼接
+    /// （覆盖全部变体、无重复；下拉分组渲染见 ui::format_groups）。
+    pub fn flat_all() -> Vec<DecodeMode> {
+        std::iter::once(Self::Auto)
+            .chain(Self::GROUPS.into_iter().flatten().copied())
+            .collect()
     }
 
     /// 下拉框显示文本（"自动"随界面语言；类型名为国际通用写法不翻译）。
@@ -427,19 +462,22 @@ mod tests {
     }
 
     #[test]
-    fn decode_mode_sorted_all_auto_first_rest_by_label() {
-        let sorted = DecodeMode::sorted_all();
+    fn decode_mode_flat_all_groups_cover_all() {
+        let flat = DecodeMode::flat_all();
 
-        // 全量：29 项一个不少
-        assert_eq!(sorted.len(), DecodeMode::ALL.len());
+        // 全量：Auto 置顶，分组拼接恰好覆盖其余变体
+        assert_eq!(flat.len(), DecodeMode::ALL.len());
+        assert_eq!(flat[0], DecodeMode::Auto);
 
-        // Auto 置顶不参与排序
-        assert_eq!(sorted[0], DecodeMode::Auto);
-
-        // 其余按当前语言 label 升序（排序与界面语言关联）
-        assert!(sorted[1..]
-            .windows(2)
-            .all(|w| w[0].label() <= w[1].label()));
+        // 分组并集（不含 Auto）恰好等于 ALL 去掉 Auto：长度相等 + 每个变体
+        // 都在——若有重复则长度必然超出，两条合起来推出无重复
+        let grouped: Vec<_> = DecodeMode::GROUPS.into_iter().flatten().collect();
+        assert_eq!(grouped.len(), DecodeMode::ALL.len() - 1);
+        assert!(DecodeMode::ALL
+            .iter()
+            .filter(|m| **m != DecodeMode::Auto)
+            .all(|m| grouped.contains(&m)));
+        assert!(grouped.iter().all(|m| **m != DecodeMode::Auto));
     }
 
     #[test]

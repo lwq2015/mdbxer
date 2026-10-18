@@ -86,17 +86,23 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             // Key 排版（默认自动；编码固定的表可手动指定）
             ui.label("Key");
             let mut km = app.key_mode;
-            let sorted = DecodeMode::sorted_all();
+            let flat = DecodeMode::flat_all();
             let ir = egui::ComboBox::from_id_salt("key_mode")
                 .width(82.0)
                 .selected_text(km.label())
                 .height(430.0)
                 .show_ui(ui, |ui| {
-                    for m in &sorted {
-                        ui.selectable_value(&mut km, *m, m.label());
+                    // 自动项置顶；其余按"文本编码/数值/字节视图/标识与时间/结构化"分组
+                    ui.selectable_value(&mut km, DecodeMode::Auto, DecodeMode::Auto.label());
+                    for (grp, items) in super::format_groups() {
+                        // 组标题：弱化小字，不可选中
+                        ui.add(egui::Label::new(egui::RichText::new(grp).weak().small()));
+                        for m in items {
+                            ui.selectable_value(&mut km, *m, m.label());
+                        }
                     }
                 });
-            super::wheel_cycle(ui.ctx(), &ir.response, &sorted, &mut km);
+            super::wheel_cycle(ui.ctx(), &ir.response, &flat, &mut km);
             if app.key_mode != km {
                 // 顶栏排版只管表格列；右栏详情卡片有独立排版，不联动。
                 app.key_mode = km;
@@ -106,17 +112,23 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             // Value 排版（默认自动：Value 逐行猜测）
             ui.label("Value");
             let mut vm = app.val_mode;
-            let sorted = DecodeMode::sorted_all();
+            let flat = DecodeMode::flat_all();
             let ir = egui::ComboBox::from_id_salt("val_mode")
                 .width(82.0)
                 .selected_text(vm.label())
                 .height(430.0)
                 .show_ui(ui, |ui| {
-                    for m in &sorted {
-                        ui.selectable_value(&mut vm, *m, m.label());
+                    // 自动项置顶；其余按"文本编码/数值/字节视图/标识与时间/结构化"分组
+                    ui.selectable_value(&mut vm, DecodeMode::Auto, DecodeMode::Auto.label());
+                    for (grp, items) in super::format_groups() {
+                        // 组标题：弱化小字，不可选中
+                        ui.add(egui::Label::new(egui::RichText::new(grp).weak().small()));
+                        for m in items {
+                            ui.selectable_value(&mut vm, *m, m.label());
+                        }
                     }
                 });
-            super::wheel_cycle(ui.ctx(), &ir.response, &sorted, &mut vm);
+            super::wheel_cycle(ui.ctx(), &ir.response, &flat, &mut vm);
             if app.val_mode != vm {
                 app.val_mode = vm;
                 app.save_ui_prefs();

@@ -28,6 +28,12 @@ pub(super) const ZH: I18n = I18n {
     mode_dir: "目录模式",
 
     mode_auto: "自动",
+
+    grp_text: "文本编码",
+    grp_num: "数值",
+    grp_bytes: "字节视图",
+    grp_ident: "标识与时间",
+    grp_struct: "结构化",
     proto_load: "载入 .proto",
     proto_load_tip: "载入 .proto 文件（可多选），编译全部 message 类型；全局记忆，重启沿用",
     proto_pick: "选择 message 类型",

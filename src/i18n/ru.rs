@@ -28,6 +28,12 @@ pub(super) const RU: I18n = I18n {
     mode_dir: "Режим каталога",
 
     mode_auto: "Авто",
+
+    grp_text: "Кодировки",
+    grp_num: "Числа",
+    grp_bytes: "Байты",
+    grp_ident: "Идентификаторы и время",
+    grp_struct: "Структурированные",
     proto_load: "Загрузить .proto",
     proto_load_tip: "Загрузить файлы .proto (можно несколько) и скомпилировать все типы message; запоминается глобально и сохраняется после перезапуска",
     proto_pick: "Выбрать тип message",
