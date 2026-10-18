@@ -1,6 +1,6 @@
 # MDBXer
 
-[libmdbx](https://libmdbx.dqdkfa.ru/) 数据库的**只读**图形查看工具，界面参考 MDB Ray。Rust 2024 + egui 0.36 实现，单文件分发，跨平台（Windows / Linux / macOS）。
+[libmdbx](https://libmdbx.dqdkfa.ru/) 数据库的**只读**图形查看工具。Rust 2024 + egui 0.36 实现，单文件分发，跨平台（Windows / Linux / macOS）。
 
 > 向 libmdbx 及其作者 Leonid Yuriev 致敬——本工具内置俄语界面（Русский）。
 
