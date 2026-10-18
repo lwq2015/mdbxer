@@ -582,9 +582,9 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
                 ),
             ])),
         ),
-        // ── 新格式：YAML / TOML / XML（手动排版规范化重排；XML 还进 Auto）──
-        // YAML：切 Yaml 排版应规范化重排（流式列表展开为块序列等）；Auto 不
-        // 识别 YAML（文本形态歧义大：纯标量/键值对与普通文本无法可靠区分）
+        // ── 新格式：YAML / TOML / XML（手动排版规范化重排；三者均进 Auto）──
+        // YAML：切 Yaml 排版应规范化重排（流式列表展开为块序列等）；Auto 识别
+        // 能整体解析为映射/序列且含 ':' 或 '-' 的复合形态（保守，见 is_yaml）
         (
             b"yaml_config",
             b"app:\n  name: mdbx\n  debug: false\nservers: [a, b, c]\ntimeout: 30\n".to_vec(),

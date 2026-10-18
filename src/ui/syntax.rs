@@ -85,6 +85,12 @@ pub(crate) fn syntax_mode(mode: DecodeMode, window: &[u8]) -> Option<DecodeMode>
                 Some(DecodeMode::Cbor)
             } else if fmt::is_xml(window) {
                 Some(DecodeMode::Xml)
+            } else if fmt::is_yaml(window) {
+                // 保守：能解析为映射/序列且形态像 YAML 才判，避免普通文本误判
+                Some(DecodeMode::Yaml)
+            } else if fmt::is_toml(window) {
+                // 保守：顶层为表/数组且含 `=` 或 `[` 才判，避免裸标量误判
+                Some(DecodeMode::Toml)
             } else {
                 None
             }
@@ -747,10 +753,33 @@ mod tests {
         assert_eq!(syntax_mode(DecodeMode::Yaml, y), Some(DecodeMode::Yaml));
         assert_eq!(syntax_mode(DecodeMode::Yaml, b"a:\n\t- x\n"), None);
 
+        // Auto：形态像 YAML（键/块序列、可整体解析）的才识别；普通句子不着色
+        assert_eq!(
+            syntax_mode(DecodeMode::Auto, b"app:\n  name: mdbx\n  debug: false\ntimeout: 30\n"),
+            Some(DecodeMode::Yaml)
+        );
+        assert_eq!(syntax_mode(DecodeMode::Auto, b"- a\n- b\n"), Some(DecodeMode::Yaml));
+        // 普通文本 / 含 ':' 的路径串 / 非法 YAML 都不判
+        assert_eq!(syntax_mode(DecodeMode::Auto, b"hello world"), None);
+        assert_eq!(syntax_mode(DecodeMode::Auto, b"C:\\Users\\x"), None);
+        assert_eq!(syntax_mode(DecodeMode::Auto, b"a:\n\t- x\n"), None);
+
         // 手动 Toml：合法着色；非法不着色
         let tml = b"title = \"demo\"\n[owner]\nname = \"a\"\n";
         assert_eq!(syntax_mode(DecodeMode::Toml, tml), Some(DecodeMode::Toml));
         assert_eq!(syntax_mode(DecodeMode::Toml, b"title =\n"), None);
+
+        // Auto：顶层为表/数组且含 `=` 或 `[` 才判 TOML；普通/裸标量不判
+        assert_eq!(
+            syntax_mode(DecodeMode::Auto, b"title = \"mdbx\"\n[db]\nmax_readers = 126\n"),
+            Some(DecodeMode::Toml)
+        );
+        assert_eq!(syntax_mode(DecodeMode::Auto, b"name = \"lwq\"\n"), Some(DecodeMode::Toml));
+        // 裸标量、无 '=' 的普通文本不判
+        assert_eq!(syntax_mode(DecodeMode::Auto, b"hello = \"world\""), Some(DecodeMode::Toml));
+        assert_eq!(syntax_mode(DecodeMode::Auto, b"hello world"), None);
+        // 非法 TOML（"title =" 缺值）不判
+        assert_eq!(syntax_mode(DecodeMode::Auto, b"title =\n"), None);
 
         // 手动 Xml：合法（含根元素）着色；不配对/仅注释不着色
         assert_eq!(
@@ -765,9 +794,17 @@ mod tests {
             syntax_mode(DecodeMode::Auto, b"<root><x>1</x></root>"),
             Some(DecodeMode::Xml)
         );
-        // Auto 下 YAML/TOML 标量形态不识别（不进 Auto）
-        assert_eq!(syntax_mode(DecodeMode::Auto, b"title: demo\n"), None);
-        assert_eq!(syntax_mode(DecodeMode::Auto, b"title = \"x\"\n"), None);
+        // Auto 下 YAML/TOML 复合形态（顶层表/映射）要识别
+        assert_eq!(
+            syntax_mode(DecodeMode::Auto, b"title: demo\nother: 1\n"),
+            Some(DecodeMode::Yaml)
+        );
+        assert_eq!(
+            syntax_mode(DecodeMode::Auto, b"title = \"x\"\nenable = true\n"),
+            Some(DecodeMode::Toml)
+        );
+        // 但非映射/序列形态不识别：普通平铺文本解析成裸标量串，不进 Auto
+        assert_eq!(syntax_mode(DecodeMode::Auto, b"hello world"), None);
     }
 
     #[test]

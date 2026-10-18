@@ -109,6 +109,23 @@ fn guess_at_depth(bytes: &[u8], endian: Endian, depth: usize, hints: &HintFlags)
         return ("XML".to_string(), s.trim().to_string());
     }
 
+    // YAML 与上述结构化格式同级但更宽松：能整体解析为映射/序列、且形态像
+    // YAML（含 `:` 键或 `- ` 块序列项）即命中，文本回紧凑原文，缩进重排/着色
+    // 交给详情层。普通平铺句子或含 `:` 的路径串因非复合类型/解析失败不命中，
+    // 不会把一段英文误判成 YAML（详见 is_yaml doc）。
+    if is_yaml(bytes) {
+        let s = std::str::from_utf8(bytes).unwrap_or_default().trim();
+        return ("YAML".to_string(), s.to_string());
+    }
+
+    // TOML 与 YAML 同级（都无魔数、靠整体解析）。形态约束同 is_toml：顶层为
+    // 表/数组 + 文本含 `=` 或 `[`，普通句子（裸标量）不命中。文本回紧凑原文，
+    // pretty/着色交给详情层。
+    if is_toml(bytes) {
+        let s = std::str::from_utf8(bytes).unwrap_or_default().trim();
+        return ("TOML".to_string(), s.to_string());
+    }
+
     // Protobuf：已载入协议池时全池试探解码（unknown 字段判别）。wire format
     // 与随机二进制不可区分，但正确类型解码后 unknown 为空、错误类型几乎必有
     // unknown——强判别；未载入池/无 0-unknown 候选时静默跳过。限制字节数
@@ -357,6 +374,56 @@ pub fn is_xml(bytes: &[u8]) -> bool {
         .find(|b| !b.is_ascii_whitespace())
         .is_some_and(|b| b == b'<')
         && roxmltree::Document::parse(s).is_ok()
+}
+
+/// 判断字节是否为 YAML 文档（用于 Auto 自动识别与详情着色）。
+///
+/// YAML 是 JSON 的纯文本超集，普通文本也能被解析成标量字符串，故不能只靠
+/// "可解析"判定——否则英文一句话会被误判成 YAML。这里叠加"形态"约束：
+/// UTF-8 可解码 + serde_yaml 整体解析 + 结果是映射/序列（非标量）+
+/// 文本含 `:`（映射键）或 `- `（块序列项）。纯 JSON 已被 `is_structured_json`
+/// 优先截走、块缩进文本解析后非常量即复合，因此普通平铺句子（解析成字符串
+/// 标量）或含 `:` 的路径串（`\U` 等转义使解析失败）均不命中，误判率低。
+pub fn is_yaml(bytes: &[u8]) -> bool {
+    let Ok(s) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+
+    // 形态约束：无 `:` 键也无 `- ` 块序列项时按普通文本处理，不判 YAML。
+    let has_shape = s.contains(':') || s.lines().any(|l| l.trim_start().starts_with("- "));
+    if !has_shape {
+        return false;
+    }
+
+    matches!(
+        serde_yaml::from_str::<serde_yaml::Value>(s),
+        Ok(serde_yaml::Value::Mapping(_) | serde_yaml::Value::Sequence(_))
+    )
+}
+
+/// 判断字节是否为 TOML 文档（用于 Auto 自动识别与详情着色）。
+///
+/// 与 YAML 同理，TOML 是宽松的纯文本文法，裸标量（`"hello"`、`1`、`true`）
+/// 也能被 `toml::from_str::<toml::Value>` 解析成功，不能只靠"可解析"判定。
+/// 这里叠加"形态"约束：UTF-8 可解码 + 顶层解析为表/数组（复合结构，非裸
+/// 标量）+ 文本含 `=`（键值对，`k = v`）。普通平铺句子解析成裸标量、或
+/// 含 `:` 的路径串无 `=`，均不命中；纯 JSON 数组已被 `is_structured_json`
+/// 优先截走，故 `[1,2,3]` 不会落到这里判成 TOML。
+pub fn is_toml(bytes: &[u8]) -> bool {
+    let Ok(s) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+
+    // 形态约束：无 `=` 键值对也不含节头/数组 `[` 时按普通文本处理。
+    let has_shape = s.contains('=') || s.contains('[');
+    if !has_shape {
+        return false;
+    }
+
+    matches!(
+        toml::from_str::<toml::Value>(s),
+        Ok(toml::Value::Table(_) | toml::Value::Array(_))
+    )
 }
 
 /// 尝试把字节识别为 UTF-16 文本。
@@ -772,6 +839,77 @@ mod tests {
         assert!(!is_xml(b"<a><b></a>")); // 标签不配对
         assert!(!is_xml("<!-- 仅注释 -->".as_bytes())); // 无根元素
         assert!(!is_xml(&[]));
+    }
+
+    #[test]
+    fn guess_yaml_document() {
+        // Auto 识别为 YAML，文本为紧凑原文（trim 首尾空白）
+        let y = b"app:\n  name: mdbx\n  debug: false\ntimeout: 30\n";
+        let (label, text) = guess(y, Endian::Little);
+        assert_eq!(label, "YAML");
+        assert_eq!(text, "app:\n  name: mdbx\n  debug: false\ntimeout: 30");
+
+        // 块序列形态
+        let (label, _) = guess(b"- a\n- b\n- c\n", Endian::Little);
+        assert_eq!(label, "YAML");
+    }
+
+    #[test]
+    fn yaml_predicate() {
+        // 映射：整体可解析 + 含 ':' → YAML
+        assert!(is_yaml(b"a: 1\nb: two\n"));
+        assert!(is_yaml(b"name: mdbx\nport: 8080\n"));
+        // 块序列 + '-' 项
+        assert!(is_yaml(b"- red\n- green\n"));
+        // 流式序列（serde 解析为 Sequence，且含 '-' 项或 ':'）
+        assert!(is_yaml(b"- 1\n- 2\n"));
+
+        // 普通平铺句子解析成字符串标量 → 非复合 → 不命中
+        assert!(!is_yaml(b"hello world"));
+        assert!(!is_yaml(b"just a sentence with no structure"[..].as_ref()));
+        // 单行含 ':' 但解析成标量（非复合）不命中
+        assert!(!is_yaml(b"a"));
+        // 含 ':' 的路径串因解析失败（\U 转义非法）不命中
+        assert!(!is_yaml(b"C:\\Users\\x"));
+        // 非法 YAML（Tab 缩进）解析失败
+        assert!(!is_yaml(b"a:\n\t- x\n"));
+        // 非 UTF-8 不命中
+        assert!(!is_yaml(&[0x80, 0x81, 0x82]));
+        // 空/超短
+        assert!(!is_yaml(b""));
+    }
+
+    #[test]
+    fn guess_toml_document() {
+        // Auto 识别为 TOML（顶层表），文本回紧凑原文
+        let t = b"title = \"mdbx\"\n[owner]\nname = \"lwq\"\n";
+        let (label, text) = guess(t, Endian::Little);
+        assert_eq!(label, "TOML");
+        assert_eq!(text, "title = \"mdbx\"\n[owner]\nname = \"lwq\"");
+
+        // 纯键值对（单表）
+        let (label, _) = guess(b"name = \"lwq\"\nport = 8080\n", Endian::Little);
+        assert_eq!(label, "TOML");
+    }
+
+    #[test]
+    fn toml_predicate() {
+        // 顶层表 + '=' → TOML
+        assert!(is_toml(b"name = \"mdbx\"\n"));
+        assert!(is_toml(b"title = \"mdbx\"\n[owner]\nname = \"lwq\"\n"));
+        assert!(is_toml(b"a = 1\nb = 2\n"));
+
+        // 普通句子：无 '=' 无 '[' → 不命中
+        assert!(!is_toml(b"hello world"));
+        // 含 ':' 的路径串：无 '=' 无 '[' → 不命中
+        assert!(!is_toml(b"C:\\Users\\x"));
+        // 非法 TOML（"title =" 缺值）解析失败
+        assert!(!is_toml(b"title =\n"));
+        // 裸标量虽可被 toml 解析，但顶层非表/数组（或解析为标量）不命中
+        assert!(!is_toml(b"hello")); // 顶层 String
+        // 非 UTF-8 / 空
+        assert!(!is_toml(&[0x80, 0x81, 0x82]));
+        assert!(!is_toml(b""));
     }
 
     #[test]

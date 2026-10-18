@@ -12,7 +12,7 @@ mod value;
 
 pub use guess::{HintFlags, guess};
 pub(crate) use compress::decompress;
-pub(crate) use guess::{is_bson, is_cbor, is_msgpack, is_structured_json, is_xml, magic_hint};
+pub(crate) use guess::{is_bson, is_cbor, is_msgpack, is_structured_json, is_toml, is_xml, is_yaml, magic_hint};
 pub(crate) use hexdump::{
     addr_chars, addr_digits, hex_copy_selection, hex_line, hex_section_chars, mid_gap_index,
 };
@@ -124,44 +124,6 @@ pub enum DecodeMode {
 }
 
 impl DecodeMode {
-    pub const ALL: [DecodeMode; 35] = [
-        DecodeMode::Auto,
-        DecodeMode::Utf8,
-        DecodeMode::Utf16Le,
-        DecodeMode::Utf16Be,
-        DecodeMode::Gb18030,
-        DecodeMode::Cp1251,
-        DecodeMode::Sjis,
-        DecodeMode::Big5,
-        DecodeMode::Cp1252,
-        DecodeMode::I8,
-        DecodeMode::I16,
-        DecodeMode::I32,
-        DecodeMode::I64,
-        DecodeMode::U8,
-        DecodeMode::U16,
-        DecodeMode::U32,
-        DecodeMode::U64,
-        DecodeMode::F32,
-        DecodeMode::F64,
-        DecodeMode::Hex,
-        DecodeMode::Dec,
-        DecodeMode::Binary,
-        DecodeMode::Base64,
-        DecodeMode::Uuid,
-        DecodeMode::Mac,
-        DecodeMode::Ip,
-        DecodeMode::Time,
-        DecodeMode::Json,
-        DecodeMode::Bson,
-        DecodeMode::Msgpack,
-        DecodeMode::Cbor,
-        DecodeMode::Proto,
-        DecodeMode::Yaml,
-        DecodeMode::Toml,
-        DecodeMode::Xml,
-    ];
-
     /// 下拉分组（成员与顺序固定，组名经 UI 层 i18n 动态显示）：
     /// 文本编码 / 数值 / 字节视图 / 标识与时间 / 结构化。
     pub const GROUPS: [&'static [DecodeMode]; 5] = [
@@ -425,6 +387,45 @@ impl DecodeMode {
 mod tests {
     use super::*;
 
+    /// 全部变体清单（验证分组覆盖性与 label 完备性）
+    const ALL: [DecodeMode; 35] = [
+        DecodeMode::Auto,
+        DecodeMode::Utf8,
+        DecodeMode::Utf16Le,
+        DecodeMode::Utf16Be,
+        DecodeMode::Gb18030,
+        DecodeMode::Cp1251,
+        DecodeMode::Sjis,
+        DecodeMode::Big5,
+        DecodeMode::Cp1252,
+        DecodeMode::I8,
+        DecodeMode::I16,
+        DecodeMode::I32,
+        DecodeMode::I64,
+        DecodeMode::U8,
+        DecodeMode::U16,
+        DecodeMode::U32,
+        DecodeMode::U64,
+        DecodeMode::F32,
+        DecodeMode::F64,
+        DecodeMode::Hex,
+        DecodeMode::Dec,
+        DecodeMode::Binary,
+        DecodeMode::Base64,
+        DecodeMode::Uuid,
+        DecodeMode::Mac,
+        DecodeMode::Ip,
+        DecodeMode::Time,
+        DecodeMode::Json,
+        DecodeMode::Bson,
+        DecodeMode::Msgpack,
+        DecodeMode::Cbor,
+        DecodeMode::Proto,
+        DecodeMode::Yaml,
+        DecodeMode::Toml,
+        DecodeMode::Xml,
+    ];
+
     #[test]
     fn endian_suffix() {
         assert_eq!(Endian::Little.suffix(), "LE");
@@ -458,7 +459,7 @@ mod tests {
 
     #[test]
     fn decode_mode_all_complete() {
-        assert_eq!(DecodeMode::ALL.len(), 35);
+        assert_eq!(ALL.len(), 35);
     }
 
     #[test]
@@ -466,14 +467,14 @@ mod tests {
         let flat = DecodeMode::flat_all();
 
         // 全量：Auto 置顶，分组拼接恰好覆盖其余变体
-        assert_eq!(flat.len(), DecodeMode::ALL.len());
+        assert_eq!(flat.len(), ALL.len());
         assert_eq!(flat[0], DecodeMode::Auto);
 
         // 分组并集（不含 Auto）恰好等于 ALL 去掉 Auto：长度相等 + 每个变体
         // 都在——若有重复则长度必然超出，两条合起来推出无重复
         let grouped: Vec<_> = DecodeMode::GROUPS.into_iter().flatten().collect();
-        assert_eq!(grouped.len(), DecodeMode::ALL.len() - 1);
-        assert!(DecodeMode::ALL
+        assert_eq!(grouped.len(), ALL.len() - 1);
+        assert!(ALL
             .iter()
             .filter(|m| **m != DecodeMode::Auto)
             .all(|m| grouped.contains(&m)));
@@ -482,7 +483,7 @@ mod tests {
 
     #[test]
     fn decode_mode_as_str_from_str_round_trip() {
-        for m in DecodeMode::ALL {
+        for m in ALL {
             assert_eq!(DecodeMode::from_str(m.as_str()), m);
         }
         // 未知值回退 Auto
@@ -517,7 +518,7 @@ mod tests {
         );
 
         // 全部非 Auto 模式都有标签
-        for m in DecodeMode::ALL {
+        for m in ALL {
             if m != DecodeMode::Auto {
                 assert!(m.forced_label(Endian::Little).is_some());
             }
