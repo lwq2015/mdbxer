@@ -132,9 +132,9 @@ impl DecodeMode {
             Self::Utf16Le,
             Self::Utf16Be,
             Self::Gb18030,
-            Self::Cp1251,
-            Self::Sjis,
             Self::Big5,
+            Self::Sjis,
+            Self::Cp1251,
             Self::Cp1252,
         ],
         &[
@@ -153,13 +153,13 @@ impl DecodeMode {
         &[Self::Uuid, Self::Mac, Self::Ip, Self::Time],
         &[
             Self::Json,
+            Self::Yaml,
+            Self::Toml,
+            Self::Xml,
             Self::Bson,
             Self::Msgpack,
             Self::Cbor,
             Self::Proto,
-            Self::Yaml,
-            Self::Toml,
-            Self::Xml,
         ],
     ];
 
