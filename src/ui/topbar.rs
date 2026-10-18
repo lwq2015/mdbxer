@@ -87,11 +87,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             }
             // 打开库所在位置：单文件模式定位文件，目录模式打开目录
             if let (Some(h), Some(p)) = (&app.db, &app.opened_path) {
-                if ui
-                    .button("📂")
-                    .on_hover_text(t.btn_reveal_tip)
-                    .clicked()
-                {
+                if ui.button("📂").on_hover_text(t.btn_reveal_tip).clicked() {
                     reveal_in_folder(p, h.no_sub_dir);
                 }
             }
