@@ -105,71 +105,8 @@ jobs:
           generate_release_notes: true
           files: dist/*
 
-  gitee-release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: build
-    runs-on: ubuntu-latest
-    continue-on-error: true # GitHub Actions runner 访问 Gitee API 可能超时，不阻塞整体发布
-    steps:
-      - uses: actions/checkout@v4
-
-      # Gitee Release 正文同样取 annotated tag message（与 GitHub 一致）
-      - name: 取 annotated tag 说明作为 Release 正文
-        id: tagbody
-        run: |
-          git fetch --tags --force
-          {
-            echo "BODY<<EOF"
-            git tag -l --format='%(contents)' "${{ github.ref_name }}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: mdbxer-*
-          path: dist
-          merge-multiple: true
-
-      - name: 创建 Gitee Release
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          TAG: ${{ github.ref_name }}
-          BODY: ${{ steps.tagbody.outputs.BODY }}
-        run: |
-          set -e
-          REPO="lwq_yu/mdbxer"
-          # 前置诊断：secret 未配置时直接明确报错（避免 401 让人猜）
-          [ -n "$GITEE_TOKEN" ] || { echo "GITEE_TOKEN secret 未配置（GitHub 仓库 Settings → Secrets and variables → Actions）"; exit 1; }
-          # Gitee 对 GitHub 机房 IP 偶发拒连/限流：加连接与总超时 + 重试
-          CURL="curl -s --connect-timeout 15 --max-time 120 --retry 3 --retry-delay 5 --retry-all-errors"
-          # 已存在则复用（按 tag 查列表），不存在则创建
-          ID=$($CURL "https://gitee.com/api/v5/repos/${REPO}/releases?access_token=${GITEE_TOKEN}&per_page=100" \
-            | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id' | head -n1)
-          if [ -z "$ID" ]; then
-            jq -n \
-              --arg at "$GITEE_TOKEN" \
-              --arg tag "$TAG" \
-              --arg name "$TAG" \
-              --arg body "$BODY" \
-              '{access_token: $at, tag_name: $tag, name: $name, body: $body, target_commitish: "master"}' \
-              | $CURL -X POST -H "Content-Type: application/json" -d @- \
-              "https://gitee.com/api/v5/repos/${REPO}/releases" > /tmp/rel.json
-            ID=$(jq -r .id /tmp/rel.json)
-          fi
-          [ -n "$ID" ] && [ "$ID" != "null" ] || { echo "创建 Release 失败"; cat /tmp/rel.json 2>/dev/null; exit 1; }
-          echo "GITEE_RELEASE_ID=$ID" >> "$GITHUB_ENV"
-
-      - name: 上传附件到 Gitee Release
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-        run: |
-          set -e
-          REPO="lwq_yu/mdbxer"
-          for f in dist/*; do
-            echo "上传 $f"
-            # 大文件上传易断：加超时与重试
-            curl -s --connect-timeout 15 --max-time 600 --retry 3 --retry-delay 5 --retry-all-errors -X POST \
-              -F "access_token=${GITEE_TOKEN}" \
-              -F "file=@${f}" \
-              "https://gitee.com/api/v5/repos/${REPO}/releases/${GITEE_RELEASE_ID}/attach_files" > /dev/null
-          done
+  # 说明（2026-10-18 移除）：Release 统一放 GitHub，Gitee 只作 git 镜像同步 tag。
+  # gitee-release 任务原本把三平台产物回传给 Gitee Release，但 GitHub runner 访问
+  # Gitee API 偶发拒连/重置，历史上约半版本回传失败，需本地手动补发，得不偿失。
+  # Gitee 侧用户下载入口已指向 GitHub Releases；Gitee 页面保留自动生成的源码包
+  # （v*.zip/tar.gz）。发版技能 mdbxer-release 提供本地补发流程，如需恢复再启用此任务。
