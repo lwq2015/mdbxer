@@ -176,3 +176,57 @@ impl DbHandle {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libmdbx::{Database, DatabaseOptions, Mode, NoWriteMap, ReadWriteOptions};
+
+    /// 在系统临时目录创建一个最小空库（创建后立即关闭写句柄），返回路径。
+    fn make_temp_db(tag: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("mdbxer_{}_{}.mdbx", tag, std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let opts = DatabaseOptions {
+            no_sub_dir: true,
+            mode: Mode::ReadWrite(ReadWriteOptions::default()),
+            ..Default::default()
+        };
+        drop(Database::<NoWriteMap>::open_with_options(&path, opts).expect("create temp db"));
+        path
+    }
+
+    /// 回归：libmdbx 禁止同进程对同一库开两个环境（MDBX_BUSY，经 LCK 共享内存
+    /// 的 rthc_uniq_check 进程内唯一性检查实现）。open_db/run_recover 的重开
+    /// 逻辑必须先关旧句柄——否则修复成功后的重新打开会被自己的临时句柄挡住，
+    /// 表现为"修复了却打不开、重启程序才正常"。
+    #[test]
+    fn reopen_same_file_in_process_requires_closing_first() {
+        let path = make_temp_db("busy_reopen");
+
+        let first = DbHandle::open(&path, OpenMode::SingleFile).expect("首次打开应成功");
+
+        // 同进程二次打开同一文件：应被拒绝，且错误码为 MDBX_BUSY
+        let err = Database::<NoWriteMap>::open_with_options(
+            &path,
+            DatabaseOptions {
+                no_sub_dir: true,
+                accede: true,
+                mode: Mode::ReadOnly,
+                ..Default::default()
+            },
+        )
+        .expect_err("同进程二次打开应被拒绝");
+        assert!(
+            matches!(err, libmdbx::Error::Busy),
+            "应为 MDBX_BUSY，实际：{err:?}"
+        );
+
+        // 关闭旧句柄后即可重开（修复方案"先关再开"的依据）
+        drop(first);
+        let again = DbHandle::open(&path, OpenMode::SingleFile).expect("关闭旧句柄后重开应成功");
+        drop(again);
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("lck"));
+    }
+}

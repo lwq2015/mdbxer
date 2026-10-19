@@ -780,6 +780,13 @@ impl MdbxerApp {
             return;
         }
 
+        // 重开的就是当前已打开的库（如点历史中的当前库）：先关旧句柄。
+        // libmdbx 禁止同进程对同一库开两个环境（MDBX_BUSY），否则新环境
+        // 还没建出来就会被旧句柄挡住，并误弹"修复"确认框。
+        if self.opened_path.as_deref() == Some(path.as_str()) {
+            self.close_db();
+        }
+
         match DbHandle::open(std::path::Path::new(&path), self.open_mode) {
             Ok(handle) => {
                 // 打开成功后规范化路径（canonicalize 要求路径存在，故放在此处）
@@ -922,6 +929,15 @@ impl MdbxerApp {
         let Some(p) = self.pending_recover.take() else {
             return;
         };
+
+        // 该库若已在本程序打开（坏掉前打开过），必须先关旧句柄：
+        // libmdbx 禁止同进程对同一库开两个环境（MDBX_BUSY），
+        // 否则读写恢复第一步就会被旧句柄挡住。
+        let cur = normalize_path(&p.path);
+        if self.opened_path.as_deref() == Some(cur.as_str()) {
+            self.close_db();
+        }
+
         if backup {
             let bak = std::path::PathBuf::from(format!("{}.bak-recover", p.path));
             if let Err(e) = std::fs::copy(&p.path, &bak) {
@@ -929,10 +945,16 @@ impl MdbxerApp {
                 return;
             }
         }
-        match crate::db::DbHandle::open_recover(std::path::Path::new(&p.path), p.mode) {
-            Ok(_) => self.open_db(&p.path),
-            Err(e) => self.status = Status::error(e),
+
+        // 不能写成 `match ... { Ok(_) => self.open_db(...) }`：Ok 里的 DbHandle
+        // 是 match 瞰视临时值，会存活到整条 match 语句结束，随后 open_db 同进程
+        // 重开同库会被拒绝（MDBX_BUSY）——修复明明成功却表现为"打不开"。
+        // 先让 if let 语句结束、返回的句柄彻底关闭，再走正常打开。
+        if let Err(e) = crate::db::DbHandle::open_recover(std::path::Path::new(&p.path), p.mode) {
+            self.status = Status::error(e);
+            return;
         }
+        self.open_db(&p.path);
     }
 
     /// 左右缘悬浮开关：垂直居中，"<"/">" 箭头指示收合方向。
