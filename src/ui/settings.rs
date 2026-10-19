@@ -20,6 +20,8 @@ pub(crate) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         ui.add_space(10.0);
         display_section(ui, app);
         ui.add_space(10.0);
+        log_section(ui);
+        ui.add_space(10.0);
         shortcuts_section(ui);
     });
 }
@@ -166,7 +168,66 @@ fn display_section(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 /// 单元格显示长度档位（与原顶栏一致）。
 const CELL_MAXES: &[usize] = &[64, 128, 256, 512, 1024, 4096];
 
-/// 节 3：快捷键清单（只读，仅供查阅）。
+/// 节 3：日志（等级切换 + 打开日志目录）。
+fn log_section(ui: &mut egui::Ui) {
+    let t = crate::i18n::tr();
+
+    ui.group(|ui| {
+        ui.label(egui::RichText::new(t.log_section).strong())
+            .on_hover_text(t.log_section_tip);
+        ui.add_space(4.0);
+
+        egui::Grid::new("log_grid")
+            .num_columns(2)
+            .spacing([16.0, 6.0])
+            .show(ui, |ui| {
+                // 日志等级：切换即时生效并持久化
+                ui.label(t.log_level);
+                let cur = crate::logging::level();
+                let mut lv = cur;
+                let ir = egui::ComboBox::from_id_salt("set_log_level")
+                    .width(72.0)
+                    .selected_text(level_label(lv))
+                    .show_ui(ui, |ui| {
+                        for l in crate::logging::Level::ALL {
+                            ui.selectable_value(&mut lv, l, level_label(l));
+                        }
+                    });
+                super::wheel_cycle(ui.ctx(), &ir.response, &crate::logging::Level::ALL, &mut lv);
+                if lv != cur {
+                    crate::logging::set_level(lv);
+                    crate::config::save_log_level(lv);
+                    crate::logging::info(&format!("日志等级切换为 {}", lv.as_str()));
+                }
+                ui.end_row();
+            });
+
+        // 打开日志目录（尚未写过日志时目录可能不存在，先确保建好）
+        if let Some(dir) = crate::logging::log_dir() {
+            if ui
+                .button("📂")
+                .on_hover_text(t.log_open_dir_tip)
+                .clicked()
+            {
+                let _ = std::fs::create_dir_all(&dir);
+                super::topbar::reveal_in_folder(&dir.display().to_string(), false);
+            }
+        }
+    });
+}
+
+/// 日志等级的界面标签（随界面语言）。
+fn level_label(l: crate::logging::Level) -> &'static str {
+    let t = crate::i18n::tr();
+    match l {
+        crate::logging::Level::Error => t.log_lv_error,
+        crate::logging::Level::Warn => t.log_lv_warn,
+        crate::logging::Level::Info => t.log_lv_info,
+        crate::logging::Level::Debug => t.log_lv_debug,
+    }
+}
+
+/// 节 4：快捷键清单（只读，仅供查阅）。
 fn shortcuts_section(ui: &mut egui::Ui) {
     let t = crate::i18n::tr();
 

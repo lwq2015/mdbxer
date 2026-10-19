@@ -795,6 +795,10 @@ impl MdbxerApp {
                 let file_mode = handle.no_sub_dir;
                 self.pending_recover = None;
                 self.history.add(&path, self.open_mode.as_str());
+                crate::logging::info(&format!(
+                    "打开库成功：{path}（{}，{n} 张表）",
+                    if file_mode { "单文件" } else { "目录" }
+                ));
 
                 // 每库记录：恢复收藏与最后打开的表（表已被删则回退主表）
                 let rec = crate::config::load_per_db(&path);
@@ -807,8 +811,12 @@ impl MdbxerApp {
                 if let Some(files) = &rec.proto_files {
                     let paths: Vec<std::path::PathBuf> =
                         files.iter().map(std::path::PathBuf::from).collect();
-                    if crate::proto::load_files(&paths).is_ok() {
-                        crate::proto::set_current(rec.proto_msg.clone());
+                    match crate::proto::load_files(&paths) {
+                        Ok(_) => crate::proto::set_current(rec.proto_msg.clone()),
+                        // 自动恢复失败只留痕不打扰：保留现有解码池继续用
+                        Err(e) => {
+                            crate::logging::debug(&format!("自动载入 .proto 失败，已跳过：{e}"))
+                        }
                     }
                 }
                 self.selected_table = if n > 0 {
@@ -852,6 +860,8 @@ impl MdbxerApp {
                 }
             }
             Err(e) => {
+                crate::logging::error(&format!("打开库失败：{path}：{e}"));
+
                 // 路径已不存在：自动从历史移除（相对路径先尽力绝对化以便匹配）。
                 // 其他失败（占用、格式不符等）可能是暂时的，保留历史。
                 if !std::path::Path::new(&path).exists() {
@@ -941,9 +951,11 @@ impl MdbxerApp {
         if backup {
             let bak = std::path::PathBuf::from(format!("{}.bak-recover", p.path));
             if let Err(e) = std::fs::copy(&p.path, &bak) {
+                crate::logging::error(&format!("备份失败：{} → {}：{e}", p.path, bak.display()));
                 self.status = Status::error(crate::i18n::tr().backup_fail(&e.to_string()));
                 return;
             }
+            crate::logging::info(&format!("已备份：{}", bak.display()));
         }
 
         // 不能写成 `match ... { Ok(_) => self.open_db(...) }`：Ok 里的 DbHandle
@@ -951,9 +963,11 @@ impl MdbxerApp {
         // 重开同库会被拒绝（MDBX_BUSY）——修复明明成功却表现为"打不开"。
         // 先让 if let 语句结束、返回的句柄彻底关闭，再走正常打开。
         if let Err(e) = crate::db::DbHandle::open_recover(std::path::Path::new(&p.path), p.mode) {
+            crate::logging::error(&format!("读写恢复打开失败：{}：{e}", p.path));
             self.status = Status::error(e);
             return;
         }
+        crate::logging::info(&format!("读写恢复打开成功：{}，继续正常打开", p.path));
         self.open_db(&p.path);
     }
 
@@ -1003,6 +1017,10 @@ impl MdbxerApp {
 
     /// 关闭当前数据库并清空所有相关状态；窗口标题恢复为基础标题。
     pub fn close_db(&mut self) {
+        if let Some(p) = &self.opened_path {
+            crate::logging::debug(&format!("关闭库：{p}"));
+        }
+
         // 关库前保存最后打开的表与收藏
         self.save_per_db();
 
@@ -1153,6 +1171,7 @@ impl MdbxerApp {
                 Some((len, has_more))
             }
             Err(e) => {
+                crate::logging::warn(&format!("读页失败：{e}"));
                 self.status = Status::error(crate::i18n::tr().read_fail(&e));
                 None
             }
@@ -1808,10 +1827,16 @@ impl MdbxerApp {
 
         match std::fs::write(&path, bytes) {
             Ok(()) => {
+                crate::logging::info(&format!(
+                    "另存字节成功：{}（{} 字节）",
+                    path.display(),
+                    bytes.len()
+                ));
                 self.status = Status::info(t.export_ok(bytes.len(), &path.display().to_string()));
                 true
             }
             Err(e) => {
+                crate::logging::error(&format!("另存字节失败：{}：{e}", path.display()));
                 self.status = Status::error(t.export_fail(&e.to_string()));
                 false
             }
@@ -1861,6 +1886,7 @@ impl MdbxerApp {
         self.export_anchor = None;
         self.export_count = 0;
         self.export_path = out.display().to_string();
+        crate::logging::info(&format!("导出开始：{name} → {}", self.export_path));
         self.status = Status::info(t.export_started.to_string());
     }
 
@@ -1913,6 +1939,7 @@ impl MdbxerApp {
                         }
                         Err(e) => {
                             // 读批失败：通知 worker 中止并清理
+                            crate::logging::error(&format!("导出读批失败：{e}"));
                             if let Some(tx) = &self.export_batch_tx {
                                 let _ = tx.send(crate::export::ExportBatch::Abort(e.clone()));
                             }
@@ -1925,11 +1952,16 @@ impl MdbxerApp {
 
                 crate::export::ExportEvent::Done(n) => {
                     self.export_count = n;
+                    crate::logging::info(&format!(
+                        "导出完成：{}（{n} 行）",
+                        self.export_path
+                    ));
                     self.status = Status::info(t.export_done(n, &self.export_path));
                     finished = true;
                 }
 
                 crate::export::ExportEvent::Fail(e) => {
+                    crate::logging::error(&format!("导出失败：{}：{e}", self.export_path));
                     self.status = Status::error(t.export_fail(&e));
                     finished = true;
                 }

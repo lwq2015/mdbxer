@@ -238,6 +238,15 @@ pub(super) const ZH: I18n = I18n {
     sc_hex_clear: "清除 hex 字节选区",
     cell_max_label: "单元格显示长度",
 
+    log_section: "日志",
+    log_section_tip: "日志写入 exe 同目录 log\\（无写权限时退化为 %APPDATA%\\mdbxer\\log）；按月分文件，单文件超过 100MB 自动加编号滚动",
+    log_level: "日志等级",
+    log_lv_error: "错误",
+    log_lv_warn: "警告",
+    log_lv_info: "信息",
+    log_lv_debug: "调试",
+    log_open_dir_tip: "在文件管理器中打开日志目录",
+
     int_key_hint: "整数键表请输入十进制数字，或 hex(...)/0x... 形式的字节",
     hex_even: "hex 长度必须为偶数",
 

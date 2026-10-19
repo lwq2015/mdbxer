@@ -189,15 +189,17 @@ impl History {
         }
     }
 
-    /// 写盘失败静默忽略（历史退化为本次会话内存记录）。
+    /// 写盘失败记 warn（历史退化为本次会话内存记录）。
     fn save(&self) {
-        if let Some(f) = &self.file {
-            if let Some(dir) = f.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            if let Ok(text) = serde_json::to_string_pretty(&self.entries) {
-                let _ = std::fs::write(f, text);
-            }
+        let Some(f) = &self.file else { return };
+        if let Some(dir) = f.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let res = serde_json::to_string_pretty(&self.entries)
+            .map_err(|e| e.to_string())
+            .and_then(|text| std::fs::write(f, text).map_err(|e| e.to_string()));
+        if let Err(e) = res {
+            crate::logging::warn(&format!("历史记录写盘失败：{f:?}：{e}"));
         }
     }
 }

@@ -12,8 +12,8 @@ use crate::fmt::DecodeMode;
 use crate::i18n::{self, Lang};
 
 /// 在系统文件管理器中打开库所在位置（平台相关）：单文件模式定位文件本身
-/// （选中高亮），目录模式直接打开该目录。打开失败静默忽略。
-fn reveal_in_folder(path: &str, is_single_file: bool) {
+/// （选中高亮），目录模式直接打开该目录。打开失败仅记 debug 日志。
+pub(crate) fn reveal_in_folder(path: &str, is_single_file: bool) {
     #[cfg(target_os = "windows")]
     {
         let mut c = std::process::Command::new("explorer");
@@ -22,7 +22,9 @@ fn reveal_in_folder(path: &str, is_single_file: bool) {
         } else {
             c.arg(path);
         }
-        let _ = c.spawn();
+        if let Err(e) = c.spawn() {
+            crate::logging::debug(&format!("打开文件管理器失败：{path}：{e}"));
+        }
     }
     #[cfg(target_os = "macos")]
     {
@@ -33,7 +35,9 @@ fn reveal_in_folder(path: &str, is_single_file: bool) {
         } else {
             c.arg(path);
         }
-        let _ = c.spawn();
+        if let Err(e) = c.spawn() {
+            crate::logging::debug(&format!("打开 Finder 失败：{path}：{e}"));
+        }
     }
     #[cfg(target_os = "linux")]
     {
@@ -46,7 +50,9 @@ fn reveal_in_folder(path: &str, is_single_file: bool) {
         } else {
             path.to_string()
         };
-        let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+        if let Err(e) = std::process::Command::new("xdg-open").arg(dir).spawn() {
+            crate::logging::debug(&format!("xdg-open 失败：{path}：{e}"));
+        }
     }
 }
 

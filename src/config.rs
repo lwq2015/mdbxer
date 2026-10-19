@@ -23,6 +23,9 @@ struct ConfigFile {
     /// 主题：dark / light（缺省 dark）
     #[serde(default)]
     theme: Option<String>,
+    /// 日志等级：error / warn / info / debug（缺省 info）
+    #[serde(default)]
+    log_level: Option<String>,
     /// UI 偏好
     #[serde(default)]
     ui: UiPrefs,
@@ -168,15 +171,23 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 /// per_db 的路径会做归一化并合并"同一目标的多写法"重复记录
 /// （相对/绝对路径、大小写、斜杠方向等），下次写盘时自然落盘。
 fn read_config() -> ConfigFile {
-    if let Some(path) = config_path() {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            if let Ok(mut cfg) = serde_json::from_str::<ConfigFile>(&text) {
-                normalize_per_db(&mut cfg.per_db);
-                return cfg;
-            }
+    let Some(path) = config_path() else {
+        return ConfigFile::default();
+    };
+    // 读失败（含首次启动无配置文件）静默回退；解析失败值得留痕
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return ConfigFile::default();
+    };
+    match serde_json::from_str::<ConfigFile>(&text) {
+        Ok(mut cfg) => {
+            normalize_per_db(&mut cfg.per_db);
+            cfg
+        }
+        Err(e) => {
+            crate::logging::warn(&format!("配置文件解析失败，已回退默认配置：{path:?}：{e}"));
+            ConfigFile::default()
         }
     }
-    ConfigFile::default()
 }
 
 /// 归一化 per_db 路径并合并重复项：收藏取并集（去重保序），
@@ -258,6 +269,19 @@ pub fn load_theme() -> Theme {
 /// 保存主题。
 pub fn save_theme(theme: Theme) {
     write_config(|c| c.theme = Some(theme.as_str().to_string()));
+}
+
+/// 读取日志等级（缺省 Info）。
+pub fn load_log_level() -> crate::logging::Level {
+    read_config()
+        .log_level
+        .map(|s| crate::logging::Level::from_str(&s))
+        .unwrap_or_default()
+}
+
+/// 保存日志等级（本次会话内立即生效由调用方负责）。
+pub fn save_log_level(l: crate::logging::Level) {
+    write_config(|c| c.log_level = Some(l.as_str().to_string()));
 }
 
 /// 读取 UI 偏好。

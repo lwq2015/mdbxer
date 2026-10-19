@@ -238,6 +238,15 @@ pub(super) const EN: I18n = I18n {
     sc_hex_clear: "Clear hex byte selection",
     cell_max_label: "Cell max chars",
 
+    log_section: "Logging",
+    log_section_tip: "Logs go to the log\\ folder next to the exe (falls back to %APPDATA%\\mdbxer\\log when not writable); one file per month, rolled with a numeric suffix at 100MB",
+    log_level: "Log level",
+    log_lv_error: "Error",
+    log_lv_warn: "Warning",
+    log_lv_info: "Info",
+    log_lv_debug: "Debug",
+    log_open_dir_tip: "Open log folder in file manager",
+
     int_key_hint: "For integer-key tables enter a decimal number, or bytes as hex(...)/0x...",
     hex_even: "hex length must be even",
 

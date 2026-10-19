@@ -16,6 +16,7 @@ mod export;
 mod fmt;
 mod history;
 mod i18n;
+mod logging;
 mod proto;
 mod ui;
 
@@ -24,6 +25,15 @@ mod ui;
 fn main() -> eframe::Result<()> {
     // 语言必须在任何界面文本产生前确定（含命令行直接打开时的状态消息）
     i18n::set_lang(config::startup_lang());
+
+    // 日志等级在写第一条日志前确定；panic 钩子尽早装上
+    logging::set_level(config::load_log_level());
+    logging::install_panic_hook();
+    logging::info(&format!(
+        "MDBXer v{} 启动（日志等级 {}）",
+        env!("CARGO_PKG_VERSION"),
+        logging::level().as_str()
+    ));
 
     let title = app_title();
     let app_title = title.clone();

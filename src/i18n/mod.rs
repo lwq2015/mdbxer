@@ -391,6 +391,16 @@ pub struct I18n {
     /// 「单元格显示长度」行标签（原顶栏无标签，高级配置页新增）
     pub cell_max_label: &'static str,
 
+    // ── 高级配置页：日志节 ──
+    pub log_section: &'static str,
+    pub log_section_tip: &'static str,
+    pub log_level: &'static str,
+    pub log_lv_error: &'static str,
+    pub log_lv_warn: &'static str,
+    pub log_lv_info: &'static str,
+    pub log_lv_debug: &'static str,
+    pub log_open_dir_tip: &'static str,
+
     // ── 跳转/搜索输入解析错误 ──
     pub int_key_hint: &'static str,
     pub hex_even: &'static str,
@@ -771,6 +781,14 @@ mod tests {
             assert!(!table.shortcut_section.is_empty());
             assert!(!table.sc_open.is_empty());
             assert!(!table.sc_hex_clear.is_empty());
+            assert!(!table.log_section.is_empty());
+            assert!(!table.log_section_tip.is_empty());
+            assert!(!table.log_level.is_empty());
+            assert!(!table.log_lv_error.is_empty());
+            assert!(!table.log_lv_warn.is_empty());
+            assert!(!table.log_lv_info.is_empty());
+            assert!(!table.log_lv_debug.is_empty());
+            assert!(!table.log_open_dir_tip.is_empty());
         }
     }
 
