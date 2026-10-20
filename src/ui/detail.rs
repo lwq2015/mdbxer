@@ -979,6 +979,10 @@ fn fold_view_body(
     let gutter = 18.0;
     let wrap_w = (ui.available_width() - gutter - 12.0).max(60.0);
     let mut hide_until = 0usize; // 行号 < hide_until 的行被祖先折叠遮盖，跳过渲染
+    let view = ui.clip_rect();
+    let content_top = ui.cursor().top();
+    let margin = 28.0;
+    let dt = ui.input(|i| i.stable_dt).min(0.05);
     for (i, fl) in lines.iter().enumerate() {
         if i < hide_until {
             continue;
@@ -1155,6 +1159,24 @@ fn fold_view_body(
         }
         if is_folded {
             hide_until = fl.fold_end.unwrap_or(i) + 1;
+        }
+    }
+
+    // ── 拖到视口上下边缘自动滚动：使选区可以一直延伸到当前不可见的部分
+    //    （与 hex 视图同交互）。速度按指针深入边缘的距离比例递增（二次方——
+    //    贴边缓慢精修，越出边缘越远越快；上限约 60 行高/秒）；内容本身没超出
+    //    该方向则不滚。滚动帧端点不更新，下一帧内容滚到位后由行命中逻辑延伸。──
+    if drag.is_some() && ui.input(|i| i.pointer.primary_down()) {
+        if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
+            let max_speed = line_h * 60.0; // 点/秒
+            if content_top < view.top() - 1.0 && p.y < view.top() + margin {
+                let k = ((view.top() + margin - p.y) / margin).clamp(0.0, 4.0);
+                // egui 约定 scroll delta 正值 = 向上看
+                ui.scroll_with_delta(egui::vec2(0.0, max_speed * k * k * dt));
+            } else if ui.cursor().top() > view.bottom() + 1.0 && p.y > view.bottom() - margin {
+                let k = ((p.y - (view.bottom() - margin)) / margin).clamp(0.0, 4.0);
+                ui.scroll_with_delta(egui::vec2(0.0, -max_speed * k * k * dt));
+            }
         }
     }
 
