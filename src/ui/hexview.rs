@@ -324,9 +324,14 @@ pub(crate) fn hex_view(
         }
         ui.ctx().data_mut(|d| d.remove_temp::<Option<Drag>>(id));
     }
-    // 右键：有选区时复制（与 Ctrl+C 同输出，选区保留）；清除选区仍由
-    // 单击空白/Esc 负责
-    let rmb_copy = resp.secondary_clicked() && sel.is_some();
+    // 右键：有选区时复制并取消选择（右键 = 复制 + 取消所选）；
+    // 单击空白/Esc 仍取消选择
+    let rmb_sel = if resp.secondary_clicked() {
+        sel.take()
+    } else {
+        None
+    };
+    let rmb_copy = rmb_sel.is_some();
 
     // ── 键盘：聚焦时 Ctrl+C 复制（HEX 与 ASCII 同行，按显示列对齐），Esc 清除 ──
     // 注意：egui 在每帧 begin_pass 处理原始事件时，一旦发现无修饰 Esc 会立即
@@ -343,7 +348,7 @@ pub(crate) fn hex_view(
                     .any(|e| matches!(e, egui::Event::Copy | egui::Event::Cut))
             });
         if copy {
-            if let Some((a, b)) = *sel {
+            if let Some((a, b)) = rmb_sel.or(*sel) {
                 let (lo, hi) = (a.min(b), a.max(b).min(bytes.len() - 1));
                 // 地址/HEX/ASCII 跟随界面开关输出，按显示行/列对齐（见 hexdump::hex_copy_selection）
                 ui.ctx().copy_text(crate::fmt::hex_copy_selection(

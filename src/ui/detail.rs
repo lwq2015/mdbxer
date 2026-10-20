@@ -926,7 +926,7 @@ struct FoldDrag {
 /// 由调用方写回 [`DetailState`]；祖先自动展开随写回持久生效（与 VS Code 一致）。
 ///
 /// 正文支持拖拽选择与复制（与 hex 视图同交互）：按下定锚点、拖动更新选区端点
-/// （可跨行），右键复制所选（选区保留），Ctrl+C 复制选区文本，单击正文/Esc
+/// （可跨行），右键复制所选并取消选择，Ctrl+C 复制选区文本，单击正文/Esc
 /// 清除选区；折叠摘要后缀不参与选择。选区随 `sel` 传入并由本函数直接更新，
 /// 调用方写回并负责内容指纹失效（换值/换段/换模式时清空）。
 #[allow(clippy::too_many_arguments)]
@@ -1069,10 +1069,10 @@ fn fold_view_body(
             ui.ctx()
                 .data_mut(|d| d.remove_temp::<Option<FoldDrag>>(sel_id));
         }
-        // 右键单击正文：有选区时复制（与 Ctrl+C 同输出，选区保留）；
-        // 清除选区仍由单击正文/Esc 负责
+        // 右键单击正文：有选区时复制并取消选择（右键 = 复制 + 取消所选）；
+        // 单击正文/Esc 仍取消选择
         if resp.secondary_clicked() && press_pos.is_some_and(in_body) {
-            if let Some((a, b)) = *sel {
+            if let Some((a, b)) = sel.take() {
                 let (lo, hi) = (a.min(b), a.max(b));
                 ui.ctx().copy_text(text[lo..hi].to_owned());
             }
