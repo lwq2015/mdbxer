@@ -100,6 +100,7 @@ pub(super) const ZH: I18n = I18n {
     search_next_tip: "向后查找（Enter；F3 全局继续；到头回绕）",
     guess_line_t: "猜测：{label}，{n} 字节",
     bytes_t: "{n} 字节",
+    fold_summary_t: "… {n} 行",
     section_text: "文本",
     section_hex: "十六进制",
     hex_hint: "拖拽选择字节（HEX 与 ASCII 联动高亮），拖到上下边缘自动滚动可跨出可见区；Ctrl+C 同时复制十六进制与 ASCII 原文（按显示行对齐），Esc 或右键单击清除选区",

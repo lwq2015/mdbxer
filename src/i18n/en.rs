@@ -1,7 +1,6 @@
 // Copyright 2026 lwq_yu
 // SPDX-License-Identifier: Apache-2.0
 
-
 use super::I18n;
 
 /// English.
@@ -100,6 +99,7 @@ pub(super) const EN: I18n = I18n {
     search_next_tip: "Search forward (Enter; F3 from anywhere; wraps at ends)",
     guess_line_t: "Guessed: {label}, {n} bytes",
     bytes_t: "{n} bytes",
+    fold_summary_t: "… {n} lines",
     section_text: "Text",
     section_hex: "Hex",
     hex_hint: "Drag to select bytes (HEX and ASCII highlight together); hold near the top/bottom edge to auto-scroll beyond the visible area; Ctrl+C copies both hex and the ASCII text aligned by display row; Esc or right-click clears the selection",

@@ -1,7 +1,6 @@
 // Copyright 2026 lwq_yu
 // SPDX-License-Identifier: Apache-2.0
 
-
 use super::I18n;
 
 /// Русский.
@@ -100,6 +99,7 @@ pub(super) const RU: I18n = I18n {
     search_next_tip: "Искать вперёд (Enter; F3 глобально; с переходом в конце)",
     guess_line_t: "Тип: {label}, {n} байт",
     bytes_t: "{n} байт",
+    fold_summary_t: "… {n} строк",
     section_text: "Текст",
     section_hex: "Hex",
     hex_hint: "Перетащите для выбора байт (HEX и ASCII подсвечиваются вместе); удерживайте у верхнего/нижнего края для автопрокрутки за пределы видимой области; Ctrl+C копирует и hex, и исходный текст ASCII с выравниванием по строкам; Esc или правая кнопка мыши снимают выделение",

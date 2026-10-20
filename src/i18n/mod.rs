@@ -205,6 +205,8 @@ pub struct I18n {
     pub guess_line_t: &'static str,
     /// 字节数模板 {n}
     pub bytes_t: &'static str,
+    /// 折叠视图折叠摘要模板 {n}
+    pub fold_summary_t: &'static str,
     pub section_text: &'static str,
     pub section_hex: &'static str,
     /// 交互式 hex 视图操作提示（悬停整个区域时显示）
@@ -561,6 +563,11 @@ impl I18n {
     /// 字节数，如 "5 字节"。
     pub fn bytes(&self, n: usize) -> String {
         fill(self.bytes_t, &[("n", &n.to_string())])
+    }
+
+    /// 折叠视图折叠摘要，如 "… 12 行"。
+    pub fn fold_summary(&self, n: usize) -> String {
+        fill(self.fold_summary_t, &[("n", &n.to_string())])
     }
 
     pub fn dup_located(&self, i: usize, total: usize) -> String {

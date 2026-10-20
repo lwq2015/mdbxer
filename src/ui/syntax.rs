@@ -695,6 +695,147 @@ pub(crate) fn append_colored(
     }
 }
 
+/// 折叠视图的一行：字节区间 + 可折叠范围。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct FoldLine {
+    /// 行字节起点（含行首缩进）
+    pub(crate) start: usize,
+    /// 行字节终点（不含换行符与行尾 \r）
+    pub(crate) end: usize,
+    /// 可折叠：折叠后隐藏下一行起至本行号 +1..=自身 fold_end 行号的行；
+    /// None 表示该行无可折叠块
+    pub(crate) fold_end: Option<usize>,
+}
+
+/// 行首缩进宽度（前导空格数；空白行为 usize::MAX，不截断上一行的折叠块）。
+fn indent_of(line: &[u8]) -> usize {
+    match line.iter().position(|b| !b.is_ascii_whitespace()) {
+        Some(i) => i,
+        // 空行/全空白行：视作无限深，不打断相邻更深层级的折叠块
+        None => usize::MAX,
+    }
+}
+
+/// 行内容（去掉行首缩进）是否以闭合标记开头：`}` `]` 或 XML 闭合标签 `</`。
+/// 用于把折叠区间延伸到同缩进的闭合行（pretty JSON/XML），折叠后不残留孤儿闭合行。
+fn starts_with_closer(line: &[u8], indent: usize) -> bool {
+    let Some(rest) = line.get(indent..) else {
+        return false;
+    };
+    rest.starts_with(b"}") || rest.starts_with(b"]") || rest.starts_with(b"</")
+}
+
+/// 按缩进计算每行的折叠区间，对 pretty JSON/XML/YAML/TOML 通用：
+/// 某行之后存在更深缩进的块即可折叠，块尾为第一个缩进 ≤ 本行的行之前；
+/// 若该行与本行同缩进且以闭合标记开头，则连闭合行一起隐藏。
+/// 紧凑单行文本没有任何可折叠行。
+pub(crate) fn fold_lines(s: &str) -> Vec<FoldLine> {
+    let bytes = s.as_bytes();
+    let mut starts: Vec<usize> = Vec::new();
+    let mut ends: Vec<usize> = Vec::new();
+    let mut indents: Vec<usize> = Vec::new();
+    let mut start = 0usize;
+    for (i, b) in bytes.iter().enumerate() {
+        if *b == b'\n' {
+            let mut end = i;
+            if end > start && bytes[end - 1] == b'\r' {
+                end -= 1; // 行尾 \r（CRLF 文本）不计入行内容
+            }
+            starts.push(start);
+            ends.push(end);
+            indents.push(indent_of(&bytes[start..end]));
+            start = i + 1;
+        }
+    }
+    starts.push(start);
+    ends.push({
+        let mut end = bytes.len();
+        if end > start && bytes[end - 1] == b'\r' {
+            end -= 1;
+        }
+        end
+    });
+    indents.push(indent_of(&bytes[start..]));
+    // 以 \n 结尾的文本：丢弃末尾幻影空行，避免闭合行多出"只藏一个空行"的折叠块，
+    // 也避免折叠视图底部渲染一条多余的空行
+    if s.ends_with('\n') {
+        starts.pop();
+        ends.pop();
+        indents.pop();
+    }
+
+    let n = starts.len();
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        // 第一个缩进 ≤ 本行的后续行 k：更深缩进块为 i+1..k-1（连续，
+        // pretty 输出的块不会中途回到浅缩进再深入）
+        let mut k = i + 1;
+        while k < n && indents[k] > indents[i] {
+            k += 1;
+        }
+        let fold_end = if k > i + 1 {
+            // 块非空；块后同缩进行是闭合标记（}/]/</tag>）则连它一起隐藏
+            if k < n
+                && indents[k] == indents[i]
+                && starts_with_closer(&bytes[starts[k]..ends[k]], indents[i])
+            {
+                Some(k)
+            } else {
+                Some(k - 1)
+            }
+        } else {
+            None
+        };
+        out.push(FoldLine {
+            start: starts[i],
+            end: ends[i],
+            fold_end,
+        });
+    }
+    out
+}
+
+/// 折叠视图逐行着色：把整段文本的 token（绝对字节区间）裁剪到行区间
+/// `[ls,le)` 后逐 token 写入行 job，token 间空白用默认色；
+/// 可选命中区间（显示文本字节坐标）与 token 叠加琥珀背景，语义同 [`append_colored`]。
+/// 跨行 token（如 YAML 块标量）按行裁剪，各行的所属段保持 token 类别色。
+pub(crate) fn append_line_colored(
+    job: &mut egui::text::LayoutJob,
+    line: &str,
+    toks: &[JsonTok],
+    ls: usize,
+    le: usize,
+    base: egui::text::TextFormat,
+    palette: &[egui::Color32; 6],
+    hit: Option<(usize, usize)>,
+) {
+    let hit_bg = egui::Color32::from_rgba_unmultiplied(0xF5, 0xA6, 0x23, 0x66);
+    let mut pos = ls;
+    for tok in toks {
+        let ts = tok.start.max(ls);
+        let te = tok.end.min(le);
+        if ts >= te {
+            continue; // token 与本行不相交
+        }
+        if ts > pos {
+            job.append(&line[pos - ls..ts - ls], 0.0, base.clone());
+        }
+        let mut f = base.clone();
+        f.color = palette[tok.kind.palette_index()];
+        if let Some((hs, he)) = hit
+            && ts < he
+            && te > hs
+        {
+            f.background = hit_bg;
+        }
+        job.append(&line[ts - ls..te - ls], 0.0, f);
+        pos = te;
+    }
+    if pos < le {
+        job.append(&line[pos - ls..le - ls], 0.0, base);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // ── JSON 语法着色 ──────────────────────────────────────────────
@@ -755,10 +896,16 @@ mod tests {
 
         // Auto：形态像 YAML（键/块序列、可整体解析）的才识别；普通句子不着色
         assert_eq!(
-            syntax_mode(DecodeMode::Auto, b"app:\n  name: mdbx\n  debug: false\ntimeout: 30\n"),
+            syntax_mode(
+                DecodeMode::Auto,
+                b"app:\n  name: mdbx\n  debug: false\ntimeout: 30\n"
+            ),
             Some(DecodeMode::Yaml)
         );
-        assert_eq!(syntax_mode(DecodeMode::Auto, b"- a\n- b\n"), Some(DecodeMode::Yaml));
+        assert_eq!(
+            syntax_mode(DecodeMode::Auto, b"- a\n- b\n"),
+            Some(DecodeMode::Yaml)
+        );
         // 普通文本 / 含 ':' 的路径串 / 非法 YAML 都不判
         assert_eq!(syntax_mode(DecodeMode::Auto, b"hello world"), None);
         assert_eq!(syntax_mode(DecodeMode::Auto, b"C:\\Users\\x"), None);
@@ -771,12 +918,21 @@ mod tests {
 
         // Auto：顶层为表/数组且含 `=` 或 `[` 才判 TOML；普通/裸标量不判
         assert_eq!(
-            syntax_mode(DecodeMode::Auto, b"title = \"mdbx\"\n[db]\nmax_readers = 126\n"),
+            syntax_mode(
+                DecodeMode::Auto,
+                b"title = \"mdbx\"\n[db]\nmax_readers = 126\n"
+            ),
             Some(DecodeMode::Toml)
         );
-        assert_eq!(syntax_mode(DecodeMode::Auto, b"name = \"lwq\"\n"), Some(DecodeMode::Toml));
+        assert_eq!(
+            syntax_mode(DecodeMode::Auto, b"name = \"lwq\"\n"),
+            Some(DecodeMode::Toml)
+        );
         // 裸标量、无 '=' 的普通文本不判
-        assert_eq!(syntax_mode(DecodeMode::Auto, b"hello = \"world\""), Some(DecodeMode::Toml));
+        assert_eq!(
+            syntax_mode(DecodeMode::Auto, b"hello = \"world\""),
+            Some(DecodeMode::Toml)
+        );
         assert_eq!(syntax_mode(DecodeMode::Auto, b"hello world"), None);
         // 非法 TOML（"title =" 缺值）不判
         assert_eq!(syntax_mode(DecodeMode::Auto, b"title =\n"), None);
@@ -1103,5 +1259,103 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── 折叠视图 ──────────────────────────────────────────────────
+
+    use super::fold_lines;
+
+    /// 汇总断言用的 (行文本, fold_end) 列表。
+    fn fold_pairs(s: &str) -> Vec<(&str, Option<usize>)> {
+        fold_lines(s)
+            .into_iter()
+            .zip(s.split('\n'))
+            .map(|(fl, line)| (line, fl.fold_end))
+            .collect()
+    }
+
+    #[test]
+    fn fold_lines_json_pretty() {
+        let s = concat!(
+            "{\n",            // 0 可折叠 → 连闭合行 6 一起隐藏
+            "  \"a\": 1,\n",  // 1
+            "  \"b\": {\n",   // 2 可折叠 → 连闭合行 4 一起隐藏
+            "    \"c\": 2\n", // 3
+            "  },\n",         // 4 闭合行
+            "  \"d\": []\n",  // 5 空数组不可折叠
+            "}\n"             // 6 闭合行（末尾 \\n 的幻影空行不生成行）
+        );
+        let pairs = fold_pairs(s);
+        assert_eq!(pairs[0], ("{", Some(6)));
+        assert_eq!(pairs[1], ("  \"a\": 1,", None));
+        assert_eq!(pairs[2], ("  \"b\": {", Some(4)));
+        assert_eq!(pairs[3], ("    \"c\": 2", None));
+        assert_eq!(pairs[4], ("  },", None));
+        assert_eq!(pairs[5], ("  \"d\": []", None));
+        assert_eq!(pairs[6], ("}", None));
+        // 顶层对象内部（行 1..5）不延伸到顶层闭合行之外
+        assert!(pairs.iter().all(|(_, fe)| fe.map_or(true, |e| e < 7)));
+    }
+
+    #[test]
+    fn fold_lines_yaml_indent_block() {
+        // 缩进式（YAML）：无闭合标记，块到第一个缩进 ≤ 的行之前
+        let s = "a:\n  b: 1\n  c: 2\nd: 3\n";
+        let pairs = fold_pairs(s);
+        assert_eq!(pairs[0], ("a:", Some(2)));
+        assert_eq!(pairs[1], ("  b: 1", None));
+        assert_eq!(pairs[2], ("  c: 2", None));
+        assert_eq!(pairs[3], ("d: 3", None));
+    }
+
+    #[test]
+    fn fold_lines_yaml_blank_line_keeps_block() {
+        // 块内空行不打断折叠块（视作无限深缩进）
+        let s = "a:\n  b: 1\n\n  c: 2\nd: 3\n";
+        let pairs = fold_pairs(s);
+        assert_eq!(pairs[0], ("a:", Some(3)));
+    }
+
+    #[test]
+    fn fold_lines_xml_closer_extends() {
+        let s = concat!(
+            "<root>\n",     // 0 → 连 </root> 行 5 一起隐藏
+            "  <a>1</a>\n", // 1
+            "  <b>\n",      // 2 → 连 </b> 行 4 一起隐藏
+            "    2\n",      // 3
+            "  </b>\n",     // 4
+            "</root>\n"     // 5
+        );
+        let pairs = fold_pairs(s);
+        assert_eq!(pairs[0], ("<root>", Some(5)));
+        assert_eq!(pairs[1], ("  <a>1</a>", None));
+        assert_eq!(pairs[2], ("  <b>", Some(4)));
+        assert_eq!(pairs[3], ("    2", None));
+        assert_eq!(pairs[4], ("  </b>", None));
+        assert_eq!(pairs[5], ("</root>", None));
+    }
+
+    #[test]
+    fn fold_lines_trailing_array() {
+        // TOML/JSON 数组：闭合 ] 同缩进，一并隐藏
+        let s = "items = [\n  1,\n  2,\n]\n";
+        let pairs = fold_pairs(s);
+        assert_eq!(pairs[0], ("items = [", Some(3)));
+        assert_eq!(pairs[3], ("]", None));
+    }
+
+    #[test]
+    fn fold_lines_no_fold_cases() {
+        // 紧凑单行：无任何可折叠行
+        assert!(
+            fold_lines(r#"{"a":1}"#)
+                .iter()
+                .all(|f| f.fold_end.is_none())
+        );
+        // 深层块后没有更浅行（文件以深层块结尾）：折叠到最后一行
+        let s = "a:\n  b:\n    c: 1\n";
+        let pairs = fold_pairs(s);
+        assert_eq!(pairs[0], ("a:", Some(2)));
+        assert_eq!(pairs[1], ("  b:", Some(2)));
     }
 }

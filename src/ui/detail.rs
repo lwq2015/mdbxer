@@ -4,7 +4,10 @@
 //! 右侧详情：Key / Value 卡片（格式下拉、复制、文本、hex dump、多值翻页），
 //! 以及右栏全部状态（[`DetailState`]）。
 
-use super::syntax::{append_colored, json_palette, syntax_mode, syntax_tokens};
+use super::syntax::{
+    FoldLine, append_colored, append_line_colored, fold_lines, json_palette, syntax_mode,
+    syntax_tokens,
+};
 use super::{MdbxerApp, MsgLevel, Status, parse_bytes_input};
 use crate::db;
 use crate::fmt::{self, DecodeMode};
@@ -64,6 +67,10 @@ pub struct DetailState {
     pub key_blob_scroll: Option<usize>,
     /// Value 卡片待滚动的命中字节位置
     pub val_blob_scroll: Option<usize>,
+    /// Key 卡片折叠视图状态（显示文本内容指纹 + 已折叠行号集合；指纹不符自动重置）
+    pub key_fold: Option<(u64, Vec<usize>)>,
+    /// Value 卡片折叠视图状态
+    pub val_fold: Option<(u64, Vec<usize>)>,
     /// Key 卡片 hex 视图选区的内容指纹（段偏移/长度/行/多值序号），用于换内容时清选区
     pub hex_key_fp: Option<(usize, usize, Option<usize>, usize)>,
     /// Key 卡片 hex 视图选区（字节全局序号端点，顺序无关）
@@ -107,6 +114,9 @@ impl Default for DetailState {
             val_blob_matches: None,
             key_blob_scroll: None,
             val_blob_scroll: None,
+
+            key_fold: None,
+            val_fold: None,
 
             hex_key_fp: None,
             hex_key_sel: None,
@@ -402,6 +412,24 @@ impl DetailState {
             self.key_blob_scroll
         } else {
             self.val_blob_scroll
+        }
+    }
+
+    /// 折叠视图状态（只读）：显示文本内容指纹 + 已折叠行号集合。
+    pub fn fold_state(&self, is_key: bool) -> &Option<(u64, Vec<usize>)> {
+        if is_key {
+            &self.key_fold
+        } else {
+            &self.val_fold
+        }
+    }
+
+    /// 折叠视图状态（可变）：折叠点击/命中自动展开后写回。
+    pub fn fold_state_mut(&mut self, is_key: bool) -> &mut Option<(u64, Vec<usize>)> {
+        if is_key {
+            &mut self.key_fold
+        } else {
+            &mut self.val_fold
         }
     }
 
@@ -818,6 +846,145 @@ fn card_content_heights(
     }
 }
 
+/// 显示文本内容指纹：折叠状态随文本变化自动失效用（换值/换段/换模式）。
+fn text_fp(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
+}
+
+/// 折叠视图：替代 TextEdit 的自绘只读文本渲染（TextEdit 无法隐藏部分行）。
+/// 逐行按语法 token 着色（复用 [`crate::ui::syntax`] 的分词与色盘，命中背景
+/// 与 TextEdit 路径同色同语义），行首 gutter 画折叠三角（▼ 展开 / ▶ 折叠）；
+/// 折叠后隐藏子行，行尾以弱色显示"… N 行"摘要。命中行被折叠遮盖时自动展开
+/// 覆盖它的祖先折叠并滚动居中。返回渲染后的折叠状态（内容指纹 + 折叠行号集合），
+/// 由调用方写回 [`DetailState`]；祖先自动展开随写回持久生效（与 VS Code 一致）。
+#[allow(clippy::too_many_arguments)]
+fn fold_view_body(
+    ui: &mut egui::Ui,
+    is_key: bool,
+    text: &str,
+    lines: &[FoldLine],
+    mode: DecodeMode,
+    palette: &[egui::Color32; 6],
+    hit: Option<(usize, usize)>,
+    scroll_line: Option<usize>,
+    stored: &Option<(u64, Vec<usize>)>,
+) -> (u64, Vec<usize>) {
+    let t = tr();
+    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+    let line_h = ui.fonts_mut(|f| f.row_height(&font_id)) + ui.spacing().extra_text_line_spacing;
+    let base = egui::text::TextFormat {
+        font_id,
+        color: ui.visuals().text_color(),
+        line_height: Some(line_h),
+        ..Default::default()
+    };
+    let weak = egui::text::TextFormat {
+        color: ui.visuals().weak_text_color(),
+        ..base.clone()
+    };
+    let toks = syntax_tokens(mode, text);
+    let fp = text_fp(text);
+    let mut folded: std::collections::BTreeSet<usize> = match stored {
+        Some((f, set)) if *f == fp => set.iter().copied().collect(),
+        _ => std::collections::BTreeSet::new(),
+    };
+    // 命中行祖先自动展开：所有行号更小且折叠区间覆盖命中行的可折叠行
+    if let Some(h) = scroll_line {
+        folded.retain(|&i| !(i < h && lines[i].fold_end.is_some_and(|fe| fe >= h)));
+    }
+
+    // 行首 gutter：三角点击区固定列宽，正文整体右移对齐
+    let gutter = 18.0;
+    let wrap_w = (ui.available_width() - gutter - 12.0).max(60.0);
+    let mut hide_until = 0usize; // 行号 < hide_until 的行被祖先折叠遮盖，跳过渲染
+    for (i, fl) in lines.iter().enumerate() {
+        if i < hide_until {
+            continue;
+        }
+        let is_folded = folded.contains(&i);
+        let line_str = &text[fl.start..fl.end];
+        let mut job = egui::text::LayoutJob::default();
+        append_line_colored(
+            &mut job,
+            line_str,
+            &toks,
+            fl.start,
+            fl.end,
+            base.clone(),
+            palette,
+            hit,
+        );
+        if is_folded {
+            let hidden = fl.fold_end.unwrap_or(i) - i;
+            job.append(&format!("  {}", t.fold_summary(hidden)), 0.0, weak.clone());
+        }
+        job.wrap.max_width = wrap_w;
+        let galley = ui.fonts_mut(|f| f.layout_job(job));
+        let row_h = galley.size().y.max(line_h);
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), row_h),
+            egui::Sense::hover(),
+        );
+        ui.painter().galley(
+            rect.left_top() + egui::vec2(gutter, 0.0),
+            galley,
+            base.color,
+        );
+
+        if fl.fold_end.is_some() {
+            // 折叠三角：行首 gutter 内、首行垂直居中；▼=展开 ▶=已折叠
+            let c = ui.visuals().weak_text_color();
+            let x = rect.left() + 4.0;
+            let y = rect.top() + (line_h - 8.0) * 0.5;
+            let (pts, tri_rect) = if is_folded {
+                (
+                    vec![
+                        egui::pos2(x + 2.0, y),
+                        egui::pos2(x + 8.0, y + 4.0),
+                        egui::pos2(x + 2.0, y + 8.0),
+                    ],
+                    egui::Rect::from_min_size(egui::pos2(x, y - 2.0), egui::vec2(14.0, 12.0)),
+                )
+            } else {
+                (
+                    vec![
+                        egui::pos2(x, y + 2.0),
+                        egui::pos2(x + 8.0, y + 2.0),
+                        egui::pos2(x + 4.0, y + 8.0),
+                    ],
+                    egui::Rect::from_min_size(egui::pos2(x - 2.0, y), egui::vec2(12.0, 14.0)),
+                )
+            };
+            let resp = ui.interact(
+                tri_rect,
+                egui::Id::new(("fold_tri", is_key, i)),
+                egui::Sense::click(),
+            );
+            if resp.clicked() {
+                if is_folded {
+                    folded.remove(&i);
+                } else {
+                    folded.insert(i);
+                }
+            }
+            resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            ui.painter()
+                .add(egui::Shape::convex_polygon(pts, c, egui::Stroke::NONE));
+        }
+
+        if scroll_line == Some(i) {
+            ui.scroll_to_rect(rect, Some(egui::Align::Center));
+        }
+        if is_folded {
+            hide_until = fl.fold_end.unwrap_or(i) + 1;
+        }
+    }
+    (fp, folded.into_iter().collect())
+}
+
 /// 一个 Key 或 Value 卡片。`is_key` 决定使用 key_mode 还是 val_mode；
 /// `key` 为选中行的 Key 字节（多值导航操作要用）；
 /// `text` 为当前段窗口已解码的文本；`budget` 为本卡片可用高度上限
@@ -917,7 +1084,11 @@ fn kv_card(
                         .height(430.0)
                         .show_ui(ui, |ui| {
                             // 自动项置顶；其余按"文本编码/数值/字节视图/标识与时间/结构化"分组
-                            ui.selectable_value(&mut mode, DecodeMode::Auto, DecodeMode::Auto.label());
+                            ui.selectable_value(
+                                &mut mode,
+                                DecodeMode::Auto,
+                                DecodeMode::Auto.label(),
+                            );
                             for (grp, items) in super::format_groups() {
                                 // 组标题：弱化小字，不可选中
                                 ui.add(egui::Label::new(egui::RichText::new(grp).weak().small()));
@@ -1306,6 +1477,43 @@ fn kv_card(
                 }
                 (hs < he).then_some((hs, he))
             })();
+            // 折叠视图：语法着色激活且存在可折叠块（pretty 多行结构化文本）时启用，
+            // 文本区改为自绘逐行渲染（TextEdit 无法隐藏部分行）；单行紧凑 JSON、
+            // 纯文本、无块的多行文本仍走 TextEdit 原路径，零行为变化。
+            // pretty JSON 等重编码显示下 text_hit_range 本就为 None（不映射），
+            // 1:1 文本（如原样多行 JSON）则命中背景在折叠视图中继续生效。
+            let fold_lines_list = match syntax_kind {
+                Some(_) if display_text.contains('\n') => fold_lines(&display_text),
+                _ => Vec::new(),
+            };
+            let fold_active = fold_lines_list.iter().any(|f| f.fold_end.is_some());
+            // 折叠视图滚动目标行：显示文本与窗口字节 1:1 时按字节精确定位行，
+            // 重编码显示（pretty）按字节比例估算；命中行被祖先折叠遮盖时，
+            // fold_view_body 渲染中自动展开覆盖它的祖先折叠
+            let fold_scroll_line = if fold_active {
+                text_scroll_to.and_then(|hit_abs| {
+                    (hit_abs >= off && hit_abs < off + window.len()).then(|| {
+                        let hit_rel = hit_abs - off;
+                        let mut bp = if display_text.len() == window.len()
+                            && std::str::from_utf8(window).is_ok()
+                        {
+                            hit_rel
+                        } else {
+                            display_text.len() * hit_rel / window.len().max(1)
+                        };
+                        while bp > 0 && !display_text.is_char_boundary(bp) {
+                            bp -= 1;
+                        }
+                        fold_lines_list
+                            .partition_point(|fl| fl.start <= bp)
+                            .saturating_sub(1)
+                    })
+                })
+            } else {
+                None
+            };
+            let fold_stored = app.detail.fold_state(is_key).clone();
+            let mut fold_writeback: Option<(u64, Vec<usize>)> = None;
             egui::collapsing_header::CollapsingState::load_with_default_open(
                 ui.ctx(),
                 egui::Id::new(("detail_text", is_key, true)),
@@ -1322,6 +1530,33 @@ fn kv_card(
                 ui.weak(guess_text);
             })
             .body(|ui| {
+                if fold_active {
+                    // 折叠视图：自绘逐行渲染 + 行首折叠三角（替代 TextEdit）。
+                    // 与 TextEdit 路径同一 ScrollArea 约束（id_salt 相同，滚动位置
+                    // 在两种视图间延续）；返回渲染后的折叠状态（含点击切换与命中
+                    // 自动展开祖先），借 fold_writeback 带出闭包、结束后写回。
+                    fold_writeback = Some(
+                        egui::ScrollArea::vertical()
+                            .id_salt(("detail_text_scroll", is_key))
+                            .auto_shrink([false, true])
+                            .max_height(text_h)
+                            .show(ui, |ui| {
+                                fold_view_body(
+                                    ui,
+                                    is_key,
+                                    &display_text,
+                                    &fold_lines_list,
+                                    syntax_kind.unwrap_or(DecodeMode::Json),
+                                    &syntax_palette,
+                                    text_hit_range,
+                                    fold_scroll_line,
+                                    &fold_stored,
+                                )
+                            })
+                            .inner,
+                    );
+                    return;
+                }
                 // display_text 已按当前模式算好（Auto 命中结构化 JSON 时为 pretty，
                 // 其余为原文）；高度估算也用它，二者一致。
                 let mut text_owned = display_text.clone();
@@ -1438,6 +1673,11 @@ fn kv_card(
                         }
                     });
             });
+            // 折叠状态写回：渲染中可能因点击折叠三角或命中自动展开祖先而变化；
+            // 内容指纹随状态一起存，换值/换段/换模式后指纹不符即整体重置为全展开
+            if let Some(wb) = fold_writeback {
+                *app.detail.fold_state_mut(is_key) = Some(wb);
+            }
 
             // 十六进制视图：自绘交互组件（悬停整行/单字节联动、拖拽选区 HEX↔ASCII 同步）。
             // 独立滚动区：高度随内容自适应（auto_shrink 高度方向），只有超过上限才出滚动条；
