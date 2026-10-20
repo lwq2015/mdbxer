@@ -163,7 +163,11 @@ pub(crate) fn hex_view(
 
     // 地址位数随数据大小变化（同一 dump 内所有行统一位数保证对齐）
     let digits = addr_digits(base_offset, bytes.len());
-    let addr_w = if show_addr { addr_chars(digits) as f32 * cw } else { 0.0 };
+    let addr_w = if show_addr {
+        addr_chars(digits) as f32 * cw
+    } else {
+        0.0
+    };
     let hex_w = if show_hex {
         crate::fmt::hex_section_chars(n) as f32 * cw
     } else {
@@ -195,10 +199,7 @@ pub(crate) fn hex_view(
             let row = (g - base_offset) / n;
             let y = geom.top + row as f32 * rh;
             ui.scroll_to_rect(
-                egui::Rect::from_min_size(
-                    egui::pos2(rect.left(), y),
-                    egui::vec2(rect.width(), rh),
-                ),
+                egui::Rect::from_min_size(egui::pos2(rect.left(), y), egui::vec2(rect.width(), rh)),
                 Some(egui::Align::Center),
             );
         }
@@ -244,6 +245,10 @@ pub(crate) fn hex_view(
     let pressed = resp.drag_started();
     if pressed {
         resp.request_focus();
+        // 标记最近选择交互视图：折叠文本视图（detail.rs fold_view_body）与之共用
+        // 该标记决定 Ctrl+C/Esc 归属，避免两个视图同时响应互相覆盖剪贴板
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::new("mdbxer_sel_owner"), Some(id)));
         if let Some(p) = resp.interact_pointer_pos() {
             match hit_at(p) {
                 Some((r, i)) => {
@@ -342,7 +347,15 @@ pub(crate) fn hex_view(
                 let (lo, hi) = (a.min(b), a.max(b).min(bytes.len() - 1));
                 // 地址/HEX/ASCII 跟随界面开关输出，按显示行/列对齐（见 hexdump::hex_copy_selection）
                 ui.ctx().copy_text(crate::fmt::hex_copy_selection(
-                    bytes, lo, hi, n, show_addr, show_hex, show_ascii, base_offset, digits,
+                    bytes,
+                    lo,
+                    hi,
+                    n,
+                    show_addr,
+                    show_hex,
+                    show_ascii,
+                    base_offset,
+                    digits,
                 ));
             }
         }

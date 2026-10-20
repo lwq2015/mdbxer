@@ -71,6 +71,10 @@ pub struct DetailState {
     pub key_fold: Option<(u64, Vec<usize>)>,
     /// Value 卡片折叠视图状态
     pub val_fold: Option<(u64, Vec<usize>)>,
+    /// Key 卡片折叠视图选区（显示文本指纹 + 字节端点，顺序无关；指纹不符自动重置）
+    pub key_fold_sel: Option<(u64, Option<(usize, usize)>)>,
+    /// Value 卡片折叠视图选区
+    pub val_fold_sel: Option<(u64, Option<(usize, usize)>)>,
     /// Key 卡片 hex 视图选区的内容指纹（段偏移/长度/行/多值序号），用于换内容时清选区
     pub hex_key_fp: Option<(usize, usize, Option<usize>, usize)>,
     /// Key 卡片 hex 视图选区（字节全局序号端点，顺序无关）
@@ -117,6 +121,9 @@ impl Default for DetailState {
 
             key_fold: None,
             val_fold: None,
+
+            key_fold_sel: None,
+            val_fold_sel: None,
 
             hex_key_fp: None,
             hex_key_sel: None,
@@ -430,6 +437,24 @@ impl DetailState {
             &mut self.key_fold
         } else {
             &mut self.val_fold
+        }
+    }
+
+    /// 折叠视图选区状态（只读）：显示文本内容指纹 + 选区字节端点（顺序无关）。
+    pub fn fold_sel(&self, is_key: bool) -> &Option<(u64, Option<(usize, usize)>)> {
+        if is_key {
+            &self.key_fold_sel
+        } else {
+            &self.val_fold_sel
+        }
+    }
+
+    /// 折叠视图选区状态（可变）：拖拽更新/清除后写回。
+    pub fn fold_sel_mut(&mut self, is_key: bool) -> &mut Option<(u64, Option<(usize, usize)>)> {
+        if is_key {
+            &mut self.key_fold_sel
+        } else {
+            &mut self.val_fold_sel
         }
     }
 
@@ -854,12 +879,56 @@ fn text_fp(s: &str) -> u64 {
     h.finish()
 }
 
+/// 主题色 → 指定 alpha 的半透明版（折叠视图选区背景，与 hex 视图同法同色）。
+fn with_alpha(c: egui::Color32, a: u8) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
+}
+
+/// 第 `n_chars` 个字符的字节偏移（`n_chars` = 行首起字符数，等于行字符数时为行尾）。
+fn char_to_byte(s: &str, n_chars: usize) -> usize {
+    s.char_indices().nth(n_chars).map_or(s.len(), |(b, _)| b)
+}
+
+/// 指针相对行 galley 左上角的位置 → galley 全文字符偏移（逐视觉行累计，自动处理
+/// 折行），再 clamp 到 `line_chars`：折叠摘要后缀不计入选区，落在摘要上视作正文行尾。
+fn galley_char_offset(galley: &egui::Galley, p: egui::Pos2, line_chars: usize) -> usize {
+    if galley.rows.is_empty() {
+        return 0;
+    }
+    let idx = galley
+        .rows
+        .iter()
+        .position(|r| p.y >= r.pos.y && p.y < r.pos.y + r.row.size.y)
+        .unwrap_or(galley.rows.len() - 1);
+    let mut off: usize = galley.rows[..idx]
+        .iter()
+        .map(|r| r.char_count_including_newline().0)
+        .sum();
+    let row = &galley.rows[idx];
+    off += row.row.char_at(p.x - row.pos.x).0;
+    off.min(line_chars)
+}
+
+/// 折叠视图拖拽选区的过程状态（ctx temp，跨帧保存在卡片组件 id 下）。
+#[derive(Clone, Copy)]
+struct FoldDrag {
+    /// 起手锚点（显示文本字节偏移）
+    anchor: usize,
+    /// 指针是否真的移出过锚点——区分"单击"（清选区）与"拖选"
+    moved: bool,
+}
+
 /// 折叠视图：替代 TextEdit 的自绘只读文本渲染（TextEdit 无法隐藏部分行）。
 /// 逐行按语法 token 着色（复用 [`crate::ui::syntax`] 的分词与色盘，命中背景
 /// 与 TextEdit 路径同色同语义），行首 gutter 画折叠三角（▼ 展开 / ▶ 折叠）；
 /// 折叠后隐藏子行，行尾以弱色显示"… N 行"摘要。命中行被折叠遮盖时自动展开
 /// 覆盖它的祖先折叠并滚动居中。返回渲染后的折叠状态（内容指纹 + 折叠行号集合），
 /// 由调用方写回 [`DetailState`]；祖先自动展开随写回持久生效（与 VS Code 一致）。
+///
+/// 正文支持拖拽选择与复制（与 hex 视图同交互）：按下定锚点、拖动更新选区端点
+/// （可跨行），Ctrl+C 复制选区文本，单击正文/右键/Esc 清除选区；折叠摘要后缀
+/// 不参与选择。选区随 `sel` 传入并由本函数直接更新，调用方写回并负责内容
+/// 指纹失效（换值/换段/换模式时清空）。
 #[allow(clippy::too_many_arguments)]
 fn fold_view_body(
     ui: &mut egui::Ui,
@@ -871,6 +940,7 @@ fn fold_view_body(
     hit: Option<(usize, usize)>,
     scroll_line: Option<usize>,
     stored: &Option<(u64, Vec<usize>)>,
+    sel: &mut Option<(usize, usize)>,
 ) -> (u64, Vec<usize>) {
     let t = tr();
     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
@@ -887,6 +957,15 @@ fn fold_view_body(
     };
     let toks = syntax_tokens(mode, text);
     let fp = text_fp(text);
+
+    let sel_id = egui::Id::new(("mdbxer_fold_sel", is_key));
+    let owner_id = egui::Id::new("mdbxer_sel_owner");
+    let drag = ui
+        .ctx()
+        .data(|d| d.get_temp::<Option<FoldDrag>>(sel_id))
+        .flatten();
+    let sel_bg = with_alpha(ui.visuals().selection.bg_fill, 150);
+
     let mut folded: std::collections::BTreeSet<usize> = match stored {
         Some((f, set)) if *f == fp => set.iter().copied().collect(),
         _ => std::collections::BTreeSet::new(),
@@ -906,6 +985,7 @@ fn fold_view_body(
         }
         let is_folded = folded.contains(&i);
         let line_str = &text[fl.start..fl.end];
+        let line_chars = line_str.chars().count();
         let mut job = egui::text::LayoutJob::default();
         append_line_colored(
             &mut job,
@@ -922,12 +1002,107 @@ fn fold_view_body(
             job.append(&format!("  {}", t.fold_summary(hidden)), 0.0, weak.clone());
         }
         job.wrap.max_width = wrap_w;
+        // 保留行尾空白：保证 glyphs 数与字符数一致，选区字符偏移累计才不错位
+        job.keep_trailing_whitespace = true;
         let galley = ui.fonts_mut(|f| f.layout_job(job));
         let row_h = galley.size().y.max(line_h);
-        let (rect, _) = ui.allocate_exact_size(
+        let (rect, resp) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), row_h),
-            egui::Sense::hover(),
+            egui::Sense::click_and_drag(),
         );
+
+        // ── 正文拖拽选区：drag 事件只发给起手行，跨行端点更新用全局指针状态 ──
+        let in_body = |p: egui::Pos2| p.x >= rect.left() + gutter;
+        let press_pos = resp.interact_pointer_pos();
+        if resp.drag_started() && press_pos.is_some_and(in_body) {
+            let lp = press_pos.unwrap() - egui::vec2(rect.left() + gutter, rect.top());
+            let anchor =
+                fl.start + char_to_byte(line_str, galley_char_offset(&galley, lp, line_chars));
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(
+                    sel_id,
+                    Some(FoldDrag {
+                        anchor,
+                        moved: false,
+                    }),
+                );
+                d.insert_temp(owner_id, Some(sel_id));
+            });
+        }
+        if let Some(dg) = drag {
+            if ui.input(|i| i.pointer.primary_down()) {
+                if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
+                    if rect.top() <= p.y && p.y < rect.bottom() && in_body(p) {
+                        let lp = p - egui::vec2(rect.left() + gutter, rect.top());
+                        let cur = fl.start
+                            + char_to_byte(line_str, galley_char_offset(&galley, lp, line_chars));
+                        let moved = dg.moved || cur != dg.anchor;
+                        ui.ctx().data_mut(|d| {
+                            d.insert_temp(
+                                sel_id,
+                                Some(FoldDrag {
+                                    anchor: dg.anchor,
+                                    moved,
+                                }),
+                            )
+                        });
+                        if moved {
+                            *sel = Some((dg.anchor, cur));
+                        }
+                    }
+                }
+            }
+        }
+        if resp.drag_stopped() {
+            // 单击正文（没拖动）不保留选区，等同放置光标
+            if let Some(FoldDrag { moved: false, .. }) = ui
+                .ctx()
+                .data(|d| d.get_temp::<Option<FoldDrag>>(sel_id))
+                .flatten()
+            {
+                *sel = None;
+            }
+            ui.ctx()
+                .data_mut(|d| d.remove_temp::<Option<FoldDrag>>(sel_id));
+        }
+        // 右键单击正文清除选区
+        if resp.secondary_clicked() && press_pos.is_some_and(in_body) {
+            *sel = None;
+        }
+        // 正文悬停显示文本光标（gutter/三角区域保持各自光标）
+        if resp.hovered() && ui.input(|i| i.pointer.hover_pos()).is_none_or(in_body) {
+            ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Text);
+        }
+
+        // 选区背景：正文选中字符逐 glyph 画半透明底色（先于文字绘制；
+        // 摘要后缀不在选区内，天然不着色；折行后跨视觉行也按字符精确覆盖）
+        if let Some((a, b)) = *sel {
+            let lo = a.min(b).max(fl.start);
+            let hi = a.max(b).min(fl.end);
+            if lo < hi {
+                let cs = line_str[..lo - fl.start].chars().count();
+                let ce = cs + line_str[lo - fl.start..hi - fl.start].chars().count();
+                let origin = rect.left_top() + egui::vec2(gutter, 0.0);
+                let mut char_off = 0usize;
+                'glyphs: for prow in &galley.rows {
+                    for (gi, g) in prow.row.glyphs.iter().enumerate() {
+                        let idx = char_off + gi;
+                        if idx >= ce {
+                            break 'glyphs;
+                        }
+                        if idx >= cs {
+                            let grect = egui::Rect::from_min_size(
+                                origin + prow.pos.to_vec2() + egui::vec2(g.pos.x, 0.0),
+                                egui::vec2(g.advance_width, prow.row.size.y),
+                            );
+                            ui.painter().rect_filled(grect, 1.5, sel_bg);
+                        }
+                    }
+                    char_off += prow.char_count_including_newline().0;
+                }
+            }
+        }
+
         ui.painter().galley(
             rect.left_top() + egui::vec2(gutter, 0.0),
             galley,
@@ -980,6 +1155,33 @@ fn fold_view_body(
         }
         if is_folded {
             hide_until = fl.fold_end.unwrap_or(i) + 1;
+        }
+    }
+
+    // ── 键盘：本视图为最近选择交互目标时，Ctrl+C 复制选区文本、Esc 清除 ──
+    // 多行多 widget 无法共享一个焦点 id，改用"最近按下"的视图标记（与 hex
+    // 视图共用 owner id）判断快捷键归属，避免两个视图同时响应互相覆盖剪贴板。
+    let owner = ui
+        .ctx()
+        .data(|d| d.get_temp::<Option<egui::Id>>(owner_id))
+        .flatten();
+    if owner == Some(sel_id) {
+        let (copy, escape) = ui.input(|i| {
+            (
+                i.events
+                    .iter()
+                    .any(|e| matches!(e, egui::Event::Copy | egui::Event::Cut)),
+                i.key_pressed(egui::Key::Escape),
+            )
+        });
+        if copy {
+            if let Some((a, b)) = *sel {
+                let (lo, hi) = (a.min(b), a.max(b));
+                ui.ctx().copy_text(text[lo..hi].to_owned());
+            }
+        }
+        if escape {
+            *sel = None;
         }
     }
     (fp, folded.into_iter().collect())
@@ -1513,6 +1715,12 @@ fn kv_card(
                 None
             };
             let fold_stored = app.detail.fold_state(is_key).clone();
+            // 折叠视图选区：内容指纹不符（换值/换段/换模式）时清空
+            let fold_sel_fp = text_fp(&display_text);
+            let mut fold_sel_writeback: Option<(usize, usize)> = match app.detail.fold_sel(is_key) {
+                Some((f, Some(r))) if *f == fold_sel_fp => Some(*r),
+                _ => None,
+            };
             let mut fold_writeback: Option<(u64, Vec<usize>)> = None;
             egui::collapsing_header::CollapsingState::load_with_default_open(
                 ui.ctx(),
@@ -1541,7 +1749,7 @@ fn kv_card(
                             .auto_shrink([false, true])
                             .max_height(text_h)
                             .show(ui, |ui| {
-                                fold_view_body(
+                                let out = fold_view_body(
                                     ui,
                                     is_key,
                                     &display_text,
@@ -1551,7 +1759,9 @@ fn kv_card(
                                     text_hit_range,
                                     fold_scroll_line,
                                     &fold_stored,
-                                )
+                                    &mut fold_sel_writeback,
+                                );
+                                out
                             })
                             .inner,
                     );
@@ -1677,6 +1887,9 @@ fn kv_card(
             // 内容指纹随状态一起存，换值/换段/换模式后指纹不符即整体重置为全展开
             if let Some(wb) = fold_writeback {
                 *app.detail.fold_state_mut(is_key) = Some(wb);
+                // 折叠视图本帧渲染过：选区状态同步写回（无选区时存 None，
+                // 指纹随状态一起存，换值/换段/换模式后指纹不符即清空）
+                *app.detail.fold_sel_mut(is_key) = Some((fold_sel_fp, fold_sel_writeback));
             }
 
             // 十六进制视图：自绘交互组件（悬停整行/单字节联动、拖拽选区 HEX↔ASCII 同步）。
