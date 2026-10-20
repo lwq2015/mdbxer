@@ -90,8 +90,8 @@ impl Geom {
                 return None;
             }
             let (bi, frac) = (raw / per, raw % per);
-            // 每字节只有前两位数字可点（紧凑第 3 位、常规第 3 位是空格）
-            (bi >= 0 && (bi as usize) < chunk_len && frac < per - 1).then_some((row, bi as usize))
+            // 每字节只有两位 hex 数字可点：常规格式第 3 位是空格，紧凑格式两位全是数字
+            (bi >= 0 && (bi as usize) < chunk_len && frac < 2).then_some((row, bi as usize))
         } else if self.ascii_w > 0.0 && p.x >= self.ascii_x && p.x < self.ascii_x + self.ascii_w {
             let bi = ((p.x - self.ascii_x) / self.cw).floor() as isize;
             (bi >= 0 && (bi as usize) < chunk_len).then_some((row, bi as usize))
