@@ -225,6 +225,8 @@ pub(super) const RU: I18n = I18n {
     hint_magic: "Магия файлов",
     disp_section: "Отображение",
     thousands_label: "Разделение разрядов",
+    hex_compact_label: "Шестн. без пробелов",
+    hex_compact_tip: "Без пробелов между байтами в столбце HEX (напр. 00D2FF01), ширина вдвое меньше; копирование следует этому формату",
     shortcut_section: "Горячие клавиши",
     shortcut_section_tip: "Все сочетания клавиш (справочно)",
     sc_open: "Открыть файл MDBX",

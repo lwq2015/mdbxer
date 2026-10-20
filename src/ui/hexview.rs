@@ -16,7 +16,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::fmt::{addr_chars, addr_digits, hex_line, mid_gap_index};
+use crate::fmt::{addr_chars, addr_digits, hex_line, hex_section_chars, mid_gap_index};
 
 /// Galley 缓存：内容指纹变化时整体作废。
 #[derive(Default, Clone)]
@@ -46,6 +46,8 @@ struct Geom {
     cw: f32,
     /// 行高
     rh: f32,
+    /// 每字节在 HEX 列占的字符数（紧凑 2 / 常规 3）
+    per: f32,
     /// HEX 列左缘（地址列右侧）
     hex_x: f32,
     /// HEX 列总宽（含字节间空格与 mid gap）
@@ -74,21 +76,22 @@ impl Geom {
         // HEX 列优先（与 ASCII 列在布局上不重叠）
         if self.hex_w > 0.0 && p.x >= self.hex_x && p.x < self.hex_x + self.hex_w {
             let mut raw = ((p.x - self.hex_x) / self.cw).floor() as isize;
+            let per = self.per as isize;
             if let Some(mid) = mid_gap_index(n) {
                 // mid 处是额外空隙；其后的字符坐标整体后移 1
-                if raw == (3 * mid) as isize {
+                if raw == per * mid as isize {
                     return None;
                 }
-                if raw > (3 * mid) as isize {
+                if raw > per * mid as isize {
                     raw -= 1;
                 }
             }
             if raw < 0 {
                 return None;
             }
-            let (bi, frac) = (raw as usize / 3, raw as usize % 3);
-            // 每字节只有前两个字符（两个 hex 数字）可点，第 3 个是空格
-            (bi < chunk_len && frac < 2).then_some((row, bi))
+            let (bi, frac) = (raw / per, raw % per);
+            // 每字节只有前两位数字可点（紧凑第 3 位、常规第 3 位是空格）
+            (bi >= 0 && (bi as usize) < chunk_len && frac < per - 1).then_some((row, bi as usize))
         } else if self.ascii_w > 0.0 && p.x >= self.ascii_x && p.x < self.ascii_x + self.ascii_w {
             let bi = ((p.x - self.ascii_x) / self.cw).floor() as isize;
             (bi >= 0 && (bi as usize) < chunk_len).then_some((row, bi as usize))
@@ -106,7 +109,7 @@ impl Geom {
         };
         egui::Rect::from_min_size(
             egui::pos2(
-                self.hex_x + (3 * i) as f32 * self.cw + gap,
+                self.hex_x + (self.per * i as f32) * self.cw + gap,
                 self.top + row as f32 * self.rh,
             ),
             egui::vec2(2.0 * self.cw, self.rh),
@@ -151,6 +154,7 @@ pub(crate) fn hex_view(
     show_addr: bool,
     show_hex: bool,
     show_ascii: bool,
+    compact: bool,
     base_offset: usize,
     sel: &mut Option<(usize, usize)>,
     hit: Option<(usize, usize)>,
@@ -169,7 +173,7 @@ pub(crate) fn hex_view(
         0.0
     };
     let hex_w = if show_hex {
-        crate::fmt::hex_section_chars(n) as f32 * cw
+        hex_section_chars(n, compact) as f32 * cw
     } else {
         0.0
     };
@@ -187,6 +191,8 @@ pub(crate) fn hex_view(
         top: rect.top(),
         cw,
         rh,
+        // 每字节在 HEX 列占的字符数（紧凑 2 / 常规 3），数字两位恒为 2
+        per: if compact { 2.0 } else { 3.0 },
         hex_x: rect.left() + addr_w,
         hex_w,
         ascii_x: rect.left() + addr_w + hex_w,
@@ -215,6 +221,7 @@ pub(crate) fn hex_view(
             show_addr,
             show_hex,
             show_ascii,
+            compact,
             ui.visuals().dark_mode,
             ui.ctx().pixels_per_point().to_bits(),
         )
@@ -361,6 +368,7 @@ pub(crate) fn hex_view(
                     show_ascii,
                     base_offset,
                     digits,
+                    compact,
                 ));
             }
         }
@@ -480,6 +488,7 @@ pub(crate) fn hex_view(
                     show_ascii,
                     base_offset + r * n,
                     digits,
+                    compact,
                 );
                 // 整行均为 ASCII（地址 + HEX + ASCII 列），按字节切出地址段
                 let addr_len = if show_addr { digits + 2 } else { 0 };

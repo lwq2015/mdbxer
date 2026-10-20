@@ -225,6 +225,8 @@ pub(super) const EN: I18n = I18n {
     hint_magic: "File magic",
     disp_section: "Display",
     thousands_label: "Thousand separators",
+    hex_compact_label: "Compact HEX",
+    hex_compact_tip: "No spaces between bytes in the HEX column (e.g. 00D2FF01), half the width; copied output follows this format",
     shortcut_section: "Shortcuts",
     shortcut_section_tip: "All keyboard shortcuts (reference only)",
     sc_open: "Open MDBX file",

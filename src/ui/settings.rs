@@ -161,6 +161,19 @@ fn display_section(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     app.save_ui_prefs();
                 }
                 ui.end_row();
+
+                // HEX 视图紧凑格式开关（HEX 列字节间不加空格）
+                ui.label(t.hex_compact_label);
+                let mut hc = app.detail.hex_compact;
+                if ui
+                    .checkbox(&mut hc, "00D2FF01")
+                    .on_hover_text(t.hex_compact_tip)
+                    .changed()
+                {
+                    app.detail.hex_compact = hc;
+                    app.save_ui_prefs();
+                }
+                ui.end_row();
             });
     });
 }

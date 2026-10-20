@@ -226,6 +226,8 @@ pub(super) const ZH: I18n = I18n {
     hint_magic: "文件魔数",
     disp_section: "显示参数",
     thousands_label: "千位分隔",
+    hex_compact_label: "无空格 HEX",
+    hex_compact_tip: "十六进制列字节间不加空格（如 00D2FF01），列宽减半；复制输出跟随此格式",
     shortcut_section: "快捷键",
     shortcut_section_tip: "本工具支持的键盘快捷键一览（仅供查阅）",
     sc_open: "打开 MDBX 文件",

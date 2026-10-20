@@ -568,6 +568,7 @@ impl MdbxerApp {
         detail.show_addr = prefs.show_addr.unwrap_or(true);
         detail.show_hex = prefs.show_hex.unwrap_or(true);
         detail.show_ascii = prefs.show_ascii.unwrap_or(true);
+        detail.hex_compact = prefs.hex_compact.unwrap_or(false);
         // 脏配置兜底：HEX/ASCII 至少保留一项（手动改错配置文件时）
         if !detail.show_hex && !detail.show_ascii {
             detail.show_hex = true;
@@ -2014,6 +2015,7 @@ impl MdbxerApp {
             show_addr: Some(self.detail.show_addr),
             show_hex: Some(self.detail.show_hex),
             show_ascii: Some(self.detail.show_ascii),
+            hex_compact: Some(self.detail.hex_compact),
             hex_width: Some(self.detail.hex_width),
 
             left_visible: Some(self.left_visible),

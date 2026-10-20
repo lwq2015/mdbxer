@@ -29,6 +29,8 @@ pub struct DetailState {
     pub show_hex: bool,
     /// hex dump 是否显示 ASCII 列
     pub show_ascii: bool,
+    /// hex dump 紧凑格式：HEX 列字节间不加空格
+    pub hex_compact: bool,
     /// hex dump 行宽（每行字节数：4/8/16/32）
     pub hex_width: usize,
     /// 多值表当前 Key 的值总数
@@ -96,6 +98,7 @@ impl Default for DetailState {
             show_addr: true,
             show_hex: true,
             show_ascii: true,
+            hex_compact: false,
             hex_width: fmt::DEFAULT_HEX_WIDTH,
 
             dup_total: 1,
@@ -1967,6 +1970,7 @@ fn kv_card(
                             app.detail.show_addr,
                             app.detail.show_hex,
                             app.detail.show_ascii,
+                            app.detail.hex_compact,
                             off,
                             sel,
                             blob_hit,
@@ -2036,8 +2040,8 @@ fn detail_needed_width(ui: &egui::Ui, d: &DetailState, addr_max_off: usize) -> f
         line_chars += crate::fmt::addr_chars(crate::fmt::addr_digits(0, addr_max_off + 1)) as f32;
     }
     if d.show_hex {
-        // 每字节 "XX "，宽行中间额外 1 个分隔空格
-        line_chars += n * 3.0 + if d.hex_width >= 8 { 1.0 } else { 0.0 };
+        // 每字节 2~3 字符（紧凑 2 / 常规 3），宽行中间额外 1 个分隔空格
+        line_chars += crate::fmt::hex_section_chars(d.hex_width, d.hex_compact) as f32;
     }
     if d.show_ascii {
         line_chars += n;

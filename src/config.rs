@@ -97,6 +97,9 @@ pub struct UiPrefs {
     /// hex dump：显示 ASCII 列
     #[serde(default)]
     pub show_ascii: Option<bool>,
+    /// hex dump 紧凑格式：HEX 列字节间不加空格
+    #[serde(default)]
+    pub hex_compact: Option<bool>,
     /// hex dump 每行字节数（4/8/16/32）
     #[serde(default)]
     pub hex_width: Option<usize>,
@@ -451,6 +454,7 @@ mod tests {
             show_addr: Some(true),
             show_hex: Some(false),
             show_ascii: Some(true),
+            hex_compact: Some(true),
             hex_width: Some(16),
             left_visible: Some(false),
             detail_visible: Some(true),
@@ -476,6 +480,7 @@ mod tests {
         assert!(back.hint_value.magic);
         assert!(!back.hint_value.ipv4);
         assert_eq!(back.show_hex, Some(false));
+        assert_eq!(back.hex_compact, Some(true));
         assert_eq!(back.hex_width, Some(16));
         assert_eq!(back.left_visible, Some(false));
         assert_eq!(back.detail_visible, Some(true));
@@ -503,6 +508,7 @@ mod tests {
         assert!(back.show_addr.is_none());
         assert!(back.show_hex.is_none());
         assert!(back.show_ascii.is_none());
+        assert!(back.hex_compact.is_none());
         assert!(back.hex_width.is_none());
         assert!(back.left_visible.is_none());
         assert!(back.detail_visible.is_none());

@@ -377,6 +377,9 @@ pub struct I18n {
     /// 显示参数节标题与「千位分隔」标签
     pub disp_section: &'static str,
     pub thousands_label: &'static str,
+    /// 「无空格 HEX」开关标签与提示（紧凑格式：HEX 列字节间不加空格）
+    pub hex_compact_label: &'static str,
+    pub hex_compact_tip: &'static str,
     /// 快捷键清单节标题与提示
     pub shortcut_section: &'static str,
     pub shortcut_section_tip: &'static str,

@@ -30,14 +30,17 @@ pub fn mid_gap_index(width: usize) -> Option<usize> {
     (width >= 8).then_some(width / 2)
 }
 
-/// HEX 列总宽（字符）：每字节 "XX " 占 3 字符 + 宽行中间 1 个空隙。
-pub fn hex_section_chars(width: usize) -> usize {
-    width * 3 + if mid_gap_index(width).is_some() { 1 } else { 0 }
+/// HEX 列总宽（字符）：每字节 2~3 字符（紧凑 2 / 常规 3）+ 宽行中间 1 个空隙
+/// + 紧凑格式段尾 1 个分隔空格（常规格式由每字节后的空格兼任）。
+pub fn hex_section_chars(width: usize, compact: bool) -> usize {
+    let per = if compact { 2 } else { 3 };
+    width * per + if mid_gap_index(width).is_some() { 1 } else { 0 } + usize::from(compact)
 }
 
 /// 构造一行 hex dump（不去尾空格，供交互组件按固定字符坐标布局）。
 /// 与 [`hex_dump`] 的单行内容一致：地址列 + HEX 列（末行补空格对齐）+ ASCII 列。
 /// `addr_digits` 为地址列十六进制位数（同一 dump 内所有行一致，保证对齐）。
+/// `compact` 为紧凑格式：HEX 列字节间不加空格（宽行 mid gap 仍保留）。
 pub fn hex_line(
     chunk: &[u8],
     width: usize,
@@ -46,6 +49,7 @@ pub fn hex_line(
     show_ascii: bool,
     abs_offset: usize,
     addr_digits: usize,
+    compact: bool,
 ) -> String {
     let width = width.max(1);
     let mid_gap = mid_gap_index(width).unwrap_or(usize::MAX);
@@ -59,9 +63,19 @@ pub fn hex_line(
                 s.push(' ');
             }
             match chunk.get(i) {
-                Some(b) => s.push_str(&format!("{b:02X} ")),
-                None => s.push_str("   "),
+                Some(b) => {
+                    s.push_str(&format!("{b:02X}"));
+                    // 常规格式字节后 1 空格分隔；紧凑格式无空格（mid gap 除外）
+                    if !compact {
+                        s.push(' ');
+                    }
+                }
+                None => s.push_str(if compact { "  " } else { "   " }),
             }
+        }
+        if compact {
+            // 紧凑格式段尾 1 分隔空格：字节间无空格，需与 ASCII 段隔开
+            s.push(' ');
         }
     }
     if show_ascii {
@@ -96,6 +110,7 @@ pub fn hex_copy_selection(
     show_ascii: bool,
     base_offset: usize,
     digits: usize,
+    compact: bool,
 ) -> String {
     if bytes.is_empty() || (!show_hex && !show_ascii) {
         return String::new();
@@ -106,12 +121,19 @@ pub fn hex_copy_selection(
         return String::new();
     }
     let mid = mid_gap_index(n).unwrap_or(usize::MAX);
+    // 每字节在 HEX 段占的字符数（紧凑 2 / 常规 3）
+    let per = if compact { 2 } else { 3 };
     // 地址列宽（关时 0）：后续各段下标都要加上这一偏移
     let addr_len = if show_addr { digits + 2 } else { 0 };
     // 行内第 i 字节在 HEX 段中的起始字符下标（含地址前缀偏移）
-    let cstart = |i: usize| addr_len + 3 * i + if i >= mid { 1 } else { 0 };
+    let cstart = |i: usize| addr_len + per * i + if i >= mid { 1 } else { 0 };
     // 只显示 ASCII 时行首即 ASCII 段（地址开时前缀地址列）
-    let ascii_base = addr_len + if show_hex { hex_section_chars(n) } else { 0 };
+    let ascii_base = addr_len
+        + if show_hex {
+            hex_section_chars(n, compact)
+        } else {
+            0
+        };
 
     let mut lines = Vec::new();
     let mut r = lo / n;
@@ -129,6 +151,7 @@ pub fn hex_copy_selection(
             show_ascii,
             base_offset + row_start,
             digits,
+            compact,
         );
         let mut buf: Vec<char> = line.chars().collect();
         // 地址列完整保留；只保留选中字节在 HEX 段（两位数字）和 ASCII 段（一个字符）的位置
@@ -173,6 +196,7 @@ pub fn hex_dump(
     show_hex: bool,
     show_ascii: bool,
     base_offset: usize,
+    compact: bool,
 ) -> String {
     if bytes.is_empty() {
         return crate::i18n::tr().empty.to_string();
@@ -189,6 +213,7 @@ pub fn hex_dump(
             show_ascii,
             base_offset + line * width,
             digits,
+            compact,
         ));
         out.truncate(out.trim_end().len());
         out.push('\n');
@@ -202,14 +227,14 @@ mod tests {
 
     #[test]
     fn empty_returns_placeholder() {
-        let s = hex_dump(&[], 8, true, true, true, 0);
+        let s = hex_dump(&[], 8, true, true, true, 0, false);
         assert_eq!(s, crate::i18n::tr().empty);
     }
 
     #[test]
     fn all_columns_on() {
         let bytes = [0x48, 0x65, 0x6C, 0x6C, 0x6F]; // "Hello"
-        let s = hex_dump(&bytes, 8, true, true, true, 0);
+        let s = hex_dump(&bytes, 8, true, true, true, 0, false);
         // 地址列（最小 4 位）
         assert!(s.starts_with("0000  "));
         // HEX 列（宽 8 时第 4 字节后有双空格）
@@ -220,28 +245,28 @@ mod tests {
 
     #[test]
     fn addr_only() {
-        let s = hex_dump(&[0x41], 8, true, false, false, 0);
+        let s = hex_dump(&[0x41], 8, true, false, false, 0, false);
         assert!(s.starts_with("0000"));
         assert!(!s.contains("41")); // 无 HEX 列
     }
 
     #[test]
     fn hex_only_no_addr() {
-        let s = hex_dump(&[0x41, 0x42], 8, false, true, false, 0);
+        let s = hex_dump(&[0x41, 0x42], 8, false, true, false, 0, false);
         assert!(!s.contains("00000000"));
         assert!(s.contains("41 42"));
     }
 
     #[test]
     fn ascii_replaces_non_graphic() {
-        let s = hex_dump(&[0x41, 0x00, 0x42, 0x07], 8, false, false, true, 0);
+        let s = hex_dump(&[0x41, 0x00, 0x42, 0x07], 8, false, false, true, 0, false);
         assert!(s.contains("A.B.")); // 0x00 和 0x07 显示为点
     }
 
     #[test]
     fn width_wraps_lines() {
         let bytes = [0x01, 0x02, 0x03, 0x04, 0x05];
-        let s = hex_dump(&bytes, 2, true, true, true, 0);
+        let s = hex_dump(&bytes, 2, true, true, true, 0, false);
         let lines: Vec<&str> = s.lines().collect();
         assert_eq!(lines.len(), 3); // 3 行：2+2+1
         assert!(lines[0].contains("01 02"));
@@ -251,7 +276,7 @@ mod tests {
 
     #[test]
     fn base_offset_affects_addr_column() {
-        let s = hex_dump(&[0x41], 8, true, true, true, 0x1000);
+        let s = hex_dump(&[0x41], 8, true, true, true, 0x1000, false);
         assert!(s.starts_with("1000  "));
     }
 
@@ -280,7 +305,7 @@ mod tests {
     fn mid_gap_for_width_ge_8() {
         // 宽 8 时，中间第 4 字节后多一个空格
         let bytes = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
-        let s = hex_dump(&bytes, 8, false, true, false, 0);
+        let s = hex_dump(&bytes, 8, false, true, false, 0, false);
         // "01 02 03 04  05 06 07 08 " 中间双空格
         assert!(s.contains("04  05"), "got: {s}");
     }
@@ -288,7 +313,7 @@ mod tests {
     #[test]
     fn no_mid_gap_for_width_lt_8() {
         let bytes = [0x01, 0x02, 0x03, 0x04];
-        let s = hex_dump(&bytes, 4, false, true, false, 0);
+        let s = hex_dump(&bytes, 4, false, true, false, 0, false);
         assert!(!s.contains("  ")); // 无双空格
     }
 
@@ -296,7 +321,7 @@ mod tests {
     fn last_line_padded_for_ascii_alignment() {
         // 行宽 4，最后一行只有 1 字节，HEX 列应补齐到 4 字节宽
         let bytes = [0x41, 0x42, 0x43, 0x44, 0x45];
-        let s = hex_dump(&bytes, 4, true, true, true, 0);
+        let s = hex_dump(&bytes, 4, true, true, true, 0, false);
         let last = s.lines().last().unwrap();
         // 末行：地址 + "45" + 补齐空格 + ASCII "E"
         assert!(last.ends_with("E"));
@@ -305,14 +330,14 @@ mod tests {
     #[test]
     fn hex_line_is_untrimmed_and_ascii_aligned() {
         // 行宽 4、只 1 字节：HEX 列补齐 4 字节（12 字符），ASCII 起始位置固定
-        let line = hex_line(&[0x45], 4, false, true, true, 0, 0);
+        let line = hex_line(&[0x45], 4, false, true, true, 0, 0, false);
         assert_eq!(line.len(), 13); // 12（HEX 列）+ 1（ASCII）
         assert_eq!(&line[..2], "45");
         assert_eq!(line.chars().last(), Some('E'));
         assert!(line[2..12].chars().all(|c| c == ' '));
         // 几何常量与之一致
-        assert_eq!(hex_section_chars(4), 12);
-        assert_eq!(hex_section_chars(8), 25); // 8*3 + 中间空隙 1
+        assert_eq!(hex_section_chars(4, false), 12);
+        assert_eq!(hex_section_chars(8, false), 25); // 8*3 + 中间空隙 1
         assert_eq!(mid_gap_index(8), Some(4));
         assert_eq!(mid_gap_index(4), None);
     }
@@ -320,10 +345,28 @@ mod tests {
     #[test]
     fn hex_line_mid_gap_offset() {
         // 行宽 8：第 5 字节（i=4=mid）前多 1 空格
-        let line = hex_line(&[0u8; 8], 8, false, true, false, 0, 0);
+        let line = hex_line(&[0u8; 8], 8, false, true, false, 0, 0, false);
         // "00 00 00 00  00 00 00 00 "（结尾空格保留）
         assert!(line.starts_with("00 00 00 00  00"));
-        assert_eq!(line.len(), hex_section_chars(8));
+        assert_eq!(line.len(), hex_section_chars(8, false));
+    }
+
+    #[test]
+    fn hex_line_compact_no_spaces() {
+        // 紧凑：字节间无空格，末行每缺 1 字节补 2 空格，段尾 1 分隔空格；4 宽无 mid gap
+        let line = hex_line(&[0x00, 0x01, 0xFF], 4, false, true, true, 0, 0, true);
+        assert!(line.starts_with("0001FF   "));
+        assert_eq!(line.len(), 9 + 3); // HEX 列 4*2+1（段尾）+ ASCII 3
+        assert_eq!(hex_section_chars(4, true), 9);
+        assert_eq!(hex_section_chars(8, true), 18); // 8*2 + mid gap 1 + 段尾 1
+    }
+
+    #[test]
+    fn hex_line_compact_keeps_mid_gap() {
+        // 紧凑 8 宽：字节间无空格，第 4 字节后仍留 1 空隙，段尾 1 分隔空格
+        let line = hex_line(&[0u8; 8], 8, false, true, false, 0, 0, true);
+        assert!(line.starts_with("00000000 0000"));
+        assert_eq!(line.len(), hex_section_chars(8, true));
     }
 
     #[test]
@@ -331,7 +374,7 @@ mod tests {
         // "Hello, MDBX!" 12 字节，行宽 8，地址关（digits/传参仅占位）
         let b = b"Hello, MDBX!";
         let c = |lo, hi, show_hex, show_ascii| {
-            hex_copy_selection(b, lo, hi, 8, false, show_hex, show_ascii, 0, 4)
+            hex_copy_selection(b, lo, hi, 8, false, show_hex, show_ascii, 0, 4, false)
         };
 
         // 单行整行选：HEX 段（含 mid gap 双空格）与 ASCII 原文同行
@@ -366,23 +409,23 @@ mod tests {
         let b = b"Hello, MDBX!";
 
         // 单行整行选：地址完整保留 + HEX + ASCII（与屏幕显示一致）
-        let s = hex_copy_selection(b, 0, 7, 8, true, true, true, 0, 4);
+        let s = hex_copy_selection(b, 0, 7, 8, true, true, true, 0, 4, false);
         assert_eq!(s, "0000  48 65 6C 6C  6F 2C 20 4D Hello, M");
 
         // 第二行全选：地址 0008 + 顶格 HEX
-        let s = hex_copy_selection(b, 8, 11, 8, true, true, true, 0, 4);
+        let s = hex_copy_selection(b, 8, 11, 8, true, true, true, 0, 4, false);
         assert_eq!(s, "0008  44 42 58 21              DBX!");
 
         // 只 ASCII：地址前缀 + 选中字节（未选位置留空格对齐）
-        let s = hex_copy_selection(b, 9, 10, 8, true, false, true, 0, 4);
+        let s = hex_copy_selection(b, 9, 10, 8, true, false, true, 0, 4, false);
         assert_eq!(s, "0008   BX");
 
         // base_offset 计入每行地址
-        let s = hex_copy_selection(b, 8, 11, 8, true, true, false, 0x1000, 4);
+        let s = hex_copy_selection(b, 8, 11, 8, true, true, false, 0x1000, 4, false);
         assert_eq!(s, "1008  44 42 58 21");
 
         // 跨行：每行各自带地址
-        let s = hex_copy_selection(b, 6, 11, 8, true, true, false, 0, 4);
+        let s = hex_copy_selection(b, 6, 11, 8, true, true, false, 0, 4, false);
         let lines: Vec<&str> = s.lines().collect();
         assert_eq!(lines.len(), 2);
         assert!(lines[0].starts_with("0000"));
@@ -393,7 +436,7 @@ mod tests {
     fn hex_copy_selection_mid_gap_and_narrow() {
         let b = (0u8..16).collect::<Vec<u8>>();
         let c = |lo, hi, show_hex, show_ascii| {
-            hex_copy_selection(&b, lo, hi, 8, false, show_hex, show_ascii, 0, 4)
+            hex_copy_selection(&b, lo, hi, 8, false, show_hex, show_ascii, 0, 4, false)
         };
 
         // 选第二行字节 4..7（值 0C..0F，ASCII 都是 '.'）
@@ -408,7 +451,7 @@ mod tests {
         assert!(s.ends_with("..")); // ASCII 侧 i4..5 两个 '.'
 
         // 行宽 4（无 mid gap）：缩进 6 空格，HEX 与 ASCII 同时出现
-        let s = hex_copy_selection(b"ABCD", 2, 3, 4, false, true, true, 0, 4);
+        let s = hex_copy_selection(b"ABCD", 2, 3, 4, false, true, true, 0, 4, false);
         assert!(s.starts_with("      43 44"));
         assert!(s.ends_with("CD"));
     }
@@ -417,7 +460,7 @@ mod tests {
     fn hex_copy_selection_respects_section_toggles() {
         let b = b"Hello, MDBX!";
         let c = |lo, hi, show_addr, show_hex, show_ascii| {
-            hex_copy_selection(b, lo, hi, 8, show_addr, show_hex, show_ascii, 0, 4)
+            hex_copy_selection(b, lo, hi, 8, show_addr, show_hex, show_ascii, 0, 4, false)
         };
 
         // 只显示 ASCII：选第二行全部 → "DBX!"；部分选 i=9..10 → " BX"（行首未选留空格对齐）
@@ -434,5 +477,22 @@ mod tests {
 
         // 两个数据开关都关：空串（地址也无效）
         assert_eq!(c(8, 11, true, false, false), "");
+    }
+
+    #[test]
+    fn hex_copy_selection_compact() {
+        let b = b"Hello, MDBX!";
+
+        // 紧凑整行选：HEX 无空格（mid gap 保留）+ ASCII 同行
+        let s = hex_copy_selection(b, 0, 7, 8, false, true, true, 0, 4, true);
+        assert_eq!(s, "48656C6C 6F2C204D Hello, M");
+
+        // 只 HEX + 地址：第二行全选，尾随补齐空格被 trim
+        let s = hex_copy_selection(b, 8, 11, 8, true, true, false, 0, 4, true);
+        assert_eq!(s, "0008  44425821");
+
+        // 行内部分选的缩进按紧凑列宽计算：i1..=3 → HEX 段缩进 2 字符
+        let s = hex_copy_selection(b, 1, 3, 8, false, true, false, 0, 4, true);
+        assert!(s.starts_with("  656C6C"));
     }
 }
