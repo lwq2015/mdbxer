@@ -26,7 +26,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
             // Tab 状态（持久化到 egui Memory）
             let tab_id = egui::Id::new("left_tab_fav");
-            let is_fav = ui.ctx().memory(|m| m.data.get_temp::<bool>(tab_id)).unwrap_or(false);
+            let is_fav = ui
+                .ctx()
+                .memory(|m| m.data.get_temp::<bool>(tab_id))
+                .unwrap_or(false);
 
             // ── 底部 Tab 栏（VS 风格扁平 Tab，横向排列，锚定左栏最底部）──
             egui::Panel::bottom("left_tab_bar")
@@ -75,12 +78,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                 );
                             }
                             if tab1_resp.clicked() {
-                                ui.ctx()
-                                    .memory_mut(|m| m.data.insert_temp(tab_id, false));
+                                ui.ctx().memory_mut(|m| m.data.insert_temp(tab_id, false));
                             }
                             if tab2_resp.clicked() {
-                                ui.ctx()
-                                    .memory_mut(|m| m.data.insert_temp(tab_id, true));
+                                ui.ctx().memory_mut(|m| m.data.insert_temp(tab_id, true));
                             }
                         },
                     );
@@ -131,9 +132,7 @@ fn show_tables(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n) {
     // 过滤 + 排序 + 收藏表稳定置顶
     let filter = filter_s.to_lowercase();
     let mut idx: Vec<usize> = (0..dbh.tables.len()).collect();
-    idx.retain(|&i| {
-        filter.is_empty() || dbh.tables[i].display().to_lowercase().contains(&filter)
-    });
+    idx.retain(|&i| filter.is_empty() || dbh.tables[i].display().to_lowercase().contains(&filter));
     match sort {
         TableSort::NameAsc => {
             idx.sort_by(|&a, &b| dbh.tables[a].display().cmp(&dbh.tables[b].display()))
@@ -142,9 +141,7 @@ fn show_tables(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n) {
             idx.sort_by(|&a, &b| dbh.tables[b].display().cmp(&dbh.tables[a].display()))
         }
         TableSort::CountAsc => idx.sort_by_key(|&i| dbh.tables[i].entries),
-        TableSort::CountDesc => {
-            idx.sort_by_key(|&i| std::cmp::Reverse(dbh.tables[i].entries))
-        }
+        TableSort::CountDesc => idx.sort_by_key(|&i| std::cmp::Reverse(dbh.tables[i].entries)),
     }
     idx.sort_by_key(|&i| !app.fav_tables.contains(&dbh.tables[i].name));
 
@@ -159,7 +156,11 @@ fn show_tables(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n) {
                 let is_fav = app.fav_tables.contains(&tbl.name);
                 ui.horizontal(|ui| {
                     let star = if is_fav { "★" } else { "☆" };
-                    let star_tip = if is_fav { t.fav_rm_t_tip } else { t.fav_add_t_tip };
+                    let star_tip = if is_fav {
+                        t.fav_rm_t_tip
+                    } else {
+                        t.fav_add_t_tip
+                    };
                     if ui.small_button(star).on_hover_text(star_tip).clicked() {
                         row_fav_toggled = Some(tbl.name.clone());
                     }
@@ -217,14 +218,8 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                     .iter()
                     .find(|ti| &ti.name == fname)
                     .map(|ti| ti.display())
-                    .unwrap_or_else(|| {
-                        fname.clone().unwrap_or_else(|| t.main_table.to_string())
-                    });
-                let n_fav_keys = app
-                    .fav_keys
-                    .iter()
-                    .filter(|f| &f.table == fname)
-                    .count();
+                    .unwrap_or_else(|| fname.clone().unwrap_or_else(|| t.main_table.to_string()));
+                let n_fav_keys = app.fav_keys.iter().filter(|f| &f.table == fname).count();
                 display.push_str(&t.fav_count(n_fav_keys));
                 let selected = app.cur_table().map(|ti| &ti.name) == Some(fname);
                 let key_idx: Vec<usize> = app
@@ -234,76 +229,63 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                     .filter(|(_, f)| &f.table == fname)
                     .map(|(i, _)| i)
                     .collect();
-                egui::collapsing_header::CollapsingState
-                    ::load_with_default_open(
-                        ui.ctx(),
-                        egui::Id::new(("fav_fold", fname.clone())),
-                        true,
-                    )
-                    .show_header(ui, |ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            // 预留滚动条宽度，避免 x 按钮被挡
-                            ui.allocate_space(egui::vec2(bar_w, 0.0));
-                            // 右端 x 取消表收藏
-                            if ui
-                                .small_button("x")
-                                .on_hover_text(t.fav_rm_t_tip)
-                                .clicked()
-                            {
-                                fav_table_toggle = Some(fname.clone());
-                            }
-                            // 表名占剩余宽度
-                            if ui
-                                .add(
-                                    egui::Button::selectable(
-                                        selected,
-                                        egui::RichText::new(display).monospace(),
-                                    )
-                                    .truncate(),
+                egui::collapsing_header::CollapsingState::load_with_default_open(
+                    ui.ctx(),
+                    egui::Id::new(("fav_fold", fname.clone())),
+                    true,
+                )
+                .show_header(ui, |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // 预留滚动条宽度，避免 x 按钮被挡
+                        ui.allocate_space(egui::vec2(bar_w, 0.0));
+                        // 右端 x 取消表收藏
+                        if ui.small_button("x").on_hover_text(t.fav_rm_t_tip).clicked() {
+                            fav_table_toggle = Some(fname.clone());
+                        }
+                        // 表名占剩余宽度
+                        if ui
+                            .add(
+                                egui::Button::selectable(
+                                    selected,
+                                    egui::RichText::new(display).monospace(),
                                 )
-                                .clicked()
-                            {
-                                if let Some(pos) = dbh
-                                    .tables
-                                    .iter()
-                                    .position(|ti| ti.name == *fname)
-                                {
-                                    fav_table_pick = Some(pos);
-                                }
+                                .truncate(),
+                            )
+                            .clicked()
+                        {
+                            if let Some(pos) = dbh.tables.iter().position(|ti| ti.name == *fname) {
+                                fav_table_pick = Some(pos);
                             }
-                        });
-                    })
-                    .body_unindented(|ui| {
-                        for i in key_idx {
-                            let fk = &app.fav_keys[i];
-                            let key_text =
-                                crate::ui::parse_hex(&fk.key_hex)
-                                    .map(|b| {
-                                        crate::fmt::decode(
-                                        &b,
-                                        crate::fmt::DecodeMode::Auto,
-                                        app.endian,
-                                        24,
-                                        &app.hint_key,
-                                    )
-                                    })
-                                    .unwrap_or_else(|_| {
-                                        fk.key_hex.chars().take(16).collect()
-                                    });
-                            let label = if fk.note.is_empty() {
-                                key_text
-                            } else {
-                                format!("{} · {key_text}", fk.note)
-                            };
-                            ui.horizontal(|ui| {
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        }
+                    });
+                })
+                .body_unindented(|ui| {
+                    for i in key_idx {
+                        let fk = &app.fav_keys[i];
+                        let key_text = crate::ui::parse_hex(&fk.key_hex)
+                            .map(|b| {
+                                crate::fmt::decode(
+                                    &b,
+                                    crate::fmt::DecodeMode::Auto,
+                                    app.endian,
+                                    24,
+                                    &app.hint_key,
+                                )
+                            })
+                            .unwrap_or_else(|_| fk.key_hex.chars().take(16).collect());
+                        let label = if fk.note.is_empty() {
+                            key_text
+                        } else {
+                            format!("{} · {key_text}", fk.note)
+                        };
+                        ui.horizontal(|ui| {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
                                     // 预留滚动条宽度
                                     ui.allocate_space(egui::vec2(bar_w, 0.0));
                                     // 右端 x 取消 Key 收藏
-                                    if ui
-                                        .small_button("x")
-                                        .on_hover_text(t.fav_rm_k_tip)
-                                        .clicked()
+                                    if ui.small_button("x").on_hover_text(t.fav_rm_k_tip).clicked()
                                     {
                                         fav_key_action = Some((i, false));
                                     }
@@ -316,15 +298,19 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                                             )
                                             .truncate(),
                                         )
-                                        .on_hover_text(format!("{}\n{}", t.fav_jump_tip, fk.key_hex))
+                                        .on_hover_text(format!(
+                                            "{}\n{}",
+                                            t.fav_jump_tip, fk.key_hex
+                                        ))
                                         .clicked()
                                     {
                                         fav_key_action = Some((i, true));
                                     }
-                                });
-                            });
-                        }
-                    });
+                                },
+                            );
+                        });
+                    }
+                });
             }
         });
 

@@ -36,10 +36,7 @@ pub(crate) fn decompress(bytes: &[u8]) -> Option<(&'static str, Vec<u8>)> {
     }
 
     // zlib：CMF 0x78（deflate + 32K 窗口）且 (CMF<<8|FLG) % 31 == 0（校验头）
-    if bytes.len() >= 2
-        && bytes[0] == 0x78
-        && u16::from_be_bytes([bytes[0], bytes[1]]) % 31 == 0
-    {
+    if bytes.len() >= 2 && bytes[0] == 0x78 && u16::from_be_bytes([bytes[0], bytes[1]]) % 31 == 0 {
         let dec = flate2::read::ZlibDecoder::new(bytes);
         return read_limited(dec).map(|v| ("zlib", v));
     }

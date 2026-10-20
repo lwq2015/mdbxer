@@ -83,12 +83,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 app.close_db();
             }
             // 重新加载库：仅重枚举表列表/条目数（复用环境句柄，不重开环境）
-            if app.db.is_some()
-                && ui
-                    .button("↻")
-                    .on_hover_text(t.btn_reload_tip)
-                    .clicked()
-            {
+            if app.db.is_some() && ui.button("↻").on_hover_text(t.btn_reload_tip).clicked() {
                 app.reload_db();
             }
             // 打开库所在位置：单文件模式定位文件，目录模式打开目录

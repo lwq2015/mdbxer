@@ -207,10 +207,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let selected = app.selected_row;
     // 消费一次性滚动请求（键盘 ↑↓ / F3 命中 / 翻页回顶登记的显示行号）。
     // align=None：只在目标行不可见时滚到刚好可见，可见时不打断手动滚动。
-    let scroll_to = app
-        .pending_scroll
-        .take()
-        .filter(|&di| di < total_rows);
+    let scroll_to = app.pending_scroll.take().filter(|&di| di < total_rows);
     let sort_desc = app.sort_desc;
     let col_sort = app.col_sort;
 
@@ -328,9 +325,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             // 标签被列宽截断时在 tooltip 里补全全名，再附指定类型说明
                             let font = ui.style().text_styles[&egui::TextStyle::Body].clone();
                             let label_w = ui.fonts_mut(|f| {
-                                f.layout_no_wrap(view.type_label.clone(), font, egui::Color32::WHITE)
-                                    .size()
-                                    .x
+                                f.layout_no_wrap(
+                                    view.type_label.clone(),
+                                    font,
+                                    egui::Color32::WHITE,
+                                )
+                                .size()
+                                .x
                             });
                             let tip = if label_w > resp.rect.width() {
                                 format!("{}\n\n{}", view.type_label, t.type_forced_tip)

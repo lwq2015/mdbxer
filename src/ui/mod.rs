@@ -997,7 +997,10 @@ impl MdbxerApp {
         let mut right_clicked = false;
         egui::Area::new(egui::Id::new("right_edge_toggle"))
             .order(egui::Order::Middle)
-            .fixed_pos(egui::Pos2::new(screen.right() - 10.0, area.center().y - 23.0))
+            .fixed_pos(egui::Pos2::new(
+                screen.right() - 10.0,
+                area.center().y - 23.0,
+            ))
             .show(&ctx, |ui| {
                 let sym = if self.detail_visible { ">" } else { "<" };
                 if edge_toggle_btn(ui, sym, t.panel_detail) {
@@ -1404,17 +1407,20 @@ impl MdbxerApp {
                     let Some(row) = self.rows.get(i) else { return };
                     row.key.clone()
                 } else {
-                    let Some(v) = self.current_value() else { return };
+                    let Some(v) = self.current_value() else {
+                        return;
+                    };
                     v
                 };
-                self.status =
-                    Status::leveled(self.detail.blob_search(is_key, &bytes, forward));
+                self.status = Status::leveled(self.detail.blob_search(is_key, &bytes, forward));
             }
 
             SearchContext::DetailDup => {
                 let Some(i) = self.selected_row else { return };
                 let Some(row) = self.rows.get(i) else { return };
-                let Some(table) = self.cur_table() else { return };
+                let Some(table) = self.cur_table() else {
+                    return;
+                };
                 let table_name = table.name.clone();
                 let Some(dbh) = self.db.as_ref() else { return };
                 let dctx = crate::ui::detail::DupCtx {
@@ -1523,9 +1529,15 @@ impl MdbxerApp {
     fn copy_selected_row(&mut self, ctx: &egui::Context) {
         let Some(i) = self.selected_row else { return };
         let Some(row) = self.rows.get(i) else { return };
-        let key_text = crate::fmt::decode(&row.key, self.key_mode, self.endian, 65536, &self.hint_key);
-        let val_text =
-            crate::fmt::decode(&row.value, self.val_mode, self.endian, 65536, &self.hint_value);
+        let key_text =
+            crate::fmt::decode(&row.key, self.key_mode, self.endian, 65536, &self.hint_key);
+        let val_text = crate::fmt::decode(
+            &row.value,
+            self.val_mode,
+            self.endian,
+            65536,
+            &self.hint_value,
+        );
         let text = format!("{}\t{}", key_text, val_text);
         ctx.copy_text(text);
         self.status = Status::info(crate::i18n::tr().copied_row.to_string());
@@ -1729,8 +1741,7 @@ impl MdbxerApp {
         } else if !state.wrapped {
             state.anchor = None;
             state.wrapped = true;
-            self.status =
-                Status::info(crate::i18n::tr().searching_value_wrap(state.checked));
+            self.status = Status::info(crate::i18n::tr().searching_value_wrap(state.checked));
             self.value_search = Some(state);
         } else {
             self.status = Status::warn(crate::i18n::tr().value_not_found.to_string());
@@ -1952,10 +1963,7 @@ impl MdbxerApp {
 
                 crate::export::ExportEvent::Done(n) => {
                     self.export_count = n;
-                    crate::logging::info(&format!(
-                        "导出完成：{}（{n} 行）",
-                        self.export_path
-                    ));
+                    crate::logging::info(&format!("导出完成：{}（{n} 行）", self.export_path));
                     self.status = Status::info(t.export_done(n, &self.export_path));
                     finished = true;
                 }

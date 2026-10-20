@@ -203,7 +203,10 @@ impl Writer {
             self.size += len;
             return;
         }
-        eprintln!("日志滚动异常：连续 64 个编号文件均已满（limit={}）", self.limit);
+        eprintln!(
+            "日志滚动异常：连续 64 个编号文件均已满（limit={}）",
+            self.limit
+        );
     }
 }
 
@@ -326,11 +329,19 @@ mod tests {
         }
         let base = target_path(&dir, "197001", 0);
         assert!(base.exists(), "基础文件应存在");
-        assert!(target_path(&dir, "197001", 1).exists(), "滚动编号文件应存在");
+        assert!(
+            target_path(&dir, "197001", 1).exists(),
+            "滚动编号文件应存在"
+        );
         assert_eq!(w.index, 1, "三行两行一档应滚到编号 1");
 
         // 跨月：换新基础文件，编号归零
-        w.append_with(Level::Warn, "跨月后的一行", "197002", "1970-02-01 00:00:00.000");
+        w.append_with(
+            Level::Warn,
+            "跨月后的一行",
+            "197002",
+            "1970-02-01 00:00:00.000",
+        );
         assert_eq!(w.index, 0, "跨月编号应归零");
         assert!(target_path(&dir, "197002", 0).exists(), "新月文件应存在");
 
@@ -352,7 +363,9 @@ mod tests {
             );
         }
         assert_eq!(w2.index, 1, "基础文件已满应滚到编号 1");
-        let full = std::fs::metadata(target_path(&dir, "197002", 0)).unwrap().len();
+        let full = std::fs::metadata(target_path(&dir, "197002", 0))
+            .unwrap()
+            .len();
         assert!(full <= 200, "满文件不应被撑爆：{full}");
         assert!(target_path(&dir, "197002", 1).exists(), "续滚文件应存在");
 

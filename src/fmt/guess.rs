@@ -47,7 +47,12 @@ pub fn guess(bytes: &[u8], endian: Endian, hints: &HintFlags) -> (String, String
     guess_at_depth(bytes, endian, 0, hints)
 }
 
-fn guess_at_depth(bytes: &[u8], endian: Endian, depth: usize, hints: &HintFlags) -> (String, String) {
+fn guess_at_depth(
+    bytes: &[u8],
+    endian: Endian,
+    depth: usize,
+    hints: &HintFlags,
+) -> (String, String) {
     let t = crate::i18n::tr();
 
     // 空值：专有标签
@@ -222,10 +227,7 @@ fn guess_at_depth(bytes: &[u8], endian: Endian, depth: usize, hints: &HintFlags)
 /// 刻意排除 `123`、`true`、`"str"`、`null` 这类同样合法但属于标量的 JSON，
 /// 否则普通数字串、单词都会被误判成 JSON。
 pub fn is_structured_json(bytes: &[u8]) -> bool {
-    let first = bytes
-        .iter()
-        .copied()
-        .find(|c| !c.is_ascii_whitespace());
+    let first = bytes.iter().copied().find(|c| !c.is_ascii_whitespace());
     matches!(first, Some(b'{') | Some(b'['))
         && serde_json::from_slice::<serde_json::Value>(bytes).is_ok()
 }
@@ -295,9 +297,25 @@ pub fn magic_hint(bytes: &[u8]) -> Option<&'static str> {
             Some("WAV")
         }
         [b'R', b'a', b'r', b'!', 0x1A, 0x07, ..] => Some("RAR"),
-        [b'S', b'Q', b'L', b'i', b't', b'e', b' ', b'f', b'o', b'r', b'm', b'a', b't', b' ', b'3', 0x00, ..] => {
-            Some("SQLite")
-        }
+        [
+            b'S',
+            b'Q',
+            b'L',
+            b'i',
+            b't',
+            b'e',
+            b' ',
+            b'f',
+            b'o',
+            b'r',
+            b'm',
+            b'a',
+            b't',
+            b' ',
+            b'3',
+            0x00,
+            ..,
+        ] => Some("SQLite"),
         [b'f', b'L', b'a', b'C', ..] => Some("FLAC"),
         [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, ..] => Some("PNG"),
         [0xFF, 0xD8, 0xFF, ..] => Some("JPEG"),
@@ -447,7 +465,11 @@ fn try_utf16(bytes: &[u8]) -> Option<(String, String)> {
     if let Some(big) = bom_big {
         let units = utf16_units(&bytes[2..], big);
         let text = utf16_validate(&units)?;
-        let label = if big { t.guess_utf16_be } else { t.guess_utf16_le };
+        let label = if big {
+            t.guess_utf16_be
+        } else {
+            t.guess_utf16_le
+        };
         return Some((label.to_string(), text));
     }
 
@@ -488,7 +510,11 @@ fn try_utf16(bytes: &[u8]) -> Option<(String, String)> {
         }
     }
     best.map(|(big, _, _, text)| {
-        let label = if big { t.guess_utf16_be } else { t.guess_utf16_le };
+        let label = if big {
+            t.guess_utf16_be
+        } else {
+            t.guess_utf16_le
+        };
         (label.to_string(), text)
     })
 }
@@ -557,9 +583,7 @@ fn utf16_validate(units: &[u16]) -> Option<String> {
                 return None;
             }
             i += 1;
-            char::decode_utf16([u, lo])
-                .next()?
-                .ok()?
+            char::decode_utf16([u, lo]).next()?.ok()?
         } else if (0xDC00..=0xDFFF).contains(&u) || u == 0 {
             return None; // 低位代理 / 内嵌 NUL
         } else {
@@ -944,7 +968,9 @@ mod tests {
 
         // 文件魔数：PNG 签名开头的二进制附格式名（奇数长度使 UTF-16
         // 启发式直接拒绝，落回二进制分支）——魔数默认开
-        let png = [0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00];
+        let png = [
+            0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00,
+        ];
         let (_, text) = guess(&png, Endian::Little);
         assert!(text.ends_with("· PNG"), "text={text}");
 
@@ -963,7 +989,9 @@ mod tests {
         let (_, text) = guess(&bytes, Endian::Little);
         assert_eq!(text, "16,885,952");
 
-        let v6 = [0x20u8, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
+        let v6 = [
+            0x20u8, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+        ];
         let (_, text) = guess(&v6, Endian::Little);
         assert!(!text.contains("IPv6"), "text={text}");
     }
@@ -1023,11 +1051,20 @@ mod tests {
         assert!(addr_hint(&v.to_le_bytes(), Endian::Little).is_some());
 
         // Unix 秒/毫秒域与 FILETIME 域不相交：普通时间戳不标注
-        assert_eq!(addr_hint(&1_759_000_000u64.to_le_bytes(), Endian::Little), None);
+        assert_eq!(
+            addr_hint(&1_759_000_000u64.to_le_bytes(), Endian::Little),
+            None
+        );
 
         // 域外大数 / 域内 BE 字节按 LE 解读不命中
-        assert_eq!(addr_hint(&0xFFFF_FFFF_FFFF_FFFFu64.to_le_bytes(), Endian::Little), None);
-        assert_eq!(addr_hint(&u64::from_be(v).to_le_bytes(), Endian::Little), None);
+        assert_eq!(
+            addr_hint(&0xFFFF_FFFF_FFFF_FFFFu64.to_le_bytes(), Endian::Little),
+            None
+        );
+        assert_eq!(
+            addr_hint(&u64::from_be(v).to_le_bytes(), Endian::Little),
+            None
+        );
     }
 
     #[test]
@@ -1041,7 +1078,10 @@ mod tests {
         assert_eq!(magic_hint(b"%PDF-1.4"), Some("PDF"));
         assert_eq!(magic_hint(b"PK\x03\x04"), Some("ZIP"));
         assert_eq!(magic_hint(b"Rar!\x1A\x07"), Some("RAR"));
-        assert_eq!(magic_hint(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]), Some("7z"));
+        assert_eq!(
+            magic_hint(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]),
+            Some("7z")
+        );
         assert_eq!(magic_hint(b"SQLite format 3\0"), Some("SQLite"));
         assert_eq!(magic_hint(b"fLaC"), Some("FLAC"));
         assert_eq!(magic_hint(b"OggS"), Some("Ogg"));
@@ -1192,7 +1232,10 @@ mod tests {
     #[test]
     fn guess_utf16_cjk_no_bom() {
         // "中文测试"（LE）无 BOM，4 个字母字符门槛
-        let s: Vec<u8> = "中文测试".encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        let s: Vec<u8> = "中文测试"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
         let (label, text) = guess(&s, Endian::Little);
         let t = crate::i18n::tr();
         assert_eq!(label, t.guess_utf16_le);
@@ -1234,7 +1277,10 @@ mod tests {
     fn no_guess_utf16_two_cjk_units() {
         // 两个 CJK 码位 = 4 字节，可能是 u32 整数，无 BOM 不猜文本
         let bytes = [0x78, 0x56, 0x34, 0x12];
-        let s: Vec<u8> = "中文".encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        let s: Vec<u8> = "中文"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
         // 同样的字节模式不应被判为 UTF-16（4 字母门槛保护）
         debug_assert_eq!(s.len(), 4);
         let (label, _) = guess(&s, Endian::Little);

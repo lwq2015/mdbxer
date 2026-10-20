@@ -10,13 +10,15 @@ mod guess;
 mod hexdump;
 mod value;
 
-pub use guess::{HintFlags, guess};
 pub(crate) use compress::decompress;
-pub(crate) use guess::{is_bson, is_cbor, is_msgpack, is_structured_json, is_toml, is_xml, is_yaml, magic_hint};
+pub use guess::{HintFlags, guess};
+pub(crate) use guess::{
+    is_bson, is_cbor, is_msgpack, is_structured_json, is_toml, is_xml, is_yaml, magic_hint,
+};
+pub use hexdump::{DEFAULT_HEX_WIDTH, HEX_WIDTHS, PAGE_BYTES};
 pub(crate) use hexdump::{
     addr_chars, addr_digits, hex_copy_selection, hex_line, hex_section_chars, mid_gap_index,
 };
-pub use hexdump::{DEFAULT_HEX_WIDTH, HEX_WIDTHS, PAGE_BYTES};
 pub use value::decode;
 
 /// 整数千位分隔开关（默认开）：1,625,981,420 vs 1625981420。
@@ -474,10 +476,11 @@ mod tests {
         // 都在——若有重复则长度必然超出，两条合起来推出无重复
         let grouped: Vec<_> = DecodeMode::GROUPS.into_iter().flatten().collect();
         assert_eq!(grouped.len(), ALL.len() - 1);
-        assert!(ALL
-            .iter()
-            .filter(|m| **m != DecodeMode::Auto)
-            .all(|m| grouped.contains(&m)));
+        assert!(
+            ALL.iter()
+                .filter(|m| **m != DecodeMode::Auto)
+                .all(|m| grouped.contains(&m))
+        );
         assert!(grouped.iter().all(|m| **m != DecodeMode::Auto));
     }
 

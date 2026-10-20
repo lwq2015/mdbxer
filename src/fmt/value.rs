@@ -178,7 +178,11 @@ pub fn decode(
                     Endian::Big => u64::from_be_bytes(arr),
                 };
                 if bytes.len() < n {
-                    format!("{}{}", u64_text(v, hints.unix_ts, hints.filetime), pad_note())
+                    format!(
+                        "{}{}",
+                        u64_text(v, hints.unix_ts, hints.filetime),
+                        pad_note()
+                    )
                 } else {
                     u64_text(v, hints.unix_ts, hints.filetime)
                 }
@@ -259,7 +263,11 @@ fn legacy_text(bytes: &[u8], enc: &'static encoding_rs::Encoding) -> String {
 /// 从 110e15 起，远超 u32 上限，无需判定。
 pub fn u32_text(v: u32, unix_ts: bool) -> String {
     let num = with_sep(v.to_string());
-    let date = if unix_ts { unix_to_local(v as u64) } else { None };
+    let date = if unix_ts {
+        unix_to_local(v as u64)
+    } else {
+        None
+    };
     match date {
         Some(d) => format!("{num} → {d}"),
         None => num,
@@ -270,12 +278,8 @@ pub fn u32_text(v: u32, unix_ts: bool) -> String {
 /// 附本地日期。毫秒级值保留 3 位小数（`.xxx`），秒级值只到秒。数字部分带千位分隔。
 pub fn u64_text(v: u64, unix_ts: bool, filetime: bool) -> String {
     let num = with_sep(v.to_string());
-    let date = if unix_ts {
-        unix_to_local(v)
-    } else {
-        None
-    }
-    .or_else(|| if filetime { filetime_to_local(v) } else { None });
+    let date = if unix_ts { unix_to_local(v) } else { None }
+        .or_else(|| if filetime { filetime_to_local(v) } else { None });
     match date {
         Some(date) => format!("{num} → {date}"),
         None => num,
@@ -818,7 +822,13 @@ mod tests {
     /// 默认附注开关的 decode 快捷方式：多数测试不关心附注。
     #[allow(dead_code)]
     fn decode(bytes: &[u8], mode: DecodeMode, endian: Endian, max_chars: usize) -> String {
-        super::decode(bytes, mode, endian, max_chars, &crate::fmt::HintFlags::default())
+        super::decode(
+            bytes,
+            mode,
+            endian,
+            max_chars,
+            &crate::fmt::HintFlags::default(),
+        )
     }
 
     use crate::fmt::{DecodeMode, Endian, set_thousands_sep};
@@ -934,7 +944,10 @@ mod tests {
             "{\n  \"a\": \"hi\"\n}"
         );
         // 非法数据回退 UTF-8 原文
-        assert_eq!(decode(b"hi", DecodeMode::Msgpack, Endian::Little, 100), "hi");
+        assert_eq!(
+            decode(b"hi", DecodeMode::Msgpack, Endian::Little, 100),
+            "hi"
+        );
     }
 
     #[test]
@@ -1051,7 +1064,12 @@ mod tests {
         assert_eq!(u32_text(v, false), "1,759,000,000");
 
         // U32 排版同样附注（与 Auto 的 u32 分支同一来源）
-        let d = decode(&v.to_le_bytes(), DecodeMode::U32, super::Endian::Little, 100);
+        let d = decode(
+            &v.to_le_bytes(),
+            DecodeMode::U32,
+            super::Endian::Little,
+            100,
+        );
         assert_eq!(d, s);
     }
 
@@ -1200,7 +1218,10 @@ mod tests {
         let v6 = [
             0x20u8, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
         ];
-        assert_eq!(decode(&v6, DecodeMode::Ip, Endian::Little, 100), "2001:db8::1");
+        assert_eq!(
+            decode(&v6, DecodeMode::Ip, Endian::Little, 100),
+            "2001:db8::1"
+        );
         let s = decode(&[0u8; 8], DecodeMode::Ip, Endian::Little, 100);
         assert!(s.contains(t.ip_bad_len));
 
@@ -1217,7 +1238,12 @@ mod tests {
 
         // 8 字节域外大数：只显示数字
         assert_eq!(
-            decode(&u64::MAX.to_le_bytes(), DecodeMode::Time, Endian::Little, 100),
+            decode(
+                &u64::MAX.to_le_bytes(),
+                DecodeMode::Time,
+                Endian::Little,
+                100
+            ),
             with_sep(u64::MAX.to_string())
         );
 
@@ -1277,7 +1303,12 @@ mod tests {
 
         // "Café" 的 Windows-1252 字节（0xE9 = é）
         assert_eq!(
-            decode(&[0x43, 0x61, 0x66, 0xE9], DecodeMode::Cp1252, Endian::Little, 100),
+            decode(
+                &[0x43, 0x61, 0x66, 0xE9],
+                DecodeMode::Cp1252,
+                Endian::Little,
+                100
+            ),
             "Café"
         );
 
@@ -1335,6 +1366,9 @@ mod tests {
         assert!(s.contains("<t>a &lt; b &amp; c</t>"), "s={s}");
 
         // 非法 XML 回退 UTF-8 原文
-        assert_eq!(decode(b"<a><b>", DecodeMode::Xml, Endian::Little, 100), "<a><b>");
+        assert_eq!(
+            decode(b"<a><b>", DecodeMode::Xml, Endian::Little, 100),
+            "<a><b>"
+        );
     }
 }

@@ -1,3 +1,5 @@
 # Windows MSVC 构建静态链接 CRT，不依赖 vcruntime140.dll 等运行时
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+# crt-static：静态 CRT；strip=symbols：剥离符号表（profile 的 strip 在 MSVC 下无效，
+# 发布体积从 ~20MB 减到 ~8MB，代价是崩溃栈无函数名，用户侧不需要）
+rustflags = ["-C", "target-feature=+crt-static", "-C", "strip=symbols"]

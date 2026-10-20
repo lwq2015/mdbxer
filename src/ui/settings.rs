@@ -204,11 +204,7 @@ fn log_section(ui: &mut egui::Ui) {
 
         // 打开日志目录（尚未写过日志时目录可能不存在，先确保建好）
         if let Some(dir) = crate::logging::log_dir() {
-            if ui
-                .button("📂")
-                .on_hover_text(t.log_open_dir_tip)
-                .clicked()
-            {
+            if ui.button("📂").on_hover_text(t.log_open_dir_tip).clicked() {
                 let _ = std::fs::create_dir_all(&dir);
                 super::topbar::reveal_in_folder(&dir.display().to_string(), false);
             }

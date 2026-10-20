@@ -68,8 +68,10 @@ pub fn message_names() -> Vec<String> {
 
     match pool.as_ref() {
         Some(p) => {
-            let mut names: Vec<String> =
-                p.all_messages().map(|m| m.full_name().to_string()).collect();
+            let mut names: Vec<String> = p
+                .all_messages()
+                .map(|m| m.full_name().to_string())
+                .collect();
             names.sort();
             names
         }
@@ -214,7 +216,9 @@ mod tests {
 
         // field1 varint 42、field2 "hi"、field3 packed varint [1, 300]（len=3）
         // int64 按 proto3 JSON mapping 序列化为字符串（"42"），int32 保持数字
-        let bytes = [0x08, 0x2A, 0x12, 0x02, b'h', b'i', 0x1A, 0x03, 0x01, 0xAC, 0x02];
+        let bytes = [
+            0x08, 0x2A, 0x12, 0x02, b'h', b'i', 0x1A, 0x03, 0x01, 0xAC, 0x02,
+        ];
         let json = decode_with("t.Msg", &bytes).unwrap();
         assert!(json.contains("\"id\": \"42\""), "json={json}");
         assert!(json.contains("\"name\": \"hi\""), "json={json}");
@@ -275,17 +279,28 @@ mod tests {
         assert!(cands.iter().any(|(n, u)| n == "t2.B" && *u > 0));
 
         // Auto 集成：fmt::guess 标签带类型全名，文本为紧凑 JSON
-        let (label, text) = crate::fmt::guess(&bytes, crate::fmt::Endian::Little, &crate::fmt::HintFlags::default());
+        let (label, text) = crate::fmt::guess(
+            &bytes,
+            crate::fmt::Endian::Little,
+            &crate::fmt::HintFlags::default(),
+        );
         assert_eq!(label, "PROTO · t2.A", "label={label}");
         assert_eq!(text, r#"{"x":42}"#, "text={text}");
 
         // 紧凑/pretty 两个出口
-        assert_eq!(decode_compact("t2.A", &bytes).as_deref(), Some(r#"{"x":42}"#));
+        assert_eq!(
+            decode_compact("t2.A", &bytes).as_deref(),
+            Some(r#"{"x":42}"#)
+        );
         assert!(decode_with("t2.A", &bytes).unwrap().contains("\n"));
 
         // 截断的 varint：解码失败 → 无候选；fmt::guess 不猜 proto
         assert!(guess_candidates(&[0x08]).is_empty());
-        let (label2, _) = crate::fmt::guess(&[0x08], crate::fmt::Endian::Little, &crate::fmt::HintFlags::default());
+        let (label2, _) = crate::fmt::guess(
+            &[0x08],
+            crate::fmt::Endian::Little,
+            &crate::fmt::HintFlags::default(),
+        );
         assert!(!label2.starts_with("PROTO"), "label2={label2}");
 
         // 空池（未载入时）——这里已载入，验证清理路径即可

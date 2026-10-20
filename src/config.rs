@@ -481,7 +481,10 @@ mod tests {
         assert_eq!(back.detail_visible, Some(true));
         assert_eq!(back.table_sort.as_deref(), Some("count_desc"));
         assert_eq!(back.export_format.as_deref(), Some("json"));
-        assert_eq!(back.proto_files.as_deref(), Some(["a.proto".to_string()].as_slice()));
+        assert_eq!(
+            back.proto_files.as_deref(),
+            Some(["a.proto".to_string()].as_slice())
+        );
         assert_eq!(back.proto_msg.as_deref(), Some("pkg.Msg"));
     }
 
