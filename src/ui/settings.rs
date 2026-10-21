@@ -12,6 +12,9 @@ pub(crate) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let t = crate::i18n::tr();
 
     egui::ScrollArea::vertical().show(ui, |ui| {
+        // 四个分组统一宽度：内容区上限与组内 set_min_width 联动，
+        // 各组不再按内容自适应宽窄不一（上限取最宽的快捷键组）
+        ui.set_max_width(480.0);
         ui.add_space(8.0);
 
         hint_section(ui, app);
@@ -29,6 +32,7 @@ fn hint_section(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let t = crate::i18n::tr();
 
     ui.group(|ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(egui::RichText::new(t.hint_section).strong())
             .on_hover_text(t.hint_section_tip);
         ui.add_space(4.0);
@@ -83,6 +87,7 @@ fn display_section(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let t = crate::i18n::tr();
 
     ui.group(|ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(egui::RichText::new(t.disp_section).strong());
         ui.add_space(4.0);
 
@@ -184,6 +189,7 @@ fn log_section(ui: &mut egui::Ui) {
     let t = crate::i18n::tr();
 
     ui.group(|ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(egui::RichText::new(t.log_section).strong())
             .on_hover_text(t.log_section_tip);
         ui.add_space(4.0);
@@ -205,7 +211,12 @@ fn log_section(ui: &mut egui::Ui) {
                                 ui.selectable_value(&mut lv, l, level_label(l));
                             }
                         });
-                    super::wheel_cycle(ui.ctx(), &ir.response, &crate::logging::Level::ALL, &mut lv);
+                    super::wheel_cycle(
+                        ui.ctx(),
+                        &ir.response,
+                        &crate::logging::Level::ALL,
+                        &mut lv,
+                    );
                     if lv != cur {
                         crate::logging::set_level(lv);
                         crate::config::save_log_level(lv);
@@ -241,6 +252,7 @@ fn shortcuts_section(ui: &mut egui::Ui) {
     let t = crate::i18n::tr();
 
     ui.group(|ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(egui::RichText::new(t.shortcut_section).strong())
             .on_hover_text(t.shortcut_section_tip);
         ui.add_space(4.0);
