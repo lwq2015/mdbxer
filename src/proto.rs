@@ -180,11 +180,12 @@ pub fn decode_compact(name: &str, bytes: &[u8]) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// 全局池被全部测试共享，proto 测试串行执行避免互相覆盖。
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// guess 等其他模块的测试也需载入协议池，共用此锁。
+    pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn compile_load_decode_and_error_paths() {

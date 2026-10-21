@@ -131,10 +131,23 @@ fn guess_at_depth(
         return ("TOML".to_string(), s.to_string());
     }
 
-    // Protobuf：已载入协议池时全池试探解码（unknown 字段判别）。wire format
-    // 与随机二进制不可区分，但正确类型解码后 unknown 为空、错误类型几乎必有
-    // unknown——强判别；未载入池/无 0-unknown 候选时静默跳过。限制字节数
-    // 保护表格渲染（大 blob 全池试探代价过高，显示 hex 无损，手动排版可看）。
+    // 优先可打印 UTF-8 文本（允许 \t \n \r）。必须排在 PROTO 探测之前：
+    // wire format 与随机字节不可区分，纯 ASCII 文本可能"恰好"构成合法消息
+    // （如 "AliveTime"：0x41 既是 'A' 又是 field 8/fixed64 的 tag，余下 8 字节
+    // 被解成 fixed64V 数值），文本优先可避免这种惊悚的误判；确为二进制的
+    // proto 消息几乎必然含不可打印字节，不受影响，边缘样本可手动切 PROTO。
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        if s.chars()
+            .all(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
+        {
+            return (t.guess_utf8.to_string(), s.to_string());
+        }
+    }
+
+    // Protobuf：已载入协议池时全池试探解码（unknown 字段判别）。正确类型解码
+    // 后 unknown 为空、错误类型几乎必有 unknown——强判别；未载入池/无
+    // 0-unknown 候选时静默跳过。限制字节数保护表格渲染（大 blob 全池试探
+    // 代价过高，显示 hex 无损，手动排版可看）。
     if crate::proto::is_loaded() && bytes.len() <= crate::proto::GUESS_MAX {
         if let Some((best, 0)) = crate::proto::guess_candidates(bytes)
             .first()
@@ -143,15 +156,6 @@ fn guess_at_depth(
             if let Some(s) = crate::proto::decode_compact(&best, bytes) {
                 return (format!("PROTO · {best}"), s);
             }
-        }
-    }
-
-    // 优先可打印 UTF-8 文本（允许 \t \n \r）
-    if let Ok(s) = std::str::from_utf8(bytes) {
-        if s.chars()
-            .all(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
-        {
-            return (t.guess_utf8.to_string(), s.to_string());
         }
     }
 
@@ -624,6 +628,32 @@ mod tests {
     }
 
     use crate::fmt::Endian;
+
+    /// 回归：纯可打印 ASCII 文本即使恰好构成合法 proto，Auto 仍优先判文本。
+    /// "AliveTime" = 0x41（既是 'A'，又是 field 8/fixed64 的 tag）+ "liveTime"
+    /// （8 字节），修复前被 PROTO 探测劫走解出 {"fixed64V":"73086…"}。
+    #[test]
+    fn guess_printable_text_beats_proto() {
+        let dir = std::env::temp_dir().join(format!("mdbxer_guess_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("g.proto");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"syntax = "proto3"; package g;"#,
+                "\n",
+                r#"message Scalars { fixed64 fixed64_v = 8; }"#,
+            ),
+        )
+        .unwrap();
+
+        let _g = crate::proto::tests::TEST_LOCK.lock().unwrap();
+        crate::proto::load_files(&[&path]).unwrap();
+
+        let (label, text) = guess(b"AliveTime", Endian::Little);
+        assert_eq!(text, "AliveTime");
+        assert!(!label.contains("PROTO"), "label={label}");
+    }
 
     #[test]
     fn guess_empty() {
