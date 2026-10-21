@@ -10,6 +10,10 @@
 //! 手动排版按 current 类型解码；未载入/未选类型/解码失败回退 UTF-8 文本。
 
 use prost_reflect::{DescriptorPool, DynamicMessage};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::RwLock;
 
@@ -51,6 +55,9 @@ pub fn load_files<P: AsRef<Path>>(paths: &[P]) -> Result<usize, String> {
         .iter()
         .map(|p| p.as_ref().display().to_string())
         .collect();
+
+    // 换池后同名类型的 schema 可能已变化，解码缓存整体作废
+    DECODE_CACHE.with(|c| c.borrow_mut().clear());
 
     // 旧选择在新池中不存在时清掉，避免悬空
     if let Some(cur) = current() {
@@ -158,6 +165,47 @@ pub fn decode_current(bytes: &[u8]) -> Option<String> {
     decode_with(&current()?, bytes)
 }
 
+/// 解码结果缓存上限：超过整体清空（表格/详情的 proto 行数有限，基本触不到）。
+const DECODE_CACHE_CAP: usize = 512;
+
+thread_local! {
+    /// (类型全名, 内容指纹) → JSON 文本。pretty 与紧凑以指纹中的样式位区分。
+    static DECODE_CACHE: RefCell<HashMap<(String, u64), String>> = RefCell::new(HashMap::new());
+}
+
+/// 内容指纹：proto map 字段在 prost-reflect 内部是 std HashMap（随机迭代序），
+/// 同一内容两次解码的 map 键顺序可能不同，悬停重绘时 JSON 字段顺序会抖动。
+/// 缓存冻结首次结果，同时省去表格/详情每帧的重复解码。
+fn fingerprint(bytes: &[u8], compact: bool) -> u64 {
+    let mut h = DefaultHasher::new();
+    compact.hash(&mut h);
+    bytes.hash(&mut h);
+    h.finish()
+}
+
+/// 缓存查找/写入：`make` 仅在未命中时执行；None（解码失败）不入缓存，
+/// 保证协议池/内容修复后能立即重试。
+fn cached(
+    name: &str,
+    bytes: &[u8],
+    compact: bool,
+    make: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let key = (name.to_string(), fingerprint(bytes, compact));
+    if let Some(hit) = DECODE_CACHE.with(|c| c.borrow().get(&key).cloned()) {
+        return Some(hit);
+    }
+    let out = make()?;
+    DECODE_CACHE.with(|c| {
+        let mut m = c.borrow_mut();
+        if m.len() >= DECODE_CACHE_CAP {
+            m.clear();
+        }
+        m.insert(key, out.clone());
+    });
+    Some(out)
+}
+
 /// 按指定 message 全名解码字节为 pretty JSON。
 /// 字段名遵循 proto3 JSON mapping（lowerCamelCase），64 位整数转字符串。
 pub fn decode_with(name: &str, bytes: &[u8]) -> Option<String> {
@@ -165,8 +213,10 @@ pub fn decode_with(name: &str, bytes: &[u8]) -> Option<String> {
         return Some(String::new());
     }
 
-    let msg = decode_msg(name, bytes)?;
-    serde_json::to_string_pretty(&msg).ok()
+    cached(name, bytes, false, || {
+        let msg = decode_msg(name, bytes)?;
+        serde_json::to_string_pretty(&msg).ok()
+    })
 }
 
 /// 按指定 message 全名解码字节为紧凑 JSON（单行，表格 Auto 列预览用）。
@@ -175,8 +225,10 @@ pub fn decode_compact(name: &str, bytes: &[u8]) -> Option<String> {
         return Some(String::new());
     }
 
-    let msg = decode_msg(name, bytes)?;
-    serde_json::to_string(&msg).ok()
+    cached(name, bytes, true, || {
+        let msg = decode_msg(name, bytes)?;
+        serde_json::to_string(&msg).ok()
+    })
 }
 
 #[cfg(test)]
