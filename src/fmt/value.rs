@@ -68,9 +68,10 @@ pub fn decode(
     max_chars: usize,
     hints: &super::HintFlags,
 ) -> String {
-    // 整数分支：零扩展补齐。返回 (文本, 是否补齐)
+    // 整数分支：零扩展补齐；fmt 闭包把数值转显示文本（普通整数加千位分隔，
+    // u32/u64 换成带时间戳附注的版本）
     macro_rules! int {
-        ($ty:ty) => {{
+        ($ty:ty, $fmt:expr) => {{
             let n = std::mem::size_of::<$ty>();
             if bytes.is_empty() {
                 empty_text()
@@ -85,10 +86,11 @@ pub fn decode(
                     Endian::Little => <$ty>::from_le_bytes(arr),
                     Endian::Big => <$ty>::from_be_bytes(arr),
                 };
+                let s = ($fmt)(v);
                 if bytes.len() < n {
-                    format!("{}{}", with_sep(v.to_string()), pad_note())
+                    format!("{}{}", s, pad_note())
                 } else {
-                    with_sep(v.to_string())
+                    s
                 }
             }
         }};
@@ -134,60 +136,14 @@ pub fn decode(
         DecodeMode::Sjis => legacy_text(bytes, encoding_rs::SHIFT_JIS),
         DecodeMode::Big5 => legacy_text(bytes, encoding_rs::BIG5),
         DecodeMode::Cp1252 => legacy_text(bytes, encoding_rs::WINDOWS_1252),
-        DecodeMode::I8 => int!(i8),
-        DecodeMode::U8 => int!(u8),
-        DecodeMode::I16 => int!(i16),
-        DecodeMode::I32 => int!(i32),
-        DecodeMode::I64 => int!(i64),
-        DecodeMode::U16 => int!(u16),
-        DecodeMode::U32 => {
-            if bytes.is_empty() {
-                empty_text()
-            } else {
-                let n = 4;
-                let take = bytes.len().min(n);
-                let mut arr = [0u8; 4];
-                match endian {
-                    Endian::Little => arr[..take].copy_from_slice(&bytes[..take]),
-                    Endian::Big => arr[n - take..].copy_from_slice(&bytes[..take]),
-                }
-                let v = match endian {
-                    Endian::Little => u32::from_le_bytes(arr),
-                    Endian::Big => u32::from_be_bytes(arr),
-                };
-                if bytes.len() < n {
-                    format!("{}{}", u32_text(v, hints.unix_ts), pad_note())
-                } else {
-                    u32_text(v, hints.unix_ts)
-                }
-            }
-        }
-        DecodeMode::U64 => {
-            if bytes.is_empty() {
-                empty_text()
-            } else {
-                let n = 8;
-                let take = bytes.len().min(n);
-                let mut arr = [0u8; 8];
-                match endian {
-                    Endian::Little => arr[..take].copy_from_slice(&bytes[..take]),
-                    Endian::Big => arr[n - take..].copy_from_slice(&bytes[..take]),
-                }
-                let v = match endian {
-                    Endian::Little => u64::from_le_bytes(arr),
-                    Endian::Big => u64::from_be_bytes(arr),
-                };
-                if bytes.len() < n {
-                    format!(
-                        "{}{}",
-                        u64_text(v, hints.unix_ts, hints.filetime),
-                        pad_note()
-                    )
-                } else {
-                    u64_text(v, hints.unix_ts, hints.filetime)
-                }
-            }
-        }
+        DecodeMode::I8 => int!(i8, |v: i8| with_sep(v.to_string())),
+        DecodeMode::U8 => int!(u8, |v: u8| with_sep(v.to_string())),
+        DecodeMode::I16 => int!(i16, |v: i16| with_sep(v.to_string())),
+        DecodeMode::I32 => int!(i32, |v: i32| with_sep(v.to_string())),
+        DecodeMode::I64 => int!(i64, |v: i64| with_sep(v.to_string())),
+        DecodeMode::U16 => int!(u16, |v: u16| with_sep(v.to_string())),
+        DecodeMode::U32 => int!(u32, |v: u32| u32_text(v, hints.unix_ts)),
+        DecodeMode::U64 => int!(u64, |v: u64| u64_text(v, hints.unix_ts, hints.filetime)),
         DecodeMode::F32 => float!(f32),
         DecodeMode::F64 => float!(f64),
         DecodeMode::Hex => hex_spaced(bytes),
@@ -483,37 +439,49 @@ fn time_text(bytes: &[u8], endian: Endian) -> String {
     }
 }
 
+/// 回退文本：空数据 → 空串；否则 UTF-8 lossy（非法字节显示 U+FFFD）。
+fn utf8_fallback(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        String::new()
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
+
+/// 通用 pretty JSON 输出：parse 成功 → pretty；失败 → UTF-8 文本回退。
+/// JSON/BSON/MSGPACK/CBOR 四种 pretty 解码模式共用同一套回退语义。
+fn json_pretty_text(
+    bytes: &[u8],
+    parse: impl FnOnce(&[u8]) -> Option<serde_json::Value>,
+) -> String {
+    match parse(bytes) {
+        Some(v) => serde_json::to_string_pretty(&v).unwrap_or_else(|_| utf8_fallback(bytes)),
+        None => utf8_fallback(bytes),
+    }
+}
+
+/// 通用单行紧凑 JSON：parse 成功 → 紧凑文本；失败 → None（表格 Auto 列预览用）。
+fn json_compact(
+    bytes: &[u8],
+    parse: impl FnOnce(&[u8]) -> Option<serde_json::Value>,
+) -> Option<String> {
+    parse(bytes).and_then(|v| serde_json::to_string(&v).ok())
+}
+
 /// JSON 美化：合法 JSON → pretty；非法 → UTF-8 文本。
 fn json_text(bytes: &[u8]) -> String {
-    if bytes.is_empty() {
-        return String::new();
-    }
-    match serde_json::from_slice::<serde_json::Value>(bytes) {
-        Ok(v) => serde_json::to_string_pretty(&v)
-            .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned()),
-        Err(_) => String::from_utf8_lossy(bytes).into_owned(),
-    }
+    json_pretty_text(bytes, |b| serde_json::from_slice(b).ok())
 }
 
 /// BSON 转宽松扩展 JSON：合法文档 → pretty；非法 → UTF-8 文本。
 /// 宽松（relaxed）扩展 JSON 下日期/整数等以自然形式显示，最接近源码可读形态。
 pub(crate) fn bson_text(bytes: &[u8]) -> String {
-    match bson_json_value(bytes) {
-        Some(v) => serde_json::to_string_pretty(&v)
-            .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned()),
-        None => {
-            if bytes.is_empty() {
-                String::new()
-            } else {
-                String::from_utf8_lossy(bytes).into_owned()
-            }
-        }
-    }
+    json_pretty_text(bytes, bson_json_value)
 }
 
 /// 紧凑版 BSON → 扩展 JSON（表格 Auto 单行预览用）。
 pub(crate) fn bson_compact(bytes: &[u8]) -> Option<String> {
-    bson_json_value(bytes).and_then(|v| serde_json::to_string(&v).ok())
+    json_compact(bytes, bson_json_value)
 }
 
 /// 把字节按 BSON 文档解析并转成 serde_json 值（宽松扩展 JSON）。
@@ -578,22 +546,12 @@ fn msgpack_json_value(bytes: &[u8]) -> Option<serde_json::Value> {
 
 /// MessagePack → pretty JSON；非法回退 UTF-8 文本。
 pub(crate) fn msgpack_text(bytes: &[u8]) -> String {
-    match msgpack_json_value(bytes) {
-        Some(v) => serde_json::to_string_pretty(&v)
-            .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned()),
-        None => {
-            if bytes.is_empty() {
-                String::new()
-            } else {
-                String::from_utf8_lossy(bytes).into_owned()
-            }
-        }
-    }
+    json_pretty_text(bytes, msgpack_json_value)
 }
 
 /// MessagePack → 单行紧凑 JSON（表格 Auto 列用）；非法返回 None。
 pub(crate) fn msgpack_compact(bytes: &[u8]) -> Option<String> {
-    msgpack_json_value(bytes).and_then(|v| serde_json::to_string(&v).ok())
+    json_compact(bytes, msgpack_json_value)
 }
 
 // ── CBOR ──
@@ -656,22 +614,12 @@ fn cbor_json_value(bytes: &[u8]) -> Option<serde_json::Value> {
 
 /// CBOR → pretty JSON；非法回退 UTF-8 文本。
 pub(crate) fn cbor_text(bytes: &[u8]) -> String {
-    match cbor_json_value(bytes) {
-        Some(v) => serde_json::to_string_pretty(&v)
-            .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned()),
-        None => {
-            if bytes.is_empty() {
-                String::new()
-            } else {
-                String::from_utf8_lossy(bytes).into_owned()
-            }
-        }
-    }
+    json_pretty_text(bytes, cbor_json_value)
 }
 
 /// CBOR → 单行紧凑 JSON（表格 Auto 列用）；非法返回 None。
 pub(crate) fn cbor_compact(bytes: &[u8]) -> Option<String> {
-    cbor_json_value(bytes).and_then(|v| serde_json::to_string(&v).ok())
+    json_compact(bytes, cbor_json_value)
 }
 
 // ── YAML / TOML / XML ──
@@ -711,14 +659,7 @@ fn toml_text(bytes: &[u8]) -> String {
 
 /// XML 缩进重排：合法 XML → 两空格缩进（单一文本子节点内联）；非法 → UTF-8 文本。
 fn xml_text(bytes: &[u8]) -> String {
-    if bytes.is_empty() {
-        return String::new();
-    }
-
-    match xml_pretty(bytes) {
-        Some(s) => s,
-        None => String::from_utf8_lossy(bytes).into_owned(),
-    }
+    xml_pretty(bytes).unwrap_or_else(|| utf8_fallback(bytes))
 }
 
 /// 解析 XML 并缩进重排。仅接受 UTF-8 输入（roxmltree 接口限制）；
