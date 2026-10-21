@@ -3,7 +3,7 @@
 
 //! 按指定格式把字节解码为显示文本。
 
-use super::{DecodeMode, Endian, guess};
+use super::{DecodeMode, Endian, guess, guess_key};
 
 /// 空数据占位文案（随界面语言）。
 fn empty_text() -> String {
@@ -68,6 +68,30 @@ pub fn decode(
     max_chars: usize,
     hints: &super::HintFlags,
 ) -> String {
+    decode_impl(bytes, mode, endian, max_chars, hints, false)
+}
+
+/// Key 版解码：Auto 模式不做特殊格式猜测（JSON/BSON/PROTO 等只可能出现在
+/// 数据载荷里，短 key 极易被凑巧的结构误判），仅文本/UTF-16/整数/时间等
+/// 基础解释与 hex；手动指定的模式原样生效。
+pub fn decode_key(
+    bytes: &[u8],
+    mode: DecodeMode,
+    endian: Endian,
+    max_chars: usize,
+    hints: &super::HintFlags,
+) -> String {
+    decode_impl(bytes, mode, endian, max_chars, hints, true)
+}
+
+fn decode_impl(
+    bytes: &[u8],
+    mode: DecodeMode,
+    endian: Endian,
+    max_chars: usize,
+    hints: &super::HintFlags,
+    is_key: bool,
+) -> String {
     // 整数分支：零扩展补齐；fmt 闭包把数值转显示文本（普通整数加千位分隔，
     // u32/u64 换成带时间戳附注的版本）
     macro_rules! int {
@@ -127,7 +151,13 @@ pub fn decode(
     }
 
     let s = match mode {
-        DecodeMode::Auto => guess(bytes, endian, hints).1,
+        DecodeMode::Auto => {
+            if is_key {
+                guess_key(bytes, endian, hints).1
+            } else {
+                guess(bytes, endian, hints).1
+            }
+        }
         DecodeMode::Utf8 => String::from_utf8_lossy(bytes).into_owned(),
         DecodeMode::Utf16Le => utf16_text(bytes, false),
         DecodeMode::Utf16Be => utf16_text(bytes, true),

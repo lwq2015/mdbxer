@@ -740,7 +740,7 @@ impl MdbxerApp {
                     &self.hint_value,
                 );
                 RowView {
-                    key_text: crate::fmt::decode(
+                    key_text: crate::fmt::decode_key(
                         &r.key,
                         self.key_mode,
                         self.endian,
@@ -1531,7 +1531,7 @@ impl MdbxerApp {
         let Some(i) = self.selected_row else { return };
         let Some(row) = self.rows.get(i) else { return };
         let key_text =
-            crate::fmt::decode(&row.key, self.key_mode, self.endian, 65536, &self.hint_key);
+            crate::fmt::decode_key(&row.key, self.key_mode, self.endian, 65536, &self.hint_key);
         let val_text = crate::fmt::decode(
             &row.value,
             self.val_mode,

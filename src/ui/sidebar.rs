@@ -264,7 +264,7 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                         let fk = &app.fav_keys[i];
                         let key_text = crate::ui::parse_hex(&fk.key_hex)
                             .map(|b| {
-                                crate::fmt::decode(
+                                crate::fmt::decode_key(
                                     &b,
                                     crate::fmt::DecodeMode::Auto,
                                     app.endian,

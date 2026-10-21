@@ -9,8 +9,6 @@ use super::MdbxerApp;
 
 /// 高级配置页主体。
 pub(crate) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
-    let t = crate::i18n::tr();
-
     egui::ScrollArea::vertical().show(ui, |ui| {
         // 四个分组统一宽度：内容区上限与组内 set_min_width 联动，
         // 各组不再按内容自适应宽窄不一（上限取最宽的快捷键组）

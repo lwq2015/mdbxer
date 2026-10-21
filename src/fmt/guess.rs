@@ -44,7 +44,15 @@ impl Default for HintFlags {
 /// 1 字节按 u8 解释（无字节序），多字节整数按 endian 解释。标签随当前界面语言。
 /// 附注（地址/时间/魔数解读）按 hints 开关追加。
 pub fn guess(bytes: &[u8], endian: Endian, hints: &HintFlags) -> (String, String) {
-    guess_at_depth(bytes, endian, 0, hints)
+    guess_at_depth(bytes, endian, 0, hints, false)
+}
+
+/// Key 版猜测：不做特殊格式猜测（压缩/JSON/BSON/MSGPACK/CBOR/XML/YAML/
+/// TOML/PROTO）。这些格式只会出现在数据载荷里，而 Key 多为短小的标识符，
+/// 极易被凑巧的结构误判（如 "AliveTime" 恰好构成合法 proto 消息）；误判
+/// 的显示代价远大于漏判收益。仅保留文本/UTF-16/整数/时间等基础解释与 hex。
+pub fn guess_key(bytes: &[u8], endian: Endian, hints: &HintFlags) -> (String, String) {
+    guess_at_depth(bytes, endian, 0, hints, true)
 }
 
 fn guess_at_depth(
@@ -52,6 +60,7 @@ fn guess_at_depth(
     endian: Endian,
     depth: usize,
     hints: &HintFlags,
+    is_key: bool,
 ) -> (String, String) {
     let t = crate::i18n::tr();
 
@@ -65,10 +74,10 @@ fn guess_at_depth(
 
     // 压缩容器最优先：解压后递归猜测，标签穿透（如 "zstd → JSON"）。
     // 只穿一层（depth==0 才解压），防套娃压缩；输出上限见 compress::MAX_DECOMP。
-    if depth == 0 {
+    if depth == 0 && !is_key {
         if let Some((algo, inner)) = super::decompress(bytes) {
             if !inner.is_empty() {
-                let (label, text) = guess_at_depth(&inner, endian, depth + 1, hints);
+                let (label, text) = guess_at_depth(&inner, endian, depth + 1, hints, false);
                 return (format!("{algo} → {label}"), text);
             }
         }
@@ -77,7 +86,7 @@ fn guess_at_depth(
     // 对象/数组形态的 JSON 优先识别为 JSON（在普通 UTF-8 之前，否则会被可打印
     // UTF-8 分支直接截走）。这里文本仍返回紧凑原文，pretty/着色交给详情层：
     // 表格 Value 是单行预览，若返回多行缩进会只剩一个 "{"。
-    if is_structured_json(bytes) {
+    if !is_key && is_structured_json(bytes) {
         // 已通过 serde 解析，必然是合法 UTF-8
         let s = std::str::from_utf8(bytes).unwrap_or_default();
         return ("JSON".to_string(), s.to_string());
@@ -86,7 +95,7 @@ fn guess_at_depth(
     // BSON 文档与 JSON 同级优先（都在普通 UTF-8 之前）。BSON 无魔数，靠
     // "前 4 字节长度自洽 + 0x00 终止 + 整体可解析"约束识别；文本仍返回紧凑
     // 扩展 JSON，pretty/着色交给详情层（与 JSON 同一套管线）。
-    if is_bson(bytes) {
+    if !is_key && is_bson(bytes) {
         if let Some(s) = value::bson_compact(bytes) {
             return ("BSON".to_string(), s);
         }
@@ -94,14 +103,14 @@ fn guess_at_depth(
 
     // MessagePack 与 BSON/JSON 同级（都是自描述结构化数据）。约束：容器头
     // 开头 + 全量解析成功；显示紧凑 JSON，pretty/着色走详情层（同一套管线）。
-    if is_msgpack(bytes) {
+    if !is_key && is_msgpack(bytes) {
         if let Some(s) = value::msgpack_compact(bytes) {
             return ("MSGPACK".to_string(), s);
         }
     }
 
     // CBOR 同上：major type 4/5（array/map）开头 + 全量解析成功。
-    if is_cbor(bytes) {
+    if !is_key && is_cbor(bytes) {
         if let Some(s) = value::cbor_compact(bytes) {
             return ("CBOR".to_string(), s);
         }
@@ -109,7 +118,7 @@ fn guess_at_depth(
 
     // XML 与上述结构化格式同级：UTF-8 + '<' 开头 + 整体解析成功。文本返回
     // 紧凑原文（trim 首尾空白），缩进重排交给详情层。
-    if is_xml(bytes) {
+    if !is_key && is_xml(bytes) {
         let s = std::str::from_utf8(bytes).unwrap_or_default();
         return ("XML".to_string(), s.trim().to_string());
     }
@@ -118,7 +127,7 @@ fn guess_at_depth(
     // YAML（含 `:` 键或 `- ` 块序列项）即命中，文本回紧凑原文，缩进重排/着色
     // 交给详情层。普通平铺句子或含 `:` 的路径串因非复合类型/解析失败不命中，
     // 不会把一段英文误判成 YAML（详见 is_yaml doc）。
-    if is_yaml(bytes) {
+    if !is_key && is_yaml(bytes) {
         let s = std::str::from_utf8(bytes).unwrap_or_default().trim();
         return ("YAML".to_string(), s.to_string());
     }
@@ -126,7 +135,7 @@ fn guess_at_depth(
     // TOML 与 YAML 同级（都无魔数、靠整体解析）。形态约束同 is_toml：顶层为
     // 表/数组 + 文本含 `=` 或 `[`，普通句子（裸标量）不命中。文本回紧凑原文，
     // pretty/着色交给详情层。
-    if is_toml(bytes) {
+    if !is_key && is_toml(bytes) {
         let s = std::str::from_utf8(bytes).unwrap_or_default().trim();
         return ("TOML".to_string(), s.to_string());
     }
@@ -148,7 +157,7 @@ fn guess_at_depth(
     // 后 unknown 为空、错误类型几乎必有 unknown——强判别；未载入池/无
     // 0-unknown 候选时静默跳过。限制字节数保护表格渲染（大 blob 全池试探
     // 代价过高，显示 hex 无损，手动排版可看）。
-    if crate::proto::is_loaded() && bytes.len() <= crate::proto::GUESS_MAX {
+    if !is_key && crate::proto::is_loaded() && bytes.len() <= crate::proto::GUESS_MAX {
         if let Some((best, 0)) = crate::proto::guess_candidates(bytes)
             .first()
             .map(|(n, u)| (n.clone(), *u))
@@ -653,6 +662,35 @@ mod tests {
         let (label, text) = guess(b"AliveTime", Endian::Little);
         assert_eq!(text, "AliveTime");
         assert!(!label.contains("PROTO"), "label={label}");
+    }
+
+    /// Key 版猜测跳过特殊格式：即使字节恰好构成合法 proto（池内存在匹配
+    /// 类型），也保持文本解释；表格/详情的 Key 面板走此路径。
+    #[test]
+    fn guess_key_skips_special_formats() {
+        let dir = std::env::temp_dir().join(format!("mdbxer_guess_key_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("k.proto");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"syntax = "proto3"; package k;"#,
+                "\n",
+                r#"message Scalars { fixed64 fixed64_v = 8; }"#,
+            ),
+        )
+        .unwrap();
+
+        let _g = crate::proto::tests::TEST_LOCK.lock().unwrap();
+        crate::proto::load_files(&[&path]).unwrap();
+
+        let (label, text) = super::guess_key(b"AliveTime", Endian::Little, &HintFlags::default());
+        assert_eq!(text, "AliveTime");
+        assert!(!label.contains("PROTO"), "label={label}");
+
+        // 结构化形态的字节在 Key 版下也不判 JSON，落回文本/hex
+        let (label, _) = super::guess_key(br#"{"a":1}"#, Endian::Little, &HintFlags::default());
+        assert!(!label.contains("JSON"), "label={label}");
     }
 
     #[test]

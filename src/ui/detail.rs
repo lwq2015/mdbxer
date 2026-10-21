@@ -674,7 +674,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
             // 预取两卡片的分段窗口与解码文本，用于估算自然高度
             let (_, k_win) = card_window(app, &key, true);
-            let k_text = fmt::decode(
+            let k_text = fmt::decode_key(
                 k_win,
                 app.detail.key_mode,
                 app.endian,
@@ -1280,17 +1280,19 @@ fn kv_card(
                                 usize::MAX,
                                 &app.hint_value,
                             ));
-                        } else if let Some(pretty) =
-                            proto_auto_pretty(app.detail.mode_of(is_key), bytes)
+                        } else if !is_key
+                            && let Some(pretty) =
+                                proto_auto_pretty(app.detail.mode_of(is_key), bytes)
                         {
                             // Auto + 已载入协议池：试探出 message 类型时按该类型
                             // 复制 proto3 JSON pretty，与详情显示一致
                             ui.ctx().copy_text(pretty);
                         } else {
                             // Auto 下完整值是结构化格式（BSON/JSON/MSGPACK/CBOR/XML）时
-                            // 按对应格式复制 pretty，与详情显示一致；其余按当前实际模式复制原文。
+                            // 按对应格式复制 pretty，与详情显示一致；其余按当前实际模式复制。
+                            // Key 不做特殊格式猜测（与 Auto 猜型策略一致），Auto 直接按原文复制。
                             let copy_mode = match app.detail.mode_of(is_key) {
-                                DecodeMode::Auto => {
+                                DecodeMode::Auto if !is_key => {
                                     syntax_mode(DecodeMode::Auto, bytes).unwrap_or(DecodeMode::Auto)
                                 }
                                 m => m,
@@ -1301,7 +1303,7 @@ fn kv_card(
                                 &app.hint_value
                             };
                             ui.ctx()
-                                .copy_text(text_of(bytes, copy_mode, app.endian, hints));
+                                .copy_text(text_of(bytes, copy_mode, app.endian, hints, is_key));
                         }
                     }
                     if ui.button(t.save_as).on_hover_text(t.save_tip).clicked() {
@@ -1610,13 +1612,21 @@ fn kv_card(
             let (text_open, hex_open) = card_section_open(ui.ctx(), is_key);
             // 语法着色：手动 Json/Yaml/Toml/Xml（内容合法）或 Auto 命中
             // 结构化 JSON/BSON/MSGPACK/CBOR/XML 时启用；Some 同时给出 Auto 下
-            // pretty 重解码应使用的格式。
-            let json_mode = syntax_mode(app.detail.mode_of(is_key), window);
+            // pretty 重解码应使用的格式。Key 不做特殊格式猜测，永不着色。
+            let json_mode = if is_key {
+                None
+            } else {
+                syntax_mode(app.detail.mode_of(is_key), window)
+            };
             // Auto + 已载入协议池：全池试探出 message 类型时按该类型 pretty 渲染
             //（着色复用 JSON 语法——proto3 JSON mapping 输出即 JSON 文本）
-            let proto_pretty = proto_auto_pretty(app.detail.mode_of(is_key), window);
+            let proto_pretty = if is_key {
+                None
+            } else {
+                proto_auto_pretty(app.detail.mode_of(is_key), window)
+            };
             // Auto 下压缩容器穿透：解压后内层仍是结构化数据时按内层格式 pretty/着色
-            let decomp = (app.detail.mode_of(is_key) == DecodeMode::Auto)
+            let decomp = (!is_key && app.detail.mode_of(is_key) == DecodeMode::Auto)
                 .then(|| fmt::decompress(window))
                 .flatten()
                 .and_then(|(_, inner)| syntax_mode(DecodeMode::Auto, &inner).map(|m| (m, inner)));
@@ -1985,9 +1995,19 @@ fn kv_card(
         .height()
 }
 
-/// 复制按钮用：完整解码文本（不受 cell_max 截断）。
-fn text_of(bytes: &[u8], mode: DecodeMode, endian: fmt::Endian, hints: &fmt::HintFlags) -> String {
-    fmt::decode(bytes, mode, endian, usize::MAX, hints)
+/// 复制按钮用：完整解码文本（不受 cell_max 截断）；Key 不做特殊格式猜测。
+fn text_of(
+    bytes: &[u8],
+    mode: DecodeMode,
+    endian: fmt::Endian,
+    hints: &fmt::HintFlags,
+    is_key: bool,
+) -> String {
+    if is_key {
+        fmt::decode_key(bytes, mode, endian, usize::MAX, hints)
+    } else {
+        fmt::decode(bytes, mode, endian, usize::MAX, hints)
+    }
 }
 
 /// 保存当前库的 Protobuf 关联表（.proto 文件列表 + message 选择），

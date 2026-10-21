@@ -11,7 +11,7 @@ mod hexdump;
 mod value;
 
 pub(crate) use compress::decompress;
-pub use guess::{HintFlags, guess};
+pub use guess::{HintFlags, guess, guess_key};
 pub(crate) use guess::{
     is_bson, is_cbor, is_msgpack, is_structured_json, is_toml, is_xml, is_yaml, magic_hint,
 };
@@ -19,7 +19,7 @@ pub use hexdump::{DEFAULT_HEX_WIDTH, HEX_WIDTHS, PAGE_BYTES};
 pub(crate) use hexdump::{
     addr_chars, addr_digits, hex_copy_selection, hex_line, hex_section_chars, mid_gap_index,
 };
-pub use value::decode;
+pub use value::{decode, decode_key};
 
 /// 整数千位分隔开关（默认开）：1,625,981,420 vs 1625981420。
 /// 全局开关而非 decode 参数——decode/guess 调用点太多，且这是纯显示偏好。
