@@ -13,8 +13,6 @@ pub(crate) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.add_space(8.0);
-        ui.heading(t.tab_settings);
-        ui.add_space(6.0);
 
         hint_section(ui, app);
         ui.add_space(10.0);
@@ -194,34 +192,36 @@ fn log_section(ui: &mut egui::Ui) {
             .num_columns(2)
             .spacing([16.0, 6.0])
             .show(ui, |ui| {
-                // 日志等级：切换即时生效并持久化
                 ui.label(t.log_level);
-                let cur = crate::logging::level();
-                let mut lv = cur;
-                let ir = egui::ComboBox::from_id_salt("set_log_level")
-                    .width(72.0)
-                    .selected_text(level_label(lv))
-                    .show_ui(ui, |ui| {
-                        for l in crate::logging::Level::ALL {
-                            ui.selectable_value(&mut lv, l, level_label(l));
+                ui.horizontal(|ui| {
+                    // 日志等级：切换即时生效并持久化
+                    let cur = crate::logging::level();
+                    let mut lv = cur;
+                    let ir = egui::ComboBox::from_id_salt("set_log_level")
+                        .width(72.0)
+                        .selected_text(level_label(lv))
+                        .show_ui(ui, |ui| {
+                            for l in crate::logging::Level::ALL {
+                                ui.selectable_value(&mut lv, l, level_label(l));
+                            }
+                        });
+                    super::wheel_cycle(ui.ctx(), &ir.response, &crate::logging::Level::ALL, &mut lv);
+                    if lv != cur {
+                        crate::logging::set_level(lv);
+                        crate::config::save_log_level(lv);
+                        crate::logging::info(&format!("日志等级切换为 {}", lv.as_str()));
+                    }
+
+                    // 打开日志目录（尚未写过日志时目录可能不存在，先确保建好）
+                    if let Some(dir) = crate::logging::log_dir() {
+                        if ui.button("📂").on_hover_text(t.log_open_dir_tip).clicked() {
+                            let _ = std::fs::create_dir_all(&dir);
+                            super::topbar::reveal_in_folder(&dir.display().to_string(), false);
                         }
-                    });
-                super::wheel_cycle(ui.ctx(), &ir.response, &crate::logging::Level::ALL, &mut lv);
-                if lv != cur {
-                    crate::logging::set_level(lv);
-                    crate::config::save_log_level(lv);
-                    crate::logging::info(&format!("日志等级切换为 {}", lv.as_str()));
-                }
+                    }
+                });
                 ui.end_row();
             });
-
-        // 打开日志目录（尚未写过日志时目录可能不存在，先确保建好）
-        if let Some(dir) = crate::logging::log_dir() {
-            if ui.button("📂").on_hover_text(t.log_open_dir_tip).clicked() {
-                let _ = std::fs::create_dir_all(&dir);
-                super::topbar::reveal_in_folder(&dir.display().to_string(), false);
-            }
-        }
     });
 }
 
