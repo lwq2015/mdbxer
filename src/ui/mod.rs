@@ -1825,12 +1825,18 @@ impl MdbxerApp {
         }
     }
 
-    /// 把完整原始字节另存为文件（不经任何截断）；返回 true 表示已写出。
-    pub fn save_bytes(&mut self, default_name: &str, bytes: &[u8]) -> bool {
+    /// 把完整字节另存为文件（不经任何截断）；`ext` 决定默认扩展名与
+    /// 过滤器（"bin"/"txt"/"json"/…）；返回 true 表示已写出。
+    pub fn save_bytes(&mut self, default_name: &str, bytes: &[u8], ext: &str) -> bool {
         let t = crate::i18n::tr();
+        let desc: String = match ext {
+            "bin" => t.filter_binary.to_string(),
+            "txt" => t.filter_text.to_string(),
+            other => other.to_ascii_uppercase(),
+        };
         let Some(path) = rfd::FileDialog::new()
             .set_file_name(default_name)
-            .add_filter(t.filter_binary, &["bin"])
+            .add_filter(&desc, &[ext])
             .add_filter(t.filter_all, &["*"])
             .save_file()
         else {

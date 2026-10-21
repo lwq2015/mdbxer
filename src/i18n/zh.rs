@@ -82,7 +82,9 @@ pub(super) const ZH: I18n = I18n {
     copy: "复制",
     copied_row: "已复制选中行",
     save_as: "另存…",
-    save_tip: "把完整原始字节保存为文件（不做任何截断）",
+    save_tip: "把完整内容保存为文件：原始二进制、当前显示文本或按猜测格式",
+    save_raw: "原始二进制（.bin）",
+    save_text: "可见文本（.txt）",
     seg_prev_tip: "上一段（64 KiB）",
     seg_next_tip: "下一段（64 KiB）",
     seg_input_hint: "偏移/0x..",
@@ -199,6 +201,7 @@ pub(super) const ZH: I18n = I18n {
     about_open_link_tip: "在浏览器中打开",
 
     filter_binary: "二进制",
+    filter_text: "文本文件",
     filter_all: "所有文件",
 
     empty: "（空）",

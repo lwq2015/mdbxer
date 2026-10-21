@@ -1232,12 +1232,12 @@ fn kv_card(
 ) -> f32 {
     let t = tr();
     let dup_sort = app.cur_table().map(|tbl| tbl.dup_sort).unwrap_or(false);
-    let save_name = if is_key {
-        "key.bin".to_string()
+    let save_base = if is_key {
+        "key".to_string()
     } else if dup_sort {
-        format!("value_{:06}.bin", app.detail.dup_index + 1)
+        format!("value_{:06}", app.detail.dup_index + 1)
     } else {
-        "value.bin".to_string()
+        "value".to_string()
     };
     egui::Frame::group(ui.style())
         .show(ui, |ui| {
@@ -1306,9 +1306,43 @@ fn kv_card(
                                 .copy_text(text_of(bytes, copy_mode, app.endian, hints, is_key));
                         }
                     }
-                    if ui.button(t.save_as).on_hover_text(t.save_tip).clicked() {
-                        app.save_bytes(&save_name, bytes);
-                    }
+                    // 另存菜单：原始二进制 / 可见文本 / 猜测格式（Auto 且命中时）
+                    let save_resp = ui
+                        .menu_button(t.save_as, |ui| {
+                            if ui.button(t.save_raw).clicked() {
+                                ui.close();
+                                app.save_bytes(&format!("{save_base}.bin"), bytes, "bin");
+                            }
+                            let hints = if is_key {
+                                &app.hint_key
+                            } else {
+                                &app.hint_value
+                            };
+                            if ui.button(t.save_text).clicked() {
+                                ui.close();
+                                let text = text_of(
+                                    bytes,
+                                    app.detail.mode_of(is_key),
+                                    app.endian,
+                                    hints,
+                                    is_key,
+                                );
+                                app.save_bytes(&format!("{save_base}.txt"), text.as_bytes(), "txt");
+                            }
+                            // 猜测格式：仅 Value 且 Auto 模式（Key 不做特殊格式猜测，
+                            // 与猜型策略一致；手动模式下"可见文本"已是该格式文本）
+                            if !is_key
+                                && app.detail.mode_of(is_key) == DecodeMode::Auto
+                                && let Some((label, data, ext)) = guess_save(bytes)
+                            {
+                                if ui.button(format!("{label}（.{ext}）")).clicked() {
+                                    ui.close();
+                                    app.save_bytes(&format!("{save_base}.{ext}"), &data, ext);
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text(t.save_tip);
                     // 格式下拉
                     let mut mode = app.detail.mode_of(is_key);
                     let flat = DecodeMode::flat_all();
@@ -2033,6 +2067,88 @@ fn proto_auto_pretty(mode: DecodeMode, bytes: &[u8]) -> Option<String> {
         .into_iter()
         .find(|(_, unknown)| *unknown == 0)
         .and_then(|(name, _)| crate::proto::decode_with(&name, bytes))
+}
+
+/// 魔数格式名 → 推荐文件扩展名。
+fn magic_ext(m: &str) -> &'static str {
+    match m {
+        "JPEG" => "jpg",
+        "PNG" => "png",
+        "GIF" => "gif",
+        "WebP" => "webp",
+        "WAV" => "wav",
+        "MP3" => "mp3",
+        "Ogg" => "ogg",
+        "FLAC" => "flac",
+        "ZIP" => "zip",
+        "7z" => "7z",
+        "RAR" => "rar",
+        "PDF" => "pdf",
+        "MP4" => "mp4",
+        "ICO" => "ico",
+        "SQLite" => "db",
+        _ => "bin",
+    }
+}
+
+/// 结构化解码模式 → (扩展名, 菜单标签)；JSON 类（含 BSON/MSGPACK/CBOR）
+/// 统一落 JSON。
+fn structured_ext(mode: DecodeMode) -> (&'static str, &'static str) {
+    match mode {
+        DecodeMode::Xml => ("xml", "XML"),
+        DecodeMode::Yaml => ("yaml", "YAML"),
+        DecodeMode::Toml => ("toml", "TOML"),
+        _ => ("json", "JSON"),
+    }
+}
+
+/// 内容嗅探：推荐文件扩展名（结构化 → 魔数 → 兜底 bin）。
+fn sniff_ext(bytes: &[u8]) -> &'static str {
+    if let Some(mode) = syntax_mode(DecodeMode::Auto, bytes) {
+        return structured_ext(mode).0;
+    }
+    if let Some(m) = fmt::magic_hint(bytes) {
+        return magic_ext(m);
+    }
+    "bin"
+}
+
+/// 另存菜单"猜测格式"候选：与 Auto 显示管线同优先级（压缩穿透 →
+/// 结构化 pretty → PROTO → 二进制魔数），返回 (标签, 内容, 推荐扩展名)；
+/// 无命中返回 None（菜单不出现该项）。
+fn guess_save(bytes: &[u8]) -> Option<(String, Vec<u8>, &'static str)> {
+    // 压缩容器：存解压后的内层，标签穿透内层猜测（如 "gzip → JSON"）
+    if let Some((algo, inner)) = fmt::decompress(bytes) {
+        let (label, _) = fmt::guess(&inner, fmt::Endian::Little, &fmt::HintFlags::default());
+        let ext = sniff_ext(&inner);
+        return Some((format!("{algo} → {label}"), inner, ext));
+    }
+
+    // 结构化格式：存 pretty 文本（BSON/MSGPACK/CBOR 统一转 JSON）
+    if let Some(mode) = syntax_mode(DecodeMode::Auto, bytes) {
+        let (ext, label) = structured_ext(mode);
+        let text = fmt::decode(
+            bytes,
+            mode,
+            fmt::Endian::Little,
+            usize::MAX,
+            &fmt::HintFlags::default(),
+        );
+        return Some((format!("{label} pretty"), text.into_bytes(), ext));
+    }
+
+    // PROTO：存 proto3 JSON 文本
+    if let Some(text) = proto_auto_pretty(DecodeMode::Auto, bytes) {
+        return Some(("PROTO · JSON".to_string(), text.into_bytes(), "json"));
+    }
+
+    // 二进制魔数：原始字节配正确扩展名（JPEG/ZIP 等本体即该格式）
+    if let Some(m) = fmt::magic_hint(bytes) {
+        let ext = magic_ext(m);
+        return Some((m.to_string(), bytes.to_vec(), ext));
+    }
+
+    None
 }
 
 /// 右栏宽度上限：保证当前 hex 配置下最长一行（16 字节时最宽）

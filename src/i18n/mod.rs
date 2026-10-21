@@ -184,6 +184,10 @@ pub struct I18n {
     pub copied_row: &'static str,
     pub save_as: &'static str,
     pub save_tip: &'static str,
+    /// 另存菜单：原始二进制项
+    pub save_raw: &'static str,
+    /// 另存菜单：可见文本项
+    pub save_text: &'static str,
     pub seg_prev_tip: &'static str,
     pub seg_next_tip: &'static str,
     pub seg_input_hint: &'static str,
@@ -342,6 +346,7 @@ pub struct I18n {
 
     // ── 另存对话框过滤器 ──
     pub filter_binary: &'static str,
+    pub filter_text: &'static str,
     pub filter_all: &'static str,
 
     // ── fmt 层：解码输出内嵌文案 ──

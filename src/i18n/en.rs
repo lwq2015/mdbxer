@@ -81,7 +81,9 @@ pub(super) const EN: I18n = I18n {
     copy: "Copy",
     copied_row: "Row copied",
     save_as: "Save as…",
-    save_tip: "Save the complete raw bytes to a file (no truncation)",
+    save_tip: "Save content to a file: raw bytes, visible text, or the guessed format",
+    save_raw: "Raw binary (.bin)",
+    save_text: "Visible text (.txt)",
     seg_prev_tip: "Previous segment (64 KiB)",
     seg_next_tip: "Next segment (64 KiB)",
     seg_input_hint: "offset/0x..",
@@ -198,6 +200,7 @@ pub(super) const EN: I18n = I18n {
     about_open_link_tip: "Open in browser",
 
     filter_binary: "Binary",
+    filter_text: "Text files",
     filter_all: "All files",
 
     empty: "(empty)",
