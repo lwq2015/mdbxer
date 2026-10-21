@@ -1646,21 +1646,24 @@ fn kv_card(
             let (text_open, hex_open) = card_section_open(ui.ctx(), is_key);
             // 语法着色：手动 Json/Yaml/Toml/Xml（内容合法）或 Auto 命中
             // 结构化 JSON/BSON/MSGPACK/CBOR/XML 时启用；Some 同时给出 Auto 下
-            // pretty 重解码应使用的格式。Key 不做特殊格式猜测，永不着色。
-            let json_mode = if is_key {
+            // pretty 重解码应使用的格式。Key 仅 Auto 不做特殊格式猜测（不着色），
+            // 手动 Json/Yaml/Toml/Xml 照常着色。
+            let key_auto = is_key && app.detail.mode_of(is_key) == DecodeMode::Auto;
+            let json_mode = if key_auto {
                 None
             } else {
                 syntax_mode(app.detail.mode_of(is_key), window)
             };
             // Auto + 已载入协议池：全池试探出 message 类型时按该类型 pretty 渲染
-            //（着色复用 JSON 语法——proto3 JSON mapping 输出即 JSON 文本）
-            let proto_pretty = if is_key {
+            //（着色复用 JSON 语法——proto3 JSON mapping 输出即 JSON 文本）；
+            // 二者仅在 Auto 生效，Key 的 Auto 不做特殊处理
+            let proto_pretty = if key_auto {
                 None
             } else {
                 proto_auto_pretty(app.detail.mode_of(is_key), window)
             };
             // Auto 下压缩容器穿透：解压后内层仍是结构化数据时按内层格式 pretty/着色
-            let decomp = (!is_key && app.detail.mode_of(is_key) == DecodeMode::Auto)
+            let decomp = (!key_auto && app.detail.mode_of(is_key) == DecodeMode::Auto)
                 .then(|| fmt::decompress(window))
                 .flatten()
                 .and_then(|(_, inner)| syntax_mode(DecodeMode::Auto, &inner).map(|m| (m, inner)));
