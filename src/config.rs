@@ -142,6 +142,9 @@ pub struct PerDbRecord {
     /// Protobuf 关联表：本库选定的 message 类型全名
     #[serde(default)]
     pub proto_msg: Option<String>,
+    /// 各表的搜索词历史（与表关联，每表最多 20 条，最近在前）
+    #[serde(default)]
+    pub search_history: Vec<TableSearchHistory>,
     /// 最近使用时间（unix 秒；LRU 排序依据）
     #[serde(default)]
     pub last_use: u64,
@@ -157,6 +160,16 @@ pub struct FavKey {
     /// 备注（预留，当前为空串）
     #[serde(default)]
     pub note: String,
+}
+
+/// 某张表的搜索词历史。
+#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+pub struct TableSearchHistory {
+    /// 表名（None = 主表）
+    pub table: Option<String>,
+    /// 搜索词，最近在前，最多 20 条
+    #[serde(default)]
+    pub terms: Vec<String>,
 }
 
 /// 配置文件路径：优先 `%APPDATA%\mdbxer\config.json`；

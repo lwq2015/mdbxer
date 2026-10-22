@@ -125,6 +125,7 @@ pub(super) const EN: I18n = I18n {
 
     toolbar_search_hint: "Search: text or hex(...)",
     search_box_tip: "Enter: search key; Ctrl+Enter: search value; F3/Shift+F3: repeat last search",
+    search_history_tip: "Search history for the current table (click to fill)",
     key_mode_tip_off: "Switch to filter mode: K shows only keys starting with the input (Enter to apply)",
     key_mode_tip_on: "Switch to jump mode: K locates the first key >= input",
     key_search_btn_tip: "Search keys (jump or prefix filter, Enter)",

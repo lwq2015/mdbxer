@@ -790,8 +790,9 @@ fn card_natural_height(
     is_key: bool,
     dup_nav: bool,
 ) -> f32 {
-    let line_h = ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())))
-        + ui.spacing().extra_text_line_spacing;
+    // 行高与 Hex 视图一致（不加 extra_text_line_spacing）：
+    // 保证文本区预估高度与实际渲染（fold_view_body / TextEdit）完全吻合。
+    let line_h = ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())));
     let fixed = card_fixed_overhead(total, is_key, dup_nav);
     let (text_open, hex_open) = card_section_open(ui.ctx(), is_key);
     let (text_h, hex_h) = card_content_heights(
@@ -862,7 +863,13 @@ fn card_content_heights(
         0.0
     };
     if text_nat + hex_nat <= content_budget {
-        return (text_nat, hex_nat);
+        // 文本是主阅读区：预算充足时把剩余全部给文本区，使 text_h 足够大，
+        // 确保内容能完整显示、不触发滚动条（下方留白由内容本身决定）。
+        // auto_shrink 保持收缩：内容不足 text_h 时区域收缩到内容高，不留空白滚动区。
+        if text_open {
+            return (content_budget - hex_nat, hex_nat);
+        }
+        return (text_nat, content_budget - text_nat);
     }
     let half = content_budget / 2.0;
     if text_nat <= half {
@@ -947,7 +954,9 @@ fn fold_view_body(
 ) -> (u64, Vec<usize>) {
     let t = tr();
     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-    let line_h = ui.fonts_mut(|f| f.row_height(&font_id)) + ui.spacing().extra_text_line_spacing;
+    // 行高与 Hex 视图一致（不额外加 extra_text_line_spacing），使同窗口内
+    // 文本区和 hex 区行高对齐、总高度吻合，避免右栏下方多出/不足。
+    let line_h = ui.fonts_mut(|f| f.row_height(&font_id));
     let base = egui::text::TextFormat {
         font_id,
         color: ui.visuals().text_color(),
@@ -1307,7 +1316,7 @@ fn kv_card(
                         }
                     }
                     // 另存菜单：原始二进制 / 可见文本 / 猜测格式（Auto 且命中时）
-                    let save_resp = ui
+                    let _save_resp = ui
                         .menu_button(t.save_as, |ui| {
                             if ui.button(t.save_raw).clicked() {
                                 ui.close();
@@ -1493,8 +1502,14 @@ fn kv_card(
                             .desired_width(178.0)
                             .hint_text(t.search_hint),
                     );
-                    let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let key_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
                     let (ctrl, shift) = ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
+                    // 无修饰 Enter 会 surrender focus（lost_focus）；带修饰 Enter 焦点仍在（has_focus）。
+                    let enter = key_enter && (resp.lost_focus() || resp.has_focus());
+                    // Esc：清除搜索输入。egui 0.36 无修饰 Esc 帧首收走焦点，用 lost_focus 判据。
+                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        input.clear();
+                    }
                     // Enter=下一个；Shift+Enter 或 Ctrl+Enter=上一个
                     // ⬇(下一个)在左、⬆(上一个)在右：主操作（Enter）优先的习惯顺序
                     let next = ui.button("⬇").on_hover_text(t.search_next_tip).clicked()
@@ -1608,9 +1623,15 @@ fn kv_card(
                                 .desired_width(178.0)
                                 .hint_text(t.search_hint),
                         );
-                        let enter =
-                            resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        let (ctrl, shift) = ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
+                        let key_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        let (ctrl, shift) =
+                            ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
+                        // 无修饰 Enter 会 surrender focus（lost_focus）；带修饰 Enter 焦点仍在（has_focus）。
+                        let enter = key_enter && (resp.lost_focus() || resp.has_focus());
+                        // Esc：清除搜索输入（egui 无修饰 Esc 帧首收走焦点，用 lost_focus 判据）。
+                        if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            app.detail.dup_search_input.clear();
+                        }
                         // Enter=下一个；Shift+Enter 或 Ctrl+Enter=上一个
                         // ⬇(下一个)在左、⬆(上一个)在右，与大字段搜索行一致
                         let next = ui.button("⬇").on_hover_text(t.search_next_tip).clicked()
@@ -1639,9 +1660,9 @@ fn kv_card(
             // egui TextEdit 自身无内部滚动、高度随内容无限增长（desired_rows 只是下限），
             // 故必须包一层 ScrollArea。内容预算在文本/hex 两区均分卡片预算的余量，
             // 装不下时各自内部滚动，卡片头/搜索行不随内容滚走。
-            let line_h = ui
-                .fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())))
-                + ui.spacing().extra_text_line_spacing;
+            // 行高与 Hex 视图一致（不加 extra_text_line_spacing）：与
+            // fold_view_body / TextEdit layouter 的实测行高保持一致。
+            let line_h = ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())));
             let fixed = card_fixed_overhead(total, is_key, is_dup);
             let (text_open, hex_open) = card_section_open(ui.ctx(), is_key);
             // 语法着色：手动 Json/Yaml/Toml/Xml（内容合法）或 Auto 命中
@@ -1851,10 +1872,16 @@ fn kv_card(
                     .id_salt(("detail_text_scroll", is_key))
                     .auto_shrink([false, true])
                     .max_height(text_h)
-                    .show(ui, |ui| {
-                        let content_top = ui.cursor().min.y;
-                        let mut te = egui::TextEdit::multiline(&mut text_owned)
-                            .font(egui::TextStyle::Monospace)
+                            .show(ui, |ui| {
+                                let content_top = ui.cursor().min.y;
+                                // 记录 layouter 拿到的实际 wrap 宽度（与 TextEdit 渲染完全一致），
+                                // 供下方命中滚动定位复用它构图——估算 wrap 会导致大文本折行次数
+                                // 与渲染不一致，命中行越靠后偏差累积越大，滚过头滚出视口。
+                                // Rc 让 move 闭包与滚动定位共享同一个 Cell。
+                                let hit_wrap = std::rc::Rc::new(std::cell::Cell::new(None::<f32>));
+                                let hit_wrap_layouter = hit_wrap.clone();
+                                let mut te = egui::TextEdit::multiline(&mut text_owned)
+                                    .font(egui::TextStyle::Monospace)
                             .desired_width(f32::INFINITY)
                             .desired_rows(1);
                         // 命中区间琥珀色高亮（与 hex 视图同色半透明，深浅主题均可读）；
@@ -1866,10 +1893,12 @@ fn kv_card(
                         let palette = syntax_palette;
                         let mut hl_layouter =
                             move |ui: &egui::Ui, s: &dyn egui::TextBuffer, wrap: f32| {
+                                hit_wrap_layouter.set(Some(wrap)); // 记录实际折行宽度供滚动定位复用
                                 let s = s.as_str();
                                 let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-                                let line_height = ui.fonts_mut(|f| f.row_height(&font_id))
-                                    + ui.spacing().extra_text_line_spacing;
+                                // 与 Hex 视图行高一致：不加 extra_text_line_spacing，
+                                // 同窗口文本/hex 行高对齐（egui TextEdit 默认也不加）。
+                                let line_height = ui.fonts_mut(|f| f.row_height(&font_id));
                                 let base = egui::text::TextFormat {
                                     font_id,
                                     color: ui.visuals().text_color(),
@@ -1909,35 +1938,41 @@ fn kv_card(
                                 job.keep_trailing_whitespace = true;
                                 ui.fonts_mut(|f| f.layout_job(job))
                             };
-                        if syntax_kind.is_some() || text_hit_range.is_some() {
-                            te = te.layouter(&mut hl_layouter);
-                        }
+                        // 无条件走自定义 layouter：即使无高亮/无语法，也要让 hit_wrap
+                        // 记录到 TextEdit 实际折行宽度。否则折行宽度靠估算，与 TextEdit
+                        // 渲染的折行不一致，命中滚动定位算出的行数就会偏（长文本尤其）。
+                        // 无高亮时该 layouter 行为与 egui 默认 multiline 一致（同 wrap、
+                        // 同 row_height、保留尾空白），故可安全无条件使用。
+                        te = te.layouter(&mut hl_layouter);
                         let te_rect = ui.add(te).rect;
-                        // 搜索命中：滚到命中所在行（UTF-8 窗口字节偏移直接可用，
-                        // 其它编码按字节比例估算后居中，误差不可见）
+                        // 搜索命中：滚到命中所在行。这里必须在与渲染/高亮**同一文本
+                        // display_text** 上构图（不能再用 text）。折行宽度也尽量贴近
+                        // TextEdit 实际内容宽度（frame 左右内边距约各 6pt），否则
+                        // blob 长文本折行次数与 TextEdit 不一致，行号累加后定位偏移，
+                        // 命中行滚出视口——即"高亮不同步定位、目标不可见"。
                         if let Some(hit_abs) = text_scroll_to {
                             if hit_abs >= off && hit_abs < off + window.len() {
-                                let hit_rel = hit_abs - off;
-                                let mut bp = (if std::str::from_utf8(window).is_ok() {
-                                    hit_rel
-                                } else {
-                                    text.len() * hit_rel / window.len().max(1)
-                                })
-                                .min(text.len());
-                                while bp > 0 && !text.is_char_boundary(bp) {
-                                    bp -= 1;
-                                }
-                                let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-                                let wrap_w = (te_rect.width() - 16.0).max(40.0);
-                                let galley = ui.fonts_mut(|f| {
-                                    f.layout(
-                                        text.to_string(),
-                                        font_id,
-                                        egui::Color32::WHITE,
-                                        wrap_w,
-                                    )
-                                });
-                                let pc = text[..bp].chars().count();
+                                let dt = &display_text;
+                                // 命中字符偏移（基于显示文本 display_text，与高亮/折行同源）：
+                        // 1:1 时直接取高亮起点或字节转字符；非 1:1（lossy 重编码的二进制
+                        // blob）按字符比例近似——每行字数比字节数均匀，比字节比例更贴近
+                        // 视觉折行，消除命中越靠后字节比例偏差累积导致的滚过头。
+                        let pc = if let Some((hs, _)) = text_hit_range {
+                            dt[..hs].chars().count()
+                        } else if std::str::from_utf8(window).is_ok() {
+                            dt.chars().take(hit_abs - off).count()
+                        } else {
+                            dt.chars().count() * (hit_abs - off) / window.len().max(1)
+                        };
+                        let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+                        // 与 TextEdit 渲染完全一致的 wrap（layouter 实际给的值）；
+                        // 仅当未走自定义 layouter（无高亮映射）时才回退估算宽度。
+                        let wrap_w = hit_wrap
+                            .get()
+                            .unwrap_or((te_rect.width() - 12.0).max(40.0));
+                        let galley = ui.fonts_mut(|f| {
+                            f.layout(dt.to_string(), font_id, egui::Color32::WHITE, wrap_w)
+                        });
                                 // 按行累计字形数定位命中行（每字形 ≈ 一字符；
                                 // 居中滚动容忍近似，egui 0.36 无 from_ccursor）
                                 let mut acc = 0usize;

@@ -126,6 +126,7 @@ pub(super) const ZH: I18n = I18n {
 
     toolbar_search_hint: "搜索：文本或 hex(...)",
     search_box_tip: "Enter：搜索 Key；Ctrl+Enter：搜索 Value；F3/Shift+F3：继续上一次搜索",
+    search_history_tip: "当前表的搜索历史（点击填入）",
     key_mode_tip_off: "切换到过滤模式：K 键只显示以输入开头的 Key（回车生效）",
     key_mode_tip_on: "切换到跳转模式：K 键定位到首个不小于输入的 Key",
     key_search_btn_tip: "搜索 Key（跳转或前缀过滤，Enter）",

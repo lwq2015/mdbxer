@@ -425,6 +425,8 @@ pub struct MdbxerApp {
     pub pending_scroll: Option<usize>,
     /// 共享搜索输入框内容（Key 跳转/过滤、Value 页内过滤共用）
     pub search_input: String,
+    /// 当前表的搜索词历史（最近在前，最多 20 条；与表关联，切表时重载）
+    pub search_history: Vec<String>,
     /// 当前生效的 Key 前缀过滤（None = 未过滤）
     pub key_filter: Option<Vec<u8>>,
     /// Key 搜索模式：false = 跳转定位；true = 前缀过滤
@@ -617,6 +619,7 @@ impl MdbxerApp {
             pending_scroll: None,
 
             search_input: String::new(),
+            search_history: Vec::new(),
             key_filter: None,
             key_filter_mode: false,
             value_filter: None,
@@ -846,6 +849,9 @@ impl MdbxerApp {
                     n,
                     path: path.clone(),
                 };
+                // 恢复最后打开的表后，加载该表的搜索历史（必须在 save_per_db 之前，
+                // 否则空历史会覆盖已存记录）
+                self.load_search_history();
                 // 刷新 LRU 的 last_use
                 self.save_per_db();
 
@@ -1207,6 +1213,8 @@ impl MdbxerApp {
         self.value_search = None;
         self.clear_transient_status();
         self.load_first_page();
+        // 切换表后加载该表的搜索历史（必须在 selected_table 设置之后）
+        self.load_search_history();
         self.save_per_db();
     }
 
@@ -1346,6 +1354,7 @@ impl MdbxerApp {
         if input.is_empty() {
             return;
         }
+        self.add_search_term(&input);
 
         self.last_search = SearchContext::MainKey;
         if !self.key_filter_mode {
@@ -1376,6 +1385,9 @@ impl MdbxerApp {
     /// 空输入清除过滤。
     pub fn apply_value_search(&mut self) {
         let input = self.search_input.trim().to_string();
+        if !input.is_empty() {
+            self.add_search_term(&input);
+        }
         self.value_filter = if input.is_empty() { None } else { Some(input) };
         if self.value_filter.is_some() {
             self.last_search = SearchContext::MainValue;
@@ -1385,6 +1397,38 @@ impl MdbxerApp {
     /// 清除 Value 页内过滤（不清空输入框）。
     pub fn clear_value_search(&mut self) {
         self.value_filter = None;
+    }
+
+    /// 搜索历史单表上限
+    const SEARCH_HISTORY_MAX: usize = 20;
+
+    /// 从 per_db 记录加载当前表的搜索词历史。切换表后调用。
+    pub fn load_search_history(&mut self) {
+        let Some(path) = &self.opened_path else {
+            self.search_history.clear();
+            return;
+        };
+        let table = self.cur_table().and_then(|t| t.name.clone());
+        let rec = crate::config::load_per_db(path);
+        self.search_history = rec
+            .search_history
+            .iter()
+            .find(|h| h.table == table)
+            .map(|h| h.terms.clone())
+            .unwrap_or_default();
+    }
+
+    /// 把搜索词加入当前表历史：去重、移到最前、截断到上限后保存。
+    /// 空串不记录。
+    pub fn add_search_term(&mut self, term: &str) {
+        let term = term.trim().to_string();
+        if term.is_empty() {
+            return;
+        }
+        self.search_history.retain(|t| t != &term);
+        self.search_history.insert(0, term);
+        self.search_history.truncate(Self::SEARCH_HISTORY_MAX);
+        self.save_per_db();
     }
 
     /// F3/Shift+F3：按最近使用的搜索位置继续查找下一个/上一个。
@@ -1552,6 +1596,7 @@ impl MdbxerApp {
             self.status = Status::warn(crate::i18n::tr().search_empty.to_string());
             return;
         }
+        self.add_search_term(&needle);
 
         self.last_search = SearchContext::MainValueFull;
         // 全表搜索结果自带定位，旧的页内过滤会干扰显示，一并清除
@@ -2048,6 +2093,21 @@ impl MdbxerApp {
             return;
         };
         let old = crate::config::load_per_db(path);
+        let table = self.cur_table().and_then(|t| t.name.clone());
+        // 保留其他表的搜索历史，只更新当前表的条目（空列表不写入）
+        let mut search_history = old.search_history.clone();
+        if let Some(h) = search_history.iter_mut().find(|h| h.table == table) {
+            if self.search_history.is_empty() {
+                search_history.retain(|h| h.table != table);
+            } else {
+                h.terms = self.search_history.clone();
+            }
+        } else if !self.search_history.is_empty() {
+            search_history.push(crate::config::TableSearchHistory {
+                table,
+                terms: self.search_history.clone(),
+            });
+        }
         crate::config::save_per_db(&crate::config::PerDbRecord {
             path: path.clone(),
             last_table: self.cur_table().and_then(|t| t.name.clone()),
@@ -2055,6 +2115,7 @@ impl MdbxerApp {
             fav_keys: self.fav_keys.clone(),
             proto_files: old.proto_files,
             proto_msg: old.proto_msg,
+            search_history,
             last_use: 0, // save_per_db 内部刷新为当前时间
         });
     }

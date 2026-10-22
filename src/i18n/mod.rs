@@ -239,6 +239,8 @@ pub struct I18n {
     pub toolbar_search_hint: &'static str,
     /// 搜索框 hover 提示（快捷键说明）
     pub search_box_tip: &'static str,
+    /// 搜索历史下拉按钮 hover 提示
+    pub search_history_tip: &'static str,
     /// Key 搜索模式开关 hover 提示（按当前状态分：提示将切换到哪个模式）
     pub key_mode_tip_off: &'static str,
     pub key_mode_tip_on: &'static str,

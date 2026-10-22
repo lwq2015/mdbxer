@@ -121,11 +121,16 @@ fn show_tables(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n) {
             });
         super::wheel_cycle(ui.ctx(), &ir.response, &TableSort::ALL, &mut sort);
         let filter_w = ui.available_width().max(80.0);
-        ui.add(
+        let fresp = ui.add(
             egui::TextEdit::singleline(&mut filter_s)
                 .hint_text(t.filter_hint)
                 .desired_width(filter_w),
         );
+        // Esc：清空过滤词，还原完整表列表。egui 0.36 的无修饰 Esc 会在帧首
+        // 没收焦点，正确判据是 lost_focus() && key_pressed(Escape)。
+        if fresp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            filter_s.clear();
+        }
     });
     ui.separator();
 

@@ -157,19 +157,48 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             app.row_copy_pending = false;
         }
         // 回车 = Key 搜索（跳转或前缀过滤，取决于模式）；
-        // Ctrl+回车 = Value 搜索（行为同 V 按钮，由"全表"开关决定）
+        // Ctrl+回车 = Value 搜索（行为同 V 按钮，由"全表"开关决定）。
+        // 注意：egui TextEdit 只在无修饰 Enter 时 surrender focus，
+        // 所以 Ctrl+Enter 不能用 lost_focus() 判断——此时焦点仍在框内（has_focus）。
         // 回车后保留焦点，连续回车不必重新点框（F3 也可全局继续）
-        if sresp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            if ui.input(|i| i.modifiers.ctrl) {
+        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let ctrl = ui.input(|i| i.modifiers.ctrl);
+        if enter {
+            if sresp.lost_focus() {
+                // 无修饰 Enter → Key 搜索
+                app.apply_key_search();
+                sresp.request_focus();
+            } else if sresp.has_focus() && ctrl {
+                // Ctrl+Enter → Value 搜索
                 if app.value_search_full {
                     app.start_full_value_search();
                 } else {
                     app.apply_value_search();
                 }
-            } else {
-                app.apply_key_search();
+                sresp.request_focus();
             }
-            sresp.request_focus();
+        }
+        // 搜索历史下拉：当前表最近的搜索词（最多 20 条），点击即填入搜索框
+        if !app.search_history.is_empty() {
+            let mut picked: Option<String> = None;
+            ui.menu_button("🕘", |ui| {
+                ui.set_min_width(160.0);
+                for term in &app.search_history {
+                    if ui
+                        .add(egui::Button::new(term).truncate().min_size(egui::vec2(140.0, 0.0)))
+                        .clicked()
+                    {
+                        picked = Some(term.clone());
+                        ui.close();
+                    }
+                }
+            })
+            .response
+            .on_hover_text(t.search_history_tip);
+            if let Some(term) = picked {
+                app.search_input = term;
+                sresp.request_focus();
+            }
         }
         // 搜索 Key
         if ui.button("K").on_hover_text(t.key_search_btn_tip).clicked() {
