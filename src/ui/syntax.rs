@@ -52,7 +52,10 @@ impl TokKind {
 /// 判断该段文本是否启用语法着色；Some 返回 Auto 下 pretty 重解码应
 /// 使用的格式（Json/Bson/Cbor/Msgpack/Xml 等）。
 /// - 手动切到 Json：该段是任意合法 JSON（含标量）即着色；
+/// - 手动 Bson：该段是完整 BSON 文档即着色（显示为 JSON pretty，复用 JSON 语法）；
 /// - 手动 Yaml/Toml/Xml：内容能被对应解析器整体解析（与解码显示同口径）才着色；
+/// - 手动 Proto：类型池按当前 message 解码成功（输出 proto3 JSON pretty）才着色，
+///   未载入/未选类型/非法字节时显示 UTF-8 原文，不着色；
 /// - Auto：完整 BSON、对象/数组形态的结构化 JSON、MSGPACK/CBOR/XML 时返回
 ///   对应格式，排除 `123`/`true`/`"s"`/`null` 等会被当普通文本的标量。
 ///
@@ -63,6 +66,7 @@ pub(crate) fn syntax_mode(mode: DecodeMode, window: &[u8]) -> Option<DecodeMode>
         DecodeMode::Json => serde_json::from_slice::<serde_json::Value>(window)
             .is_ok()
             .then_some(DecodeMode::Json),
+        DecodeMode::Bson => fmt::is_bson(window).then_some(DecodeMode::Bson),
         DecodeMode::Msgpack => fmt::is_msgpack(window).then_some(DecodeMode::Msgpack),
         DecodeMode::Cbor => fmt::is_cbor(window).then_some(DecodeMode::Cbor),
         DecodeMode::Yaml => serde_yaml::from_slice::<serde_yaml::Value>(window)
@@ -74,6 +78,9 @@ pub(crate) fn syntax_mode(mode: DecodeMode, window: &[u8]) -> Option<DecodeMode>
             .is_some()
             .then_some(DecodeMode::Toml),
         DecodeMode::Xml => fmt::is_xml(window).then_some(DecodeMode::Xml),
+        DecodeMode::Proto => crate::proto::decode_current(window)
+            .is_some()
+            .then_some(DecodeMode::Proto),
         DecodeMode::Auto => {
             if fmt::is_bson(window) {
                 Some(DecodeMode::Bson)
@@ -870,13 +877,16 @@ mod tests {
         // Auto：完整 BSON 文档自动着色为 Bson
         let doc = bson_sample();
         assert_eq!(syntax_mode(DecodeMode::Auto, &doc), Some(DecodeMode::Bson));
+        // 手动 Bson：完整 BSON 文档着色（显示为 JSON pretty，复用 JSON 语法）
+        assert_eq!(syntax_mode(DecodeMode::Bson, &doc), Some(DecodeMode::Bson));
         // 手动 Json 下 BSON 字节不是合法 JSON：不着色
         assert_eq!(syntax_mode(DecodeMode::Json, &doc), None);
         // Auto 下合法 JSON 标量不着色（避免普通数字/字符串被误判）
         assert_eq!(syntax_mode(DecodeMode::Auto, b"123"), None);
         assert_eq!(syntax_mode(DecodeMode::Auto, br#""s""#), None);
-        // 非 Json/Bson/Auto 模式：永不着色
+        // 非结构化模式：永不着色
         assert_eq!(syntax_mode(DecodeMode::Utf8, valid), None);
+        // Bson 模式下非 BSON 内容（此处为 JSON 文本）：不着色
         assert_eq!(syntax_mode(DecodeMode::Bson, valid), None);
         // 非法内容不着色
         assert_eq!(syntax_mode(DecodeMode::Json, b"not json"), None);
@@ -885,6 +895,41 @@ mod tests {
         assert_eq!(syntax_mode(DecodeMode::Auto, br#"{"a": "lon"#), None);
         // 截断的 BSON（长度字段无法自洽）：不着色
         assert_eq!(syntax_mode(DecodeMode::Auto, &doc[..doc.len() - 2]), None);
+    }
+
+    #[test]
+    fn syntax_mode_proto() {
+        // proto 类型池是全局单态：与 proto/guess 的测试共用锁串行，避免互相覆盖
+        let _g = crate::proto::tests::TEST_LOCK.lock().unwrap();
+
+        let dir = std::env::temp_dir().join(format!("mdbxer_syntax_proto_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("s.proto");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"syntax = "proto3"; package t;"#,
+                "\n",
+                r#"message Msg { int64 id = 1; }"#,
+            ),
+        )
+        .unwrap();
+        crate::proto::load_files(&[&path]).unwrap();
+        crate::proto::set_current(Some("t.Msg".to_string()));
+
+        // field1 varint 42：类型池解码成功 → 着色（显示为 proto3 JSON pretty）
+        let bytes = [0x08, 0x2A];
+        assert_eq!(
+            syntax_mode(DecodeMode::Proto, &bytes),
+            Some(DecodeMode::Proto)
+        );
+        // 截断的 varint 解码失败 → 显示 UTF-8 原文，不着色
+        assert_eq!(syntax_mode(DecodeMode::Proto, &[0x08]), None);
+        // 未选类型 → 回退 UTF-8 原文，不着色
+        crate::proto::set_current(None);
+        assert_eq!(syntax_mode(DecodeMode::Proto, &bytes), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

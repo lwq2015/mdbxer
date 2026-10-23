@@ -1665,10 +1665,10 @@ fn kv_card(
             let line_h = ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())));
             let fixed = card_fixed_overhead(total, is_key, is_dup);
             let (text_open, hex_open) = card_section_open(ui.ctx(), is_key);
-            // 语法着色：手动 Json/Yaml/Toml/Xml（内容合法）或 Auto 命中
+            // 语法着色：手动 Json/Bson/Yaml/Toml/Xml/Proto（内容合法）或 Auto 命中
             // 结构化 JSON/BSON/MSGPACK/CBOR/XML 时启用；Some 同时给出 Auto 下
             // pretty 重解码应使用的格式。Key 仅 Auto 不做特殊格式猜测（不着色），
-            // 手动 Json/Yaml/Toml/Xml 照常着色。
+            // 手动模式照常着色（Bson/Proto 的 JSON pretty 复用 JSON 语法）。
             let key_auto = is_key && app.detail.mode_of(is_key) == DecodeMode::Auto;
             let json_mode = if key_auto {
                 None
