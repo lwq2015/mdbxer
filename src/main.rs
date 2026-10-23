@@ -37,11 +37,16 @@ fn main() -> eframe::Result<()> {
 
     let title = app_title();
     let app_title = title.clone();
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1280.0, 760.0])
+        .with_min_inner_size([900.0, 560.0])
+        .with_drag_and_drop(true);
+    // 恢复上次会话的窗口置顶状态
+    if config::load_ui_prefs().always_on_top.unwrap_or(false) {
+        viewport = viewport.with_always_on_top();
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 760.0])
-            .with_min_inner_size([900.0, 560.0])
-            .with_drag_and_drop(true),
+        viewport,
         ..Default::default()
     };
 

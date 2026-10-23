@@ -3,7 +3,7 @@
 
 //! 顶栏：打开模式/历史 + 文件/目录按钮 + 排版/面板开关（单行紧凑布局）。
 //! 字节序/单元格长度/每页条数/千位分隔等不常用开关已移至「高级配置」页。
-//! 最右侧为语言下拉。
+//! 最右侧为语言下拉 + 窗口置顶开关。
 
 use super::MdbxerApp;
 use crate::config;
@@ -56,7 +56,7 @@ pub(crate) fn reveal_in_folder(path: &str, is_single_file: bool) {
     }
 }
 
-/// 顶栏面板：文件/目录/关闭 + 历史 + Key/Value 排版 + 导出 + 表/详情开关 + 语言。
+/// 顶栏面板：文件/目录/关闭 + 历史 + Key/Value 排版 + 导出 + 表/详情开关 + 语言 + 置顶。
 /// 打开模式不显示选择器：由各打开入口（文件钮=单文件、目录钮=目录、历史=记录值、拖入=自动）自行确定。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let t = i18n::tr().clone();
@@ -210,6 +210,24 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             // 语言选择：顶栏最右侧，切换即时生效并持久化
             ui.separator();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // 窗口置顶开关：最右侧（语言之右），选中态高亮，状态持久化
+                let pin_tip = if app.always_on_top { t.pin_off } else { t.pin_on };
+                if ui
+                    .add(egui::Button::new("📌").selected(app.always_on_top))
+                    .on_hover_text(pin_tip)
+                    .clicked()
+                {
+                    app.always_on_top = !app.always_on_top;
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::WindowLevel(
+                        if app.always_on_top {
+                            egui::WindowLevel::AlwaysOnTop
+                        } else {
+                            egui::WindowLevel::Normal
+                        },
+                    ));
+                    app.save_ui_prefs();
+                }
+
                 let old_lang = i18n::lang();
                 let mut lang = old_lang;
                 egui::ComboBox::from_id_salt("lang")

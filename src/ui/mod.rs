@@ -503,9 +503,11 @@ pub struct MdbxerApp {
     pub value_search_full: bool,
     /// 最近一次使用的搜索位置：F3/Shift+F3 全局继续搜索时按此分发
     pub last_search: SearchContext,
-    // ── 主题 / 收藏 ──
+    // ── 主题 / 置顶 / 收藏 ──
     /// 当前主题（true = 深色）
     pub dark_theme: bool,
+    /// 窗口置顶（始终在最前）
+    pub always_on_top: bool,
     /// 当前库的收藏表（None 元素 = 主表），左栏置顶显示
     pub fav_tables: Vec<Option<String>>,
     /// 当前库的收藏 Key，左栏底部列表可跳转
@@ -657,6 +659,7 @@ impl MdbxerApp {
             last_search: SearchContext::None,
 
             dark_theme: crate::config::load_theme() == crate::config::Theme::Dark,
+            always_on_top: prefs.always_on_top.unwrap_or(false),
             fav_tables: Vec::new(),
             fav_keys: Vec::new(),
 
@@ -2071,6 +2074,7 @@ impl MdbxerApp {
 
             left_visible: Some(self.left_visible),
             detail_visible: Some(self.detail_visible),
+            always_on_top: Some(self.always_on_top),
 
             table_sort: Some(self.table_sort.as_str().to_string()),
             export_format: Some(self.export_format.ext().to_string()),

@@ -146,6 +146,8 @@ pub(super) const EN: I18n = I18n {
 
     theme_to_light: "Switch to light theme",
     theme_to_dark: "Switch to dark theme",
+    pin_on: "Always on top",
+    pin_off: "Disable always on top",
     favorites_title: "Favorites",
     fav_add_t_tip: "Add this table to favorites",
     fav_rm_t_tip: "Remove this table from favorites",

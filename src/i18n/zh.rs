@@ -147,6 +147,8 @@ pub(super) const ZH: I18n = I18n {
 
     theme_to_light: "切换到浅色主题",
     theme_to_dark: "切换到深色主题",
+    pin_on: "置顶窗口（始终显示在最前）",
+    pin_off: "取消窗口置顶",
     favorites_title: "收藏",
     fav_add_t_tip: "收藏该表",
     fav_rm_t_tip: "取消收藏该表",

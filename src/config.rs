@@ -109,6 +109,9 @@ pub struct UiPrefs {
     /// 右栏（详情）可见
     #[serde(default)]
     pub detail_visible: Option<bool>,
+    /// 窗口置顶（始终在最前）
+    #[serde(default)]
+    pub always_on_top: Option<bool>,
     /// 左栏表列表排序（name_asc/name_desc/count_asc/count_desc）
     #[serde(default)]
     pub table_sort: Option<String>,
@@ -471,6 +474,7 @@ mod tests {
             hex_width: Some(16),
             left_visible: Some(false),
             detail_visible: Some(true),
+            always_on_top: Some(true),
             table_sort: Some("count_desc".to_string()),
             export_format: Some("json".to_string()),
             proto_files: Some(vec!["a.proto".to_string()]),
@@ -497,6 +501,7 @@ mod tests {
         assert_eq!(back.hex_width, Some(16));
         assert_eq!(back.left_visible, Some(false));
         assert_eq!(back.detail_visible, Some(true));
+        assert_eq!(back.always_on_top, Some(true));
         assert_eq!(back.table_sort.as_deref(), Some("count_desc"));
         assert_eq!(back.export_format.as_deref(), Some("json"));
         assert_eq!(

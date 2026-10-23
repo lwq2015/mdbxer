@@ -272,6 +272,10 @@ pub struct I18n {
     pub theme_to_light: &'static str,
     /// 浅色主题下：切换到深色
     pub theme_to_dark: &'static str,
+    /// 未置顶时：点击置顶窗口
+    pub pin_on: &'static str,
+    /// 已置顶时：点击取消置顶
+    pub pin_off: &'static str,
     pub favorites_title: &'static str,
     pub fav_add_t_tip: &'static str,
     pub fav_rm_t_tip: &'static str,
@@ -850,6 +854,8 @@ mod tests {
         for table in &TABLES {
             assert!(!table.theme_to_light.is_empty());
             assert!(!table.theme_to_dark.is_empty());
+            assert!(!table.pin_on.is_empty());
+            assert!(!table.pin_off.is_empty());
             assert!(!table.favorites_title.is_empty());
             assert!(!table.fav_add_t_tip.is_empty());
             assert!(!table.fav_rm_t_tip.is_empty());
