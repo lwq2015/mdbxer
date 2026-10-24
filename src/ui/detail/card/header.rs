@@ -95,12 +95,10 @@ fn save_menu(ui: &mut egui::Ui, app: &mut MdbxerApp, side: Side, bytes: &[u8], s
     let t = tr();
     ui.menu_button(t.save_as, |ui| {
         if ui.button(t.save_raw).clicked() {
-            ui.close();
             app.save_bytes(&format!("{save_base}.bin"), bytes, "bin");
         }
 
         if ui.button(t.save_text).clicked() {
-            ui.close();
             let text = export::text_of(
                 bytes,
                 app.detail.mode_of(side),
@@ -118,7 +116,6 @@ fn save_menu(ui: &mut egui::Ui, app: &mut MdbxerApp, side: Side, bytes: &[u8], s
             && let Some((label, data, ext)) = export::guess_save(bytes)
             && ui.button(format!("{label}（.{ext}）")).clicked()
         {
-            ui.close();
             app.save_bytes(&format!("{save_base}.{ext}"), &data, ext);
         }
     })
