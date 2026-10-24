@@ -4,6 +4,7 @@
 //! 中间 "数据" 页签：工具条 + 表格。
 
 use super::{MdbxerApp, SortCol};
+use crate::fmt::{self, DecodeMode, Endian, HintFlags};
 use crate::i18n::tr;
 use egui_extras::{Column, TableBuilder};
 
@@ -19,28 +20,125 @@ fn header_cell(ui: &mut egui::Ui, text: &str, tip: &str) -> bool {
     r1.clicked() || r2.clicked()
 }
 
-/// 单元格 hover 提示：仅当内容被截断时弹，强制默认颜色避免选中行白字白底。
-fn elide_tooltip(ui: &mut egui::Ui, resp: egui::Response, full: &str) {
+/// tooltip 内容至少显示的字符数（长内容单元格悬停时可见更多原文）
+const TOOLTIP_CHARS: usize = 512;
+
+/// tooltip 最大宽度：等宽字体下让 512 字尽量少折行
+const TOOLTIP_MAX_WIDTH: f32 = 720.0;
+
+/// tooltip 最大高度：内容再多也只在框内滚动，不撑出屏幕
+const TOOLTIP_MAX_HEIGHT: f32 = 420.0;
+
+/// 文本按等宽字体排版后是否宽于单元格可用宽度。
+fn text_is_elided(ui: &egui::Ui, resp: &egui::Response, full: &str) -> bool {
     let mono = egui::FontId::monospace(ui.style().text_styles[&egui::TextStyle::Body].size);
     let width = ui.fonts_mut(|f| {
         f.layout_no_wrap(full.to_string(), mono, egui::Color32::WHITE)
             .size()
             .x
     });
+    width > resp.rect.width()
+}
 
-    if width > resp.rect.width() {
-        let text = if full.chars().count() > 512 {
-            full.chars().take(512).collect::<String>() + "…"
-        } else {
-            full.to_string()
-        };
-
-        resp.on_hover_text(
-            egui::RichText::new(text)
-                .monospace()
-                .color(ui.visuals().text_color()),
-        );
+/// 截取前 `max` 个字符（超出补省略号）。
+fn preview_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        s.chars().take(max).collect::<String>() + "…"
     }
+}
+
+/// tooltip 正文：等宽、默认色（避免选中行白字白底），限定宽高后可滚动。
+fn tooltip_body(ui: &mut egui::Ui, text: &str) {
+    ui.set_max_width(TOOLTIP_MAX_WIDTH);
+    egui::ScrollArea::vertical()
+        .max_height(TOOLTIP_MAX_HEIGHT)
+        .show(ui, |ui| {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(text)
+                        .monospace()
+                        .color(ui.visuals().text_color()),
+                )
+                .selectable(false)
+                .wrap(),
+            );
+        });
+}
+
+/// 单元格 hover 提示：文本被列宽截断时弹完整文本（最多 TOOLTIP_CHARS 字）。
+fn elide_tooltip(ui: &egui::Ui, resp: egui::Response, full: &str) {
+    if !text_is_elided(ui, &resp, full) {
+        return;
+    }
+    let text = preview_chars(full, TOOLTIP_CHARS);
+    resp.on_hover_ui(move |ui| tooltip_body(ui, &text));
+}
+
+/// Key/Value 单元格 hover 提示。
+///
+/// 两种"没显示完整"的情况都弹：
+/// - 显示文本被列宽截断；
+/// - 原文超过 cell_max 被截断（即使截断后的文本正好放得下）。
+///
+/// 内容按原始字节重新解码到 TOOLTIP_CHARS 字，比单元格里被 cell_max
+/// 截断的预览更长；解码放在 tooltip 闭包里，只在悬停该单元格时才执行。
+#[allow(clippy::too_many_arguments)]
+fn cell_tooltip(
+    ui: &egui::Ui,
+    resp: egui::Response,
+    row_idx: usize,
+    raw: &[u8],
+    visible: &str,
+    clipped: bool,
+    is_key: bool,
+    mode: DecodeMode,
+    endian: Endian,
+    hints: HintFlags,
+) {
+    if !clipped && !text_is_elided(ui, &resp, visible) {
+        return;
+    }
+
+    let visible = visible.to_string();
+    resp.on_hover_ui(move |ui| {
+        let text = cached_preview(ui.ctx(), row_idx, is_key, visible, || {
+            if is_key {
+                fmt::decode_key(raw, mode, endian, TOOLTIP_CHARS, &hints)
+            } else {
+                fmt::decode(raw, mode, endian, TOOLTIP_CHARS, &hints)
+            }
+        });
+        tooltip_body(ui, &text);
+    });
+}
+
+/// 悬停预览缓存键：行号 + 是否 Key + 单元格当前显示文本。
+type PreviewKey = (usize, bool, String);
+
+/// 悬停期间复用预览文本。Auto 解码会解压压缩容器，大字段不能每帧重算；
+/// 显示文本变化（换行/换页/换解码格式）时缓存键自然失效。
+fn cached_preview(
+    ctx: &egui::Context,
+    row_idx: usize,
+    is_key: bool,
+    visible: String,
+    decode: impl FnOnce() -> String,
+) -> String {
+    let id = egui::Id::new("mdbxer_cell_tooltip");
+    let key: PreviewKey = (row_idx, is_key, visible);
+    if let Some(text) = ctx.data(|d| {
+        d.get_temp::<(PreviewKey, String)>(id)
+            .filter(|(k, _)| *k == key)
+            .map(|(_, text)| text)
+    }) {
+        return text;
+    }
+
+    let text = decode();
+    ctx.data_mut(|d| d.insert_temp(id, (key, text.clone())));
+    text
 }
 
 /// "数据"页签入口：工具条 + 行表格 + 列头排序处理。
@@ -185,7 +283,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 ui.set_min_width(160.0);
                 for term in &app.search_history {
                     if ui
-                        .add(egui::Button::new(term).truncate().min_size(egui::vec2(140.0, 0.0)))
+                        .add(
+                            egui::Button::new(term)
+                                .truncate()
+                                .min_size(egui::vec2(140.0, 0.0)),
+                        )
                         .clicked()
                     {
                         picked = Some(term.clone());
@@ -335,7 +437,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                 .selectable(false)
                                 .show_tooltip_when_elided(false),
                         );
-                        elide_tooltip(ui, resp, &view.key_text);
+                        cell_tooltip(
+                            ui,
+                            resp,
+                            i,
+                            &row.key,
+                            &view.key_text,
+                            view.key_clipped,
+                            true,
+                            app.key_mode,
+                            app.endian,
+                            app.hint_key,
+                        );
                     });
                     row_ui.col(|ui| {
                         // Value 指定了解码类型时，类型标签用强调色并加 hover 说明，
@@ -384,7 +497,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                 .selectable(false)
                                 .show_tooltip_when_elided(false),
                         );
-                        elide_tooltip(ui, resp, &text);
+                        cell_tooltip(
+                            ui,
+                            resp,
+                            i,
+                            &row.value,
+                            &text,
+                            view.val_clipped,
+                            false,
+                            app.val_mode,
+                            app.endian,
+                            app.hint_value,
+                        );
                     });
                     if row_ui.response().clicked() {
                         clicked_row = Some(i);

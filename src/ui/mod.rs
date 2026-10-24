@@ -267,8 +267,12 @@ impl SortCol {
 pub struct RowView {
     /// Key 的显示文本（按当前表格解码格式）
     pub key_text: String,
+    /// Key 显示文本是否被 cell_max 截断（悬停时按原始字节补更长的预览）
+    pub key_clipped: bool,
     /// Value 的显示文本（按当前表格解码格式）
     pub val_text: String,
+    /// Value 显示文本是否被 cell_max 截断（悬停时按原始字节补更长的预览）
+    pub val_clipped: bool,
     /// Value 的类型猜测标签
     pub type_label: String,
     /// val_text 开头能解析出的数值（数值排序用；hex/文本等为 None）
@@ -745,14 +749,18 @@ impl MdbxerApp {
                     self.cell_max,
                     &self.hint_value,
                 );
+                let key_text = crate::fmt::decode_key(
+                    &r.key,
+                    self.key_mode,
+                    self.endian,
+                    self.cell_max,
+                    &self.hint_key,
+                );
                 RowView {
-                    key_text: crate::fmt::decode_key(
-                        &r.key,
-                        self.key_mode,
-                        self.endian,
-                        self.cell_max,
-                        &self.hint_key,
-                    ),
+                    // 解码超长时会补 "…"，字符数因此恰为 cell_max + 1
+                    key_clipped: key_text.chars().count() > self.cell_max,
+                    val_clipped: val_text.chars().count() > self.cell_max,
+                    key_text,
                     // Value 指定了解码类型时，类型列同步显示指定类型；只有"自动"才按字节猜测。
                     type_label: match self.val_mode.forced_label(self.endian) {
                         Some(label) => label,
@@ -1449,8 +1457,12 @@ impl MdbxerApp {
             SearchContext::MainValueFull => self.continue_full_value_search(forward),
 
             SearchContext::DetailKeyBlob | SearchContext::DetailValBlob => {
-                let is_key = self.last_search == SearchContext::DetailKeyBlob;
-                let bytes = if is_key {
+                let side = if self.last_search == SearchContext::DetailKeyBlob {
+                    detail::Side::Key
+                } else {
+                    detail::Side::Value
+                };
+                let bytes = if side.is_key() {
                     let Some(i) = self.selected_row else { return };
                     let Some(row) = self.rows.get(i) else { return };
                     row.key.clone()
@@ -1460,7 +1472,7 @@ impl MdbxerApp {
                     };
                     v
                 };
-                self.status = Status::leveled(self.detail.blob_search(is_key, &bytes, forward));
+                self.status = Status::leveled(self.detail.blob_search(side, &bytes, forward));
             }
 
             SearchContext::DetailDup => {
@@ -1859,12 +1871,7 @@ impl MdbxerApp {
         if is_dup {
             Some(
                 self.detail
-                    .dup_values
-                    .get(
-                        self.detail
-                            .dup_index
-                            .saturating_sub(self.detail.dup_page_start),
-                    )
+                    .current_dup_value()
                     .cloned()
                     .unwrap_or_else(|| row.value.clone()),
             )
