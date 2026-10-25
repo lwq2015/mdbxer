@@ -1249,6 +1249,7 @@ impl MdbxerApp {
 
     /// 页面加载完成后：选中首行（或清空选中）并加载右侧多值。
     fn after_load(&mut self) {
+        self.clear_transient_status();
         // rows 可能换了新数据（即使长度相同），强制重建 views 缓存
         self.views_key = None;
         if self.rows.is_empty() {
@@ -1303,6 +1304,10 @@ impl MdbxerApp {
 
     /// 下一页（沿当前遍历方向）。
     pub fn load_next_page(&mut self) {
+        if self.at_end {
+            self.status = Status::warn(crate::i18n::tr().page_last_warning);
+            return;
+        }
         let Some(anchor) = self.rows.last().map(|r| self.anchor_of(r)) else {
             return;
         };
@@ -1325,6 +1330,10 @@ impl MdbxerApp {
 
     /// 上一页（沿当前遍历方向的反方向）。
     pub fn load_prev_page(&mut self) {
+        if self.at_start {
+            self.status = Status::warn(crate::i18n::tr().page_first_warning);
+            return;
+        }
         let Some(anchor) = self.rows.first().map(|r| self.anchor_of(r)) else {
             return;
         };

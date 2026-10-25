@@ -64,6 +64,8 @@ pub(super) const RU: I18n = I18n {
     tip_prev: "Предыдущая страница",
     tip_next: "Следующая страница",
     tip_last: "Последняя страница",
+    page_first_warning: "Это уже первая страница",
+    page_last_warning: "Это уже последняя страница",
     page_size_label: "Стр.",
     page_size_tip: "Строк на странице",
     col_type: "Тип",

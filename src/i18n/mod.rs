@@ -160,6 +160,8 @@ pub struct I18n {
     pub tip_prev: &'static str,
     pub tip_next: &'static str,
     pub tip_last: &'static str,
+    pub page_first_warning: &'static str,
+    pub page_last_warning: &'static str,
     /// 每页条数下拉前的短标签
     pub page_size_label: &'static str,
     pub page_size_tip: &'static str,

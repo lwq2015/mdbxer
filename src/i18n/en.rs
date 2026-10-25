@@ -64,6 +64,8 @@ pub(super) const EN: I18n = I18n {
     tip_prev: "Previous page",
     tip_next: "Next page",
     tip_last: "Last page",
+    page_first_warning: "Already on the first page",
+    page_last_warning: "Already on the last page",
     page_size_label: "Page",
     page_size_tip: "Rows per page",
     col_type: "Type",

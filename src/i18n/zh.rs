@@ -65,6 +65,8 @@ pub(super) const ZH: I18n = I18n {
     tip_prev: "上一页",
     tip_next: "下一页",
     tip_last: "末页（最后一条）",
+    page_first_warning: "已经是第一页",
+    page_last_warning: "已经是最后一页",
     page_size_label: "每页",
     page_size_tip: "每页显示条数",
     col_type: "类型",
