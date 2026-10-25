@@ -22,6 +22,23 @@ use crate::fmt;
 use crate::i18n::tr;
 use crate::ui::MdbxerApp;
 
+/// Value 单元格 tooltip：Auto 命中详情页支持的结构化/压缩/proto 格式时使用
+/// 同一显示决议美化；其它情况按表格当前解码格式返回有界预览。
+pub(super) fn tooltip_value_text(
+    bytes: &[u8],
+    mode: fmt::DecodeMode,
+    endian: fmt::Endian,
+    hints: &fmt::HintFlags,
+    max_chars: usize,
+) -> String {
+    let plan = plan::plan_display(mode, Side::Value, bytes, "", endian, hints);
+    if mode == fmt::DecodeMode::Auto && plan.syntax.is_some() {
+        plan.text
+    } else {
+        fmt::decode(bytes, mode, endian, max_chars, hints)
+    }
+}
+
 /// 两张卡片之间的间距（点）。
 const CARD_GAP: f32 = 8.0;
 
@@ -92,6 +109,37 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 egui::PanelState { outer_rect: rect },
             )
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tooltip_value_text;
+    use crate::fmt::{DecodeMode, Endian, HintFlags};
+
+    #[test]
+    fn auto_value_tooltip_prettifies_structured_json() {
+        let text = tooltip_value_text(
+            br#"{"a":1,"b":[2,3]}"#,
+            DecodeMode::Auto,
+            Endian::Little,
+            &HintFlags::default(),
+            512,
+        );
+        assert!(text.contains('\n'));
+        assert!(text.contains("\"a\": 1"));
+    }
+
+    #[test]
+    fn ordinary_auto_value_tooltip_keeps_decoded_text() {
+        let text = tooltip_value_text(
+            b"plain text",
+            DecodeMode::Auto,
+            Endian::Little,
+            &HintFlags::default(),
+            512,
+        );
+        assert_eq!(text, "plain text");
     }
 }
 

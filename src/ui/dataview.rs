@@ -26,8 +26,8 @@ const TOOLTIP_CHARS: usize = 512;
 /// tooltip 最大宽度：等宽字体下让 512 字尽量少折行
 const TOOLTIP_MAX_WIDTH: f32 = 720.0;
 
-/// tooltip 最大高度：内容再多也只在框内滚动，不撑出屏幕
-const TOOLTIP_MAX_HEIGHT: f32 = 420.0;
+/// tooltip 最大高度：同时受窗口高度约束，避免内容撑出屏幕。
+const TOOLTIP_MAX_HEIGHT: f32 = 640.0;
 
 /// 文本按等宽字体排版后是否宽于单元格可用宽度。
 fn text_is_elided(ui: &egui::Ui, resp: &egui::Response, full: &str) -> bool {
@@ -52,8 +52,9 @@ fn preview_chars(s: &str, max: usize) -> String {
 /// tooltip 正文：等宽、默认色（避免选中行白字白底），限定宽高后可滚动。
 fn tooltip_body(ui: &mut egui::Ui, text: &str) {
     ui.set_max_width(TOOLTIP_MAX_WIDTH);
+    let max_height = (ui.ctx().viewport_rect().height() * 0.8).min(TOOLTIP_MAX_HEIGHT);
     egui::ScrollArea::vertical()
-        .max_height(TOOLTIP_MAX_HEIGHT)
+        .max_height(max_height)
         .show(ui, |ui| {
             ui.add(
                 egui::Label::new(
@@ -103,31 +104,45 @@ fn cell_tooltip(
 
     let visible = visible.to_string();
     resp.on_hover_ui(move |ui| {
-        let text = cached_preview(ui.ctx(), row_idx, is_key, visible, || {
-            if is_key {
-                fmt::decode_key(raw, mode, endian, TOOLTIP_CHARS, &hints)
-            } else {
-                fmt::decode(raw, mode, endian, TOOLTIP_CHARS, &hints)
-            }
-        });
+        let text = cached_preview(
+            ui.ctx(),
+            row_idx,
+            is_key,
+            visible,
+            mode,
+            endian,
+            hints,
+            || {
+                if is_key {
+                    fmt::decode_key(raw, mode, endian, TOOLTIP_CHARS, &hints)
+                } else {
+                    let text =
+                        super::detail::tooltip_value_text(raw, mode, endian, &hints, TOOLTIP_CHARS);
+                    preview_chars(&text, TOOLTIP_CHARS)
+                }
+            },
+        );
         tooltip_body(ui, &text);
     });
 }
 
 /// 悬停预览缓存键：行号 + 是否 Key + 单元格当前显示文本。
-type PreviewKey = (usize, bool, String);
+type PreviewKey = (usize, bool, String, DecodeMode, Endian, HintFlags);
 
 /// 悬停期间复用预览文本。Auto 解码会解压压缩容器，大字段不能每帧重算；
-/// 显示文本变化（换行/换页/换解码格式）时缓存键自然失效。
+/// 显示文本、解码格式、字节序或附注开关变化时缓存键自然失效。
 fn cached_preview(
     ctx: &egui::Context,
     row_idx: usize,
     is_key: bool,
     visible: String,
+    mode: DecodeMode,
+    endian: Endian,
+    hints: HintFlags,
     decode: impl FnOnce() -> String,
 ) -> String {
     let id = egui::Id::new("mdbxer_cell_tooltip");
-    let key: PreviewKey = (row_idx, is_key, visible);
+    let key: PreviewKey = (row_idx, is_key, visible, mode, endian, hints);
     if let Some(text) = ctx.data(|d| {
         d.get_temp::<(PreviewKey, String)>(id)
             .filter(|(k, _)| *k == key)

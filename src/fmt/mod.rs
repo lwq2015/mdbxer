@@ -36,7 +36,7 @@ pub fn thousands_sep() -> bool {
 }
 
 /// 多字节整数的字节序。
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Endian {
     /// 小端（MDBX INTEGER_KEY 的本机字节序，默认）
     #[default]
@@ -66,7 +66,7 @@ impl Endian {
 }
 
 /// 字节显示/解码格式。
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum DecodeMode {
     /// 按内容自动猜测
     #[default]

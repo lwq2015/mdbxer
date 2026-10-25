@@ -9,7 +9,7 @@ use super::{Endian, value};
 
 /// 单元格文本附注开关（Key/Value 列各自独立配置，高级配置页编辑）。
 /// 附注是追加在显示文本后的"附加解读"，不影响猜测与解码本身。
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct HintFlags {
     /// u64 落在 Unix 秒/毫秒区间时附本地日期
     pub unix_ts: bool,
