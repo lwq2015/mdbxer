@@ -59,7 +59,7 @@ pub(super) fn seg_row(
     });
 }
 
-/// 大字段内容搜索行：文本按 UTF-8，hex(...)/0x... 按字节，回绕。
+/// 大字段内容搜索行：文本按 UTF-8，hex(...)/0x.../binary(...)/dec(...) 按字节，回绕。
 pub(super) fn blob_search_row(ui: &mut egui::Ui, app: &mut MdbxerApp, side: Side, bytes: &[u8]) {
     ui.horizontal(|ui| {
         let cmd = {
@@ -184,11 +184,13 @@ fn dup_search_row(
 /// ⬇(下一个)在左、⬆(上一个)在右：主操作（Enter）优先的习惯顺序。
 fn search_row(ui: &mut egui::Ui, input: &mut String) -> SearchCmd {
     let t = tr();
-    let resp = ui.add(
-        egui::TextEdit::singleline(input)
-            .desired_width(178.0)
-            .hint_text(t.search_hint),
-    );
+    let resp = ui
+        .add(
+            egui::TextEdit::singleline(input)
+                .desired_width(178.0)
+                .hint_text(t.search_hint),
+        )
+        .on_hover_text(t.search_hint);
     let key_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
     let (ctrl, shift) = ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
     // 无修饰 Enter 会 surrender focus（lost_focus）；带修饰 Enter 焦点仍在（has_focus）。

@@ -45,9 +45,41 @@ pub(super) fn tooltip_value_text(
     let plan = plan::plan_display(mode, Side::Value, bytes, "", endian, hints);
     if mode == fmt::DecodeMode::Auto && plan.syntax.is_some() {
         plan.text
+    } else if mode == fmt::DecodeMode::Hex
+        || (mode == fmt::DecodeMode::Auto
+            && fmt::guess(bytes, endian, hints).0 == tr().guess_binary)
+    {
+        hex_tooltip_lines(bytes, max_chars)
     } else {
         fmt::decode(bytes, mode, endian, max_chars, hints)
     }
+}
+
+/// HEX tooltip 按常见 hexdump 行宽排版，避免长字节串依赖弹窗宽度随机折行。
+fn hex_tooltip_lines(bytes: &[u8], max_chars: usize) -> String {
+    let mut text = String::new();
+    let mut used_chars = 0;
+    let mut truncated = false;
+    for (i, byte) in bytes.iter().enumerate() {
+        let separator = if i == 0 {
+            ""
+        } else if i % 16 == 0 {
+            "\n"
+        } else {
+            " "
+        };
+        if used_chars + separator.len() + 2 > max_chars {
+            truncated = true;
+            break;
+        }
+        text.push_str(separator);
+        text.push_str(&format!("{byte:02X}"));
+        used_chars += separator.len() + 2;
+    }
+    if truncated {
+        text.push('…');
+    }
+    text
 }
 
 /// 两张卡片之间的间距（点）。
@@ -125,7 +157,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
 #[cfg(test)]
 mod tests {
-    use super::{tooltip_key_text, tooltip_value_text};
+    use super::{hex_tooltip_lines, tooltip_key_text, tooltip_value_text};
     use crate::fmt::{DecodeMode, Endian, HintFlags};
 
     #[test]
@@ -163,6 +195,31 @@ mod tests {
             512,
         );
         assert_eq!(text, "plain text");
+    }
+
+    #[test]
+    fn binary_value_tooltip_wraps_hex_after_sixteen_bytes() {
+        let bytes: Vec<u8> = (0..33).collect();
+        let text = tooltip_value_text(
+            &bytes,
+            DecodeMode::Auto,
+            Endian::Little,
+            &HintFlags::default(),
+            512,
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].split_whitespace().count(), 16);
+        assert_eq!(lines[1].split_whitespace().count(), 16);
+        assert_eq!(lines[2], "20");
+    }
+
+    #[test]
+    fn hex_tooltip_respects_preview_limit() {
+        let text = hex_tooltip_lines(&(0..=255).collect::<Vec<u8>>(), 20);
+        assert!(text.ends_with('…'));
+        assert!(text.chars().count() <= 21);
+        assert_eq!(text.lines().next().unwrap().split_whitespace().count(), 7);
     }
 }
 

@@ -238,7 +238,7 @@ pub struct I18n {
 
     // ── 搜索工具条（Key/Value 共享输入框） ──
     pub toolbar_search_hint: &'static str,
-    /// 搜索框 hover 提示（快捷键说明）
+    /// 搜索框 hover 提示（快捷键与 Value 查询格式）
     pub search_box_tip: &'static str,
     /// 搜索历史下拉按钮 hover 提示
     pub search_history_tip: &'static str,
@@ -421,6 +421,9 @@ pub struct I18n {
     // ── 跳转/搜索输入解析错误 ──
     pub int_key_hint: &'static str,
     pub hex_even: &'static str,
+    pub byte_query_parenthesis: &'static str,
+    pub binary_query_format: &'static str,
+    pub decimal_query_format: &'static str,
 
     // ── db 层：表信息/错误 ──
     pub main_table: &'static str,
@@ -811,6 +814,9 @@ mod tests {
             assert!(!table.log_lv_info.is_empty());
             assert!(!table.log_lv_debug.is_empty());
             assert!(!table.log_open_dir_tip.is_empty());
+            assert!(!table.byte_query_parenthesis.is_empty());
+            assert!(!table.binary_query_format.is_empty());
+            assert!(!table.decimal_query_format.is_empty());
         }
     }
 
@@ -818,6 +824,9 @@ mod tests {
     fn all_tables_have_key_search_fields() {
         for table in &TABLES {
             assert!(!table.toolbar_search_hint.is_empty());
+            assert!(!table.search_hint.is_empty());
+            assert!(!table.dup_prompt.is_empty());
+            assert!(!table.blob_prompt.is_empty());
             assert!(!table.search_box_tip.is_empty());
             assert!(!table.key_search_btn_tip.is_empty());
             assert!(!table.value_search_tip_off.is_empty());

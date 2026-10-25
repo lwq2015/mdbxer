@@ -76,7 +76,7 @@ fn count_hits(bytes: &[u8], needle: &[u8], pos: usize) -> (usize, usize) {
 }
 
 impl DetailState {
-    /// 在卡片完整字节中做字节子串搜索：文本按 UTF-8，`hex(...)/0x...` 按字节。
+    /// 在卡片完整字节中做字节子串搜索：文本按 UTF-8，其它格式查询先解析为字节。
     /// `forward=false` 向小偏移方向；以当前命中为起点跳过自身，主方向无命中回绕。
     /// 命中后对齐到所在段并记录高亮区间。返回（级别, 状态栏消息）。
     pub fn blob_search(&mut self, side: Side, bytes: &[u8], forward: bool) -> (MsgLevel, String) {

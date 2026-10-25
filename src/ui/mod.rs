@@ -332,10 +332,56 @@ impl TableSort {
     }
 }
 
+/// Value 搜索词：普通输入匹配当前显示文本，显式字节格式匹配原始 Value 字节。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ValueSearchQuery {
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
+impl ValueSearchQuery {
+    fn parse(input: &str) -> Result<Self, String> {
+        let input = input.trim();
+        if is_explicit_bytes_input(input) {
+            parse_bytes_input(input).map(Self::Bytes)
+        } else {
+            Ok(Self::Text(input.to_lowercase()))
+        }
+    }
+
+    fn matches_bytes(&self, bytes: &[u8]) -> bool {
+        match self {
+            Self::Bytes(needle) => {
+                !needle.is_empty() && bytes.windows(needle.len()).any(|window| window == needle)
+            }
+            Self::Text(_) => false,
+        }
+    }
+
+    fn matches_text(&self, text: &str) -> bool {
+        match self {
+            Self::Text(needle) => text.to_lowercase().contains(needle),
+            Self::Bytes(_) => false,
+        }
+    }
+}
+
+fn is_explicit_bytes_input(input: &str) -> bool {
+    input.get(..4).is_some_and(|prefix| prefix == "hex(")
+        || input
+            .get(..3)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("0x"))
+        || ["binary(", "dec("].iter().any(|prefix| {
+            input
+                .get(..prefix.len())
+                .is_some_and(|actual| actual.eq_ignore_ascii_case(prefix))
+        })
+}
+
 /// 全表 Value 搜索的运行状态。
 struct ValueSearchState {
-    /// 搜索词（小写，匹配时也将目标转小写比较）
-    needle: String,
+    /// 搜索词及匹配语义
+    needle: ValueSearchQuery,
     /// 下一批续读锚点（None = 从扫描方向的表头/表尾开始）
     anchor: Option<db::RawAnchor>,
     /// 已扫描条数（进度用）
@@ -435,8 +481,8 @@ pub struct MdbxerApp {
     pub key_filter: Option<Vec<u8>>,
     /// Key 搜索模式：false = 跳转定位；true = 前缀过滤
     pub key_filter_mode: bool,
-    /// 当前生效的 Value 页内过滤文本（None = 未过滤）
-    pub value_filter: Option<String>,
+    /// 当前生效的 Value 页内过滤（None = 未过滤）
+    pub value_filter: Option<ValueSearchQuery>,
     /// Key 列解码格式（默认自动；编码固定的表可手动指定）
     pub key_mode: DecodeMode,
     /// Value 列解码格式（默认自动：Value 逐行猜测）
@@ -686,10 +732,12 @@ impl MdbxerApp {
         self.refresh_views();
         let mut order: Vec<usize> = (0..self.rows.len()).collect();
 
-        // Value 页内搜索：按 Value 显示文本大小写不敏感包含过滤
+        // 普通 Value 查询匹配显示文本；显式字节格式匹配原始 Value 字节。
         if let Some(filter) = &self.value_filter {
-            let needle = filter.to_lowercase();
-            order.retain(|&i| self.views[i].val_text.to_lowercase().contains(&needle));
+            order.retain(|&i| {
+                filter.matches_bytes(&self.rows[i].value)
+                    || filter.matches_text(&self.views[i].val_text)
+            });
         }
 
         let Some((col, asc)) = self.col_sort else {
@@ -1392,14 +1440,24 @@ impl MdbxerApp {
         self.load_first_page();
     }
 
-    /// Value 页内搜索：把当前输入框内容作为 Value 显示文本的包含过滤条件。
+    /// Value 页内搜索：文本按显示文本匹配，显式字节格式按原始 Value 字节匹配。
     /// 空输入清除过滤。
     pub fn apply_value_search(&mut self) {
         let input = self.search_input.trim().to_string();
-        if !input.is_empty() {
-            self.add_search_term(&input);
-        }
-        self.value_filter = if input.is_empty() { None } else { Some(input) };
+        self.value_filter = if input.is_empty() {
+            None
+        } else {
+            match ValueSearchQuery::parse(&input) {
+                Ok(query) => {
+                    self.add_search_term(&input);
+                    Some(query)
+                }
+                Err(e) => {
+                    self.status = Status::error(crate::i18n::tr().key_search_bad(&e));
+                    return;
+                }
+            }
+        };
         if self.value_filter.is_some() {
             self.last_search = SearchContext::MainValue;
         }
@@ -1606,18 +1664,25 @@ impl MdbxerApp {
     /// 开始全表 Value 搜索：逐批扫描全表，找到第一个 Value 显示文本包含
     /// 搜索词的记录并定位到该行。搜索在 UI 线程分批执行，不阻塞界面。
     pub fn start_full_value_search(&mut self) {
-        let needle = self.search_input.trim().to_string();
-        if needle.is_empty() {
+        let input = self.search_input.trim().to_string();
+        if input.is_empty() {
             self.status = Status::warn(crate::i18n::tr().search_empty.to_string());
             return;
         }
-        self.add_search_term(&needle);
+        let needle = match ValueSearchQuery::parse(&input) {
+            Ok(query) => query,
+            Err(e) => {
+                self.status = Status::error(crate::i18n::tr().key_search_bad(&e));
+                return;
+            }
+        };
+        self.add_search_term(&input);
 
         self.last_search = SearchContext::MainValueFull;
         // 全表搜索结果自带定位，旧的页内过滤会干扰显示，一并清除
         self.value_filter = None;
         self.value_search = Some(ValueSearchState {
-            needle: needle.to_lowercase(),
+            needle,
             anchor: None,
             checked: 0,
             backward: false,
@@ -1631,11 +1696,18 @@ impl MdbxerApp {
     /// F3/Shift+F3 续扫全表：从当前选中行的相邻位置沿指定方向继续扫描，
     /// 到尽头自动回绕一圈。无选中行时退化为从头搜索。
     fn continue_full_value_search(&mut self, forward: bool) {
-        let needle = self.search_input.trim().to_string();
-        if needle.is_empty() {
+        let input = self.search_input.trim().to_string();
+        if input.is_empty() {
             self.status = Status::warn(crate::i18n::tr().search_empty.to_string());
             return;
         }
+        let needle = match ValueSearchQuery::parse(&input) {
+            Ok(query) => query,
+            Err(e) => {
+                self.status = Status::error(crate::i18n::tr().key_search_bad(&e));
+                return;
+            }
+        };
 
         // 以当前选中记录（多值表为当前值）作为续扫锚点，扫描时跳过锚点本身
         let anchor = (|| {
@@ -1652,7 +1724,7 @@ impl MdbxerApp {
         self.last_search = SearchContext::MainValueFull;
         self.value_filter = None;
         self.value_search = Some(ValueSearchState {
-            needle: needle.to_lowercase(),
+            needle,
             anchor: Some(anchor),
             checked: 0,
             backward: !forward,
@@ -1741,21 +1813,22 @@ impl MdbxerApp {
         for (k, v) in &batch.rows {
             // 同时按 Auto 解码与当前排版解码匹配：当前排版为 hex/数值时
             // 文本搜索仍可用 Auto 命中
-            let auto_text = crate::fmt::decode(
-                v,
-                crate::fmt::DecodeMode::Auto,
-                endian,
-                65536,
-                &self.hint_value,
-            )
-            .to_lowercase();
-            if auto_text.contains(&needle) {
-                found = Some((k.clone(), v.clone()));
-                break;
-            }
-            let mode_text =
-                crate::fmt::decode(v, val_mode, endian, 65536, &self.hint_value).to_lowercase();
-            if mode_text.contains(&needle) {
+            let matched = match &needle {
+                ValueSearchQuery::Bytes(_) => needle.matches_bytes(v),
+                ValueSearchQuery::Text(_) => {
+                    let auto_text = crate::fmt::decode(
+                        v,
+                        crate::fmt::DecodeMode::Auto,
+                        endian,
+                        65536,
+                        &self.hint_value,
+                    );
+                    let mode_text =
+                        crate::fmt::decode(v, val_mode, endian, 65536, &self.hint_value);
+                    needle.matches_text(&auto_text) || needle.matches_text(&mode_text)
+                }
+            };
+            if matched {
                 found = Some((k.clone(), v.clone()));
                 break;
             }
@@ -2368,10 +2441,16 @@ fn parse_jump_input(input: &str, integer_key: bool) -> Result<JumpKey, String> {
     Ok(JumpKey::Bytes(s.as_bytes().to_vec()))
 }
 
-/// 通用字节输入解析：hex(...)/0x... → 十六进制字节；其余按 UTF-8 文本字节。
-/// 供多值搜索等场景复用。
+/// 通用字节输入解析：hex(...)/0x...、binary(...)/dec(...) 解析为字节；
+/// 其余按 UTF-8 文本字节。供搜索与过滤场景复用。
 pub(crate) fn parse_bytes_input(s: &str) -> Result<Vec<u8>, String> {
     let s = s.trim();
+    if let Some(payload) = wrapped_bytes_input(s, "binary")? {
+        return parse_binary_bytes(payload);
+    }
+    if let Some(payload) = wrapped_bytes_input(s, "dec")? {
+        return parse_decimal_bytes(payload);
+    }
     let hex = s
         .strip_prefix("hex(")
         .and_then(|x| x.strip_suffix(')'))
@@ -2381,6 +2460,58 @@ pub(crate) fn parse_bytes_input(s: &str) -> Result<Vec<u8>, String> {
         Some(h) => parse_hex(h),
         None => Ok(s.as_bytes().to_vec()),
     }
+}
+
+/// 解析 binary(...)/dec(...) 包裹内容；前缀大小写不敏感。
+fn wrapped_bytes_input<'a>(s: &'a str, name: &str) -> Result<Option<&'a str>, String> {
+    let prefix_len = name.len() + 1;
+    if !s
+        .get(..name.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(name))
+        || s.as_bytes().get(name.len()) != Some(&b'(')
+    {
+        return Ok(None);
+    }
+    s.strip_suffix(')')
+        .filter(|_| s.len() >= prefix_len + 1)
+        .map(|_| Some(&s[prefix_len..s.len() - 1]))
+        .ok_or_else(|| crate::i18n::tr().byte_query_parenthesis.to_string())
+}
+
+fn parse_binary_bytes(bits: &str) -> Result<Vec<u8>, String> {
+    let t = crate::i18n::tr();
+    let groups: Vec<&str> = bits.split_whitespace().collect();
+    if groups.is_empty()
+        || groups
+            .iter()
+            .any(|group| group.len() != 8 || !group.bytes().all(|b| matches!(b, b'0' | b'1')))
+    {
+        return Err(t.binary_query_format.to_string());
+    }
+    groups
+        .into_iter()
+        .map(|group| u8::from_str_radix(group, 2).map_err(|_| t.binary_query_format.to_string()))
+        .collect()
+}
+
+fn parse_decimal_bytes(values: &str) -> Result<Vec<u8>, String> {
+    let t = crate::i18n::tr();
+    let groups: Vec<&str> = values.split_whitespace().collect();
+    if groups.is_empty()
+        || groups
+            .iter()
+            .any(|group| !group.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Err(t.decimal_query_format.to_string());
+    }
+    groups
+        .into_iter()
+        .map(|group| {
+            group
+                .parse::<u8>()
+                .map_err(|_| t.decimal_query_format.to_string())
+        })
+        .collect()
 }
 
 /// 解析十六进制文本为字节：忽略空格/下划线/冒号，长度须为偶数。
@@ -2396,6 +2527,69 @@ fn parse_hex(h: &str) -> Result<Vec<u8>, String> {
         .step_by(2)
         .map(|i| u8::from_str_radix(&cleaned[i..i + 2], 16).map_err(|e| e.to_string()))
         .collect()
+}
+
+#[cfg(test)]
+mod byte_input_tests {
+    use super::{ValueSearchQuery, parse_bytes_input};
+
+    #[test]
+    fn parses_visible_binary_and_decimal_bytes() {
+        assert_eq!(
+            parse_bytes_input("binary(01010001 01010010 01010011 01010100)"),
+            Ok(vec![0x51, 0x52, 0x53, 0x54])
+        );
+        assert_eq!(
+            parse_bytes_input("dec(81 82 83 84)"),
+            Ok(vec![81, 82, 83, 84])
+        );
+        assert_eq!(parse_bytes_input("BINARY(11111111)"), Ok(vec![255]));
+        assert_eq!(parse_bytes_input("DeC(0 255)"), Ok(vec![0, 255]));
+    }
+
+    #[test]
+    fn rejects_malformed_binary_and_decimal_queries() {
+        assert!(parse_bytes_input("binary(101)").is_err());
+        assert!(parse_bytes_input("binary(0100000x)").is_err());
+        assert!(parse_bytes_input("dec(256)").is_err());
+        assert!(parse_bytes_input("dec(-1)").is_err());
+        assert!(parse_bytes_input("dec()").is_err());
+        assert!(parse_bytes_input("binary(01000001").is_err());
+    }
+
+    #[test]
+    fn keeps_existing_text_and_hex_query_semantics() {
+        assert_eq!(parse_bytes_input("plain text"), Ok(b"plain text".to_vec()));
+        assert_eq!(
+            parse_bytes_input("xxxxxé"),
+            Ok("xxxxxé".as_bytes().to_vec())
+        );
+        assert_eq!(parse_bytes_input("hex(51 52)"), Ok(vec![0x51, 0x52]));
+        assert_eq!(parse_bytes_input("0x5152"), Ok(vec![0x51, 0x52]));
+    }
+
+    #[test]
+    fn value_search_uses_raw_bytes_for_binary_and_decimal_queries() {
+        let bytes = [0x41, 0x00, 0xFF, 0x42];
+        for input in ["binary(00000000 11111111)", "dec(0 255)"] {
+            let query = ValueSearchQuery::parse(input).unwrap();
+            assert!(query.matches_bytes(&bytes), "{input}");
+            assert!(!query.matches_text("0 255"));
+        }
+    }
+
+    #[test]
+    fn value_search_keeps_plain_text_case_insensitive() {
+        let query = ValueSearchQuery::parse("MiXeD").unwrap();
+        assert!(query.matches_text("a mixed value"));
+        assert!(!query.matches_bytes(b"mixed"));
+    }
+
+    #[test]
+    fn value_search_rejects_malformed_explicit_byte_queries() {
+        assert!(ValueSearchQuery::parse("binary(101)").is_err());
+        assert!(ValueSearchQuery::parse("dec(256)").is_err());
+    }
 }
 
 impl MdbxerApp {

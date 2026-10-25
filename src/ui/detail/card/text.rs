@@ -39,9 +39,9 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
     };
     let (text_h, _) = layout::card_content_heights(ui, app, ctx.window, &display_text, &budget);
 
-    let guess_text = guess_text(app, ctx);
+    let (guess_text, binary_guess) = guess_text(app, ctx);
     let scroll_to = scroll_target(app, ctx);
-    let hit_range = hit_range(app, ctx, &display_text);
+    let hit_range = hit_range(app, ctx, &display_text, binary_guess);
     let lines = fold_line_list(syntax_kind, &display_text);
     let fold_active = lines.iter().any(|f| f.fold_end.is_some());
     let scroll_line = fold_scroll_line(fold_active, scroll_to, ctx, &display_text, &lines);
@@ -123,18 +123,20 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
 }
 
 /// 文本区标题右侧的猜测/字节数信息。
-fn guess_text(app: &MdbxerApp, ctx: &CardCtx<'_>) -> String {
+fn guess_text(app: &MdbxerApp, ctx: &CardCtx<'_>) -> (String, bool) {
     let t = tr();
     if ctx.mode == DecodeMode::Auto {
         let (label, _) = fmt::guess(ctx.bytes, app.endian, &app.hint_value);
+        let binary = label == t.guess_binary;
         // 附加解读只保留文件魔数（强信号、短标注）：地址/FILETIME 对
         // 任意字节几乎总命中，放猜测行是噪音且撑宽窗口
-        match fmt::magic_hint(ctx.bytes) {
+        let text = match fmt::magic_hint(ctx.bytes) {
             Some(h) => t.guess_line(&format!("{label} · {h}"), ctx.bytes.len()),
             None => t.guess_line(&label, ctx.bytes.len()),
-        }
+        };
+        (text, binary)
     } else {
-        t.bytes(ctx.bytes.len())
+        (t.bytes(ctx.bytes.len()), false)
     }
 }
 
@@ -155,7 +157,12 @@ fn scroll_target(app: &mut MdbxerApp, ctx: &CardCtx<'_>) -> Option<usize> {
 /// 文本区命中高亮区间（相对显示文本）：仅当"实际显示文本"与窗口字节 1:1
 /// （即显示原文，长度相等且为合法 UTF-8）时可靠；hex/数值/pretty JSON 等
 /// 重编码显示不映射，只滚动不高亮。
-fn hit_range(app: &MdbxerApp, ctx: &CardCtx<'_>, display_text: &str) -> Option<(usize, usize)> {
+fn hit_range(
+    app: &MdbxerApp,
+    ctx: &CardCtx<'_>,
+    display_text: &str,
+    binary_guess: bool,
+) -> Option<(usize, usize)> {
     let (hit_abs, hit_len) = match ctx.side {
         Side::Key => &app.detail.key,
         Side::Value => &app.detail.val,
@@ -163,6 +170,22 @@ fn hit_range(app: &MdbxerApp, ctx: &CardCtx<'_>, display_text: &str) -> Option<(
     .blob_hit?;
     if hit_abs < ctx.off || hit_abs >= ctx.off + ctx.window.len() {
         return None;
+    }
+    let byte_format = match ctx.mode {
+        DecodeMode::Hex => Some(ByteFormat::Hex),
+        DecodeMode::Binary => Some(ByteFormat::Binary),
+        DecodeMode::Dec => Some(ByteFormat::Decimal),
+        DecodeMode::Auto if binary_guess => Some(ByteFormat::Hex),
+        _ => None,
+    };
+    if let Some(format) = byte_format {
+        return byte_range_in_byte_text(
+            display_text,
+            ctx.window,
+            hit_abs - ctx.off,
+            hit_len,
+            format,
+        );
     }
     if display_text.len() != ctx.window.len() || std::str::from_utf8(ctx.window).is_err() {
         return None;
@@ -176,6 +199,51 @@ fn hit_range(app: &MdbxerApp, ctx: &CardCtx<'_>, display_text: &str) -> Option<(
         he += 1;
     }
     (hs < he).then_some((hs, he))
+}
+
+#[derive(Clone, Copy)]
+enum ByteFormat {
+    Hex,
+    Binary,
+    Decimal,
+}
+
+/// 把段内字节区间映射到按字节分隔的 HEX/Binary/Dec 文本字符区间。
+fn byte_range_in_byte_text(
+    display_text: &str,
+    bytes: &[u8],
+    byte_start: usize,
+    byte_count: usize,
+    format: ByteFormat,
+) -> Option<(usize, usize)> {
+    if byte_count == 0 || byte_start >= bytes.len() {
+        return None;
+    }
+    let byte_end = byte_start.saturating_add(byte_count).min(bytes.len());
+    let token_width = |byte: u8| match format {
+        ByteFormat::Hex => 2,
+        ByteFormat::Binary => 8,
+        ByteFormat::Decimal => byte.to_string().len(),
+    };
+    let char_offset = |end: usize| {
+        bytes[..end]
+            .iter()
+            .map(|&byte| token_width(byte))
+            .sum::<usize>()
+            .saturating_add(end.saturating_sub(1))
+    };
+    let start = bytes[..byte_start]
+        .iter()
+        .map(|&byte| token_width(byte))
+        .sum::<usize>()
+        .saturating_add(byte_start);
+    let end = char_offset(byte_end);
+    let text_len = display_text.len();
+    if start >= text_len {
+        return None;
+    }
+    let end = end.min(text_len);
+    (start < end).then_some((start, end))
 }
 
 /// 折叠视图的行切分：语法着色激活且存在多行文本时才切；
@@ -421,7 +489,8 @@ fn mono_line_height(ui: &egui::Ui) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::row_for_char;
+    use super::{ByteFormat, byte_range_in_byte_text, row_for_char};
+    use crate::fmt::{DecodeMode, Endian, HintFlags, decode};
 
     #[test]
     fn row_lookup_counts_hard_newlines() {
@@ -438,5 +507,58 @@ mod tests {
         assert_eq!(row_for_char(rows, 3), 0);
         assert_eq!(row_for_char(rows, 4), 1);
         assert_eq!(row_for_char(rows, 8), 2);
+    }
+
+    #[test]
+    fn binary_search_hit_maps_to_hex_text_characters() {
+        let bytes: Vec<u8> = (0u8..=255).cycle().take(4096).collect();
+        let text = decode(
+            &bytes,
+            DecodeMode::Hex,
+            Endian::Little,
+            bytes.len() * 3,
+            &HintFlags::default(),
+        );
+        let start = bytes
+            .windows(4)
+            .position(|window| window == [0x51, 0x52, 0x53, 0x54])
+            .unwrap();
+        let range = byte_range_in_byte_text(&text, &bytes, start, 4, ByteFormat::Hex).unwrap();
+        assert_eq!(&text[range.0..range.1], "51 52 53 54");
+    }
+
+    #[test]
+    fn binary_and_decimal_search_hits_map_to_visible_text() {
+        let bytes = [0x51, 0x00, 0xFF, 0x04];
+        let binary = decode(
+            &bytes,
+            DecodeMode::Binary,
+            Endian::Little,
+            100,
+            &HintFlags::default(),
+        );
+        let decimal = decode(
+            &bytes,
+            DecodeMode::Dec,
+            Endian::Little,
+            100,
+            &HintFlags::default(),
+        );
+        let binary_range =
+            byte_range_in_byte_text(&binary, &bytes, 1, 2, ByteFormat::Binary).unwrap();
+        let decimal_range =
+            byte_range_in_byte_text(&decimal, &bytes, 1, 2, ByteFormat::Decimal).unwrap();
+        assert_eq!(&binary[binary_range.0..binary_range.1], "00000000 11111111");
+        assert_eq!(&decimal[decimal_range.0..decimal_range.1], "0 255");
+    }
+
+    #[test]
+    fn byte_text_hit_clips_at_visible_segment_end() {
+        let bytes = [0xFE, 0xFF];
+        let text = "FE FF";
+        assert_eq!(
+            byte_range_in_byte_text(text, &bytes, 1, 4, ByteFormat::Hex),
+            Some((3, 5))
+        );
     }
 }
