@@ -1,14 +1,14 @@
 # 全平台构建与发布流水线：
 #   tag（v*）推送到 GitHub 后，并行构建 Windows / Linux / macOS，
 #   自动发布 GitHub Release。
-#   Gitee Release 作为可选项（因 GitHub Actions runner 访问 Gitee API 可能超时）。
+#   Gitee 仅用于源码镜像同步，不自动上传二进制 Release。
 #
 # 触发方式：
 #   1. tag 被推送到 GitHub（通常由 Gitee 仓库镜像自动同步过来）
 #   2. 手动 workflow_dispatch（只构建，不发布）
 #
 # 前置配置：
-#   - GitHub 仓库 Settings → Secrets → Actions 添加 GITEE_TOKEN（Gitee 私人令牌，可选）
+#   - GitHub 仓库 Settings → Actions → General → Workflow permissions 设为 Read and write permissions
 
 name: 构建与发布
 
@@ -105,8 +105,8 @@ jobs:
           generate_release_notes: true
           files: dist/*
 
-  # 说明（2026-10-18 移除）：Release 统一放 GitHub，Gitee 只作 git 镜像同步 tag。
+  # Release 统一放 GitHub，Gitee 只作 git 镜像同步 tag。
   # gitee-release 任务原本把三平台产物回传给 Gitee Release，但 GitHub runner 访问
   # Gitee API 偶发拒连/重置，历史上约半版本回传失败，需本地手动补发，得不偿失。
   # Gitee 侧用户下载入口已指向 GitHub Releases；Gitee 页面保留自动生成的源码包
-  # （v*.zip/tar.gz）。发版技能 mdbxer-release 提供本地补发流程，如需恢复再启用此任务。
+  # （v*.zip/tar.gz）。

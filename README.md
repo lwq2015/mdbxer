@@ -1,6 +1,6 @@
 # MDBXer
 
-[libmdbx](https://libmdbx.dqdkfa.ru/) 数据库的**只读**图形查看工具。Rust 2024 + egui 0.36 实现，单文件分发，跨平台（Windows / Linux / macOS）。
+[libmdbx](https://libmdbx.dqdkfa.ru/) 数据库的图形浏览工具，日常以只读方式打开；用户可显式确认执行恢复。Rust 2024 + egui 0.36 实现，单文件分发，跨平台（Windows / Linux / macOS）。
 
 > 向 libmdbx 及其作者 Leonid Yuriev 致敬——本工具内置俄语界面（Русский）。
 
@@ -8,14 +8,14 @@
 
 ## 下载
 
-预编译版本见 [GitHub Releases](https://github.com/lwq2015/mdbxer/releases)（含 Windows x86_64 / Linux x86_64 / macOS Apple Silicon），[Gitee Releases](https://gitee.com/lwq_yu/mdbxer/releases) 为镜像。macOS 仅提供 ARM 包，Intel Mac 可经 Rosetta 2 运行。
+预编译版本见 [GitHub Releases](https://github.com/lwq2015/mdbxer/releases)（含 Windows x86_64 / Linux x86_64 / macOS Apple Silicon）。Gitee 仓库同步源码，二进制发行包以 GitHub Releases 为准。macOS 仅提供 ARM 包，Intel Mac 可经 Rosetta 2 运行。
 
 ## 功能特性
 
 ### 打开方式
 - **文件 / 目录 / 自动**三种模式，对应 MDBX 的 `MDBX_NOSUBDIR`
 - 系统文件对话框、历史记录下拉、**拖入窗口**、命令行传路径
-- `accede` 只读打开，可查看正被其他进程占用的库；**绝不写入数据库**
+- 日常浏览以 `accede` 只读打开，可查看正被其他进程占用的库；只读打开失败时，用户可显式确认以读写模式触发 MDBX 恢复（可选先备份）
 - 历史记录最多 20 条，同路径去重置顶，持久化到 `%APPDATA%\mdbxer\history.json`
 
 ### 数据浏览
@@ -29,20 +29,20 @@
 - 序号跳转、按内容搜索（文本或字节子串，支持回绕）
 - 每 100 个值一页懒加载
 
-### 格式解析（29 种）
-`自动 / utf8 / utf16(LE) / utf16(BE) / gb18030 / windows-1251 / int8 / int16 / int32 / int64 / uint8 / uint16 / uint32 / uint64 / float / double / hex / dec / binary / base64 / uuid / mac / ip / time / json / bson / msgpack / cbor / proto`
+### 格式解析（35 种，含自动猜测）
+`自动 / utf8 / utf16(LE) / utf16(BE) / gb18030 / windows-1251 / shift_jis / big5 / windows-1252 / int8 / int16 / int32 / int64 / uint8 / uint16 / uint32 / uint64 / float / double / hex / dec / binary / base64 / uuid / mac / ip / time / json / bson / msgpack / cbor / proto / yaml / toml / xml`
 
-- **自动猜测链**：压缩容器穿透（zstd / gzip / zlib / lz4 / bzip2 / xz，解压后递归猜测，如 `gzip → JSON`）→ JSON / BSON / MessagePack / CBOR（自描述结构化数据，显示为 JSON）→ Protobuf（载入协议池后自动识别 message 类型）→ UTF-8 / UTF-16 → 整数 → 二进制
+- **自动猜测链**：压缩容器（zstd / gzip / zlib / lz4 / bzip2 / xz / Snappy / Brotli）解压一层后继续猜测内层格式，如 `gzip → JSON`；再识别 JSON / BSON / MessagePack / CBOR / XML / YAML / TOML、可打印 UTF-8、已载入协议池时的 Protobuf、UTF-16、整数与二进制
 - 命中文件魔数时附标注（PNG / JPEG / GIF / WebP / WAV / ICO / PDF / ZIP / RAR / 7z / FLAC / Ogg / MP3 / MP4 / SQLite）；表格 Auto 列对 4/6/16 字节值附 IPv4 / MAC / IPv6 解读
 - `uint64` 落在 Unix 时间戳（秒/毫秒）或 FILETIME 区间时自动附本地日期；手动 `time` 格式支持 4 字节 Unix 秒
-- 手动格式补齐常见场景：`gb18030` / `windows-1251` 传统编码、`base64`、`uuid`（16 字节）、`mac`（6 字节）、`ip`（4 字节 IPv4 / 16 字节 IPv6）、`json` / `bson` / `msgpack` / `cbor` 结构化美化、`proto` 动态解码
+- 手动格式补齐常见场景：`gb18030` / `windows-1251` / `shift_jis` / `big5` / `windows-1252` 传统编码、`base64`、`uuid`（16 字节）、`mac`（6 字节）、`ip`（4 字节 IPv4 / 16 字节 IPv6）、`json` / `bson` / `msgpack` / `cbor` / `yaml` / `toml` / `xml` 结构化排版、`proto` 动态解码
 - **Protobuf**：「载入 .proto」纯 Rust 编译（无需 protoc），按所选 message 类型解码为 JSON；协议与库的关联自动记忆、打开库时自动恢复，也可一键清除；已载入后 Auto 自动猜测类型
 - 字节序 LE/BE 切换；短字节零扩展补齐并标注；长度不符的地址/时间类格式回退 hex 并标注
 - 千位分隔开关、单元格字符数截断（64–4096）；格式下拉按界面语言排序，「自动」固定置顶
 
 ### 大字段分段
 - 超过 64 KiB 的字段按段浏览，段内文本与 hex 只渲染当前窗口
-- hex dump 三段独立开关（地址 / HEX / ASCII），行宽 4/8/16/32
+- hex dump 三段独立开关（地址 / HEX / ASCII），行宽 4/8/16
 
 ### 统计与环境信息
 - 表统计：条目数、B+树深度、分支/叶子/溢出页数、页大小、总大小、表标志
@@ -54,7 +54,7 @@
 
 ### 其他
 - Key/Value 复制完整解码文本、另存原始字节（不经截断/解码）
-- 三栏宽度互相约束（左栏 180–320，中央表格保底 360）
+- 三栏宽度互相约束（左栏 120–320，中央区域保底 300）
 - 工具栏下拉支持滚轮切换
 
 ## 构建与运行
@@ -100,11 +100,11 @@ cargo run --example make_test_db
 
 ## 免责声明
 
-1. **只读保证**：本工具以 `Mode::ReadOnly` + `accede` 方式打开数据库，**不会对数据库文件执行任何写入操作**。但用户仍应在使用前自行备份重要数据。
+1. **日常浏览只读**：本工具以 `Mode::ReadOnly` + `accede` 方式打开数据库，不会写入数据库。若只读打开失败，用户可以明确确认执行恢复；该流程会临时以读写模式打开数据库并可能修改文件，单文件模式可选择先创建 `.bak-recover` 备份。用户仍应在使用前自行备份重要数据。
 
 2. **按"原样"提供**：本软件按 Apache License 2.0 的条款"按原样"分发，**不提供任何明示或暗示的担保**，包括但不限于适销性、特定用途适用性和非侵权性的担保。在任何情况下，作者或版权持有人均不对因使用本软件而产生的任何索赔、损害或其他责任负责。
 
-3. **数据安全**：虽然本工具设计为只读，但 MDBX 数据库文件可能因其他进程写入而处于不一致状态。本工具不对数据完整性、解析准确性或用户基于本工具输出做出的决策承担责任。
+3. **数据安全**：即使日常浏览以只读方式进行，MDBX 数据库文件仍可能因其他进程写入而处于不一致状态；用户确认恢复操作也可能修改文件。本工具不对数据完整性、解析准确性或用户基于本工具输出做出的决策承担责任。
 
 4. **使用风险**：用户自行承担使用本软件的全部风险。对于因使用本软件而导致的任何直接或间接损失（包括但不限于数据丢失、业务中断、利润损失），作者不承担责任。
 
