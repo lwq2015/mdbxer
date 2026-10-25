@@ -354,16 +354,16 @@ fn scroll_to_hit(
         )
     });
 
-    // 按行累计字形数定位命中行（每字形 ≈ 一字符；居中滚动容忍近似）
-    let mut acc = 0usize;
-    let mut row_y = galley.rows.last().map(|r| r.rect().top()).unwrap_or(0.0);
-    for row in &galley.rows {
-        if acc + row.glyphs.len() > pc {
-            row_y = row.rect().top();
-            break;
-        }
-        acc += row.glyphs.len();
-    }
+    // Galley 不把硬换行作为 glyph 保存，需额外计入 ends_with_newline，
+    // 否则文本越靠后，滚动目标就会逐行向后漂移。
+    let row_idx = row_for_char(
+        galley
+            .rows
+            .iter()
+            .map(|row| (row.glyphs.len(), row.ends_with_newline)),
+        pc,
+    );
+    let row_y = galley.rows[row_idx].rect().top();
     let rect = egui::Rect::from_min_size(
         egui::pos2(te_rect.left(), content_top + 8.0 + row_y),
         egui::vec2(4.0, line_h),
@@ -371,7 +371,43 @@ fn scroll_to_hit(
     ui.scroll_to_rect(rect, Some(egui::Align::Center));
 }
 
+fn row_for_char(rows: impl IntoIterator<Item = (usize, bool)>, char_offset: usize) -> usize {
+    let mut char_start = 0usize;
+    let mut last_idx = 0usize;
+    for (idx, (glyph_count, ends_with_newline)) in rows.into_iter().enumerate() {
+        last_idx = idx;
+        let row_chars = glyph_count + usize::from(ends_with_newline);
+        if char_start + row_chars > char_offset {
+            return idx;
+        }
+        char_start += row_chars;
+    }
+    last_idx
+}
+
 /// 等宽字体行高（文本区与 hex 区统一）。
 fn mono_line_height(ui: &egui::Ui) -> f32 {
     ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::row_for_char;
+
+    #[test]
+    fn row_lookup_counts_hard_newlines() {
+        let rows = [(5, true), (5, true), (5, false)];
+        assert_eq!(row_for_char(rows, 0), 0);
+        assert_eq!(row_for_char(rows, 5), 0);
+        assert_eq!(row_for_char(rows, 6), 1);
+        assert_eq!(row_for_char(rows, 12), 2);
+    }
+
+    #[test]
+    fn row_lookup_handles_soft_wraps() {
+        let rows = [(4, false), (3, true), (2, false)];
+        assert_eq!(row_for_char(rows, 3), 0);
+        assert_eq!(row_for_char(rows, 4), 1);
+        assert_eq!(row_for_char(rows, 8), 2);
+    }
 }
