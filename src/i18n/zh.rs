@@ -81,6 +81,7 @@ pub(super) const ZH: I18n = I18n {
     hex_width_tip: "每行字节数：4/8/16，滚轮也可切换；右栏宽度随之自适应",
     copy: "复制",
     copied_row: "已复制选中行",
+    copied_selection: "已复制选择内容",
     save_as: "另存…",
     save_tip: "把完整内容保存为文件：原始二进制、当前显示文本或按猜测格式",
     save_raw: "原始二进制（.bin）",

@@ -15,11 +15,40 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::fmt::{addr_chars, addr_digits, hex_line, hex_section_chars, mid_gap_index};
 
 pub(crate) const EDGE_SCROLL_MAX_ROWS_PER_SECOND: f32 = 60.0;
 const EDGE_SCROLL_MAX_DEPTH: f32 = 4.0;
+const COPY_TOAST_DURATION: Duration = Duration::from_secs(2);
+
+fn show_copy_toast(ctx: &egui::Context, id: egui::Id) {
+    let toast_id = id.with("copy_toast");
+    let Some((shown_at, pos)) = ctx.data(|d| d.get_temp::<(Instant, egui::Pos2)>(toast_id)) else {
+        return;
+    };
+    let remaining = COPY_TOAST_DURATION.saturating_sub(shown_at.elapsed());
+    if remaining.is_zero() {
+        ctx.data_mut(|d| d.remove::<Instant>(toast_id));
+        return;
+    }
+
+    ctx.request_repaint_after(remaining);
+    egui::Area::new(toast_id.with("area"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos + egui::vec2(12.0, 12.0))
+        .constrain(true)
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.add(
+                    egui::Label::new(crate::i18n::tr().copied_selection)
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                );
+            });
+        });
+}
 
 pub(crate) fn edge_scroll_speed_fraction(distance: f32, margin: f32) -> f32 {
     let depth = (distance / margin).clamp(0.0, EDGE_SCROLL_MAX_DEPTH);
@@ -341,6 +370,7 @@ pub(crate) fn hex_view(
     }
     // 右键：有选区时复制并取消选择（右键 = 复制 + 取消所选）；
     // 单击空白/Esc 仍取消选择
+    let rmb_pos = resp.interact_pointer_pos();
     let rmb_sel = if resp.secondary_clicked() {
         sel.take()
     } else {
@@ -378,12 +408,22 @@ pub(crate) fn hex_view(
                     digits,
                     compact,
                 ));
+                if rmb_copy {
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(
+                            id.with("copy_toast"),
+                            (Instant::now(), rmb_pos.unwrap_or(rect.center())),
+                        );
+                    });
+                }
             }
         }
         if escape_pressed && resp.lost_focus() {
             *sel = None;
         }
     }
+
+    show_copy_toast(ui.ctx(), id);
 
     // ── 绘制（仅裁剪区内可见行）──
     let painter = ui.painter();

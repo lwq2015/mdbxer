@@ -182,6 +182,7 @@ pub struct I18n {
     pub hex_width_tip: &'static str,
     pub copy: &'static str,
     pub copied_row: &'static str,
+    pub copied_selection: &'static str,
     pub save_as: &'static str,
     pub save_tip: &'static str,
     /// 另存菜单：原始二进制项

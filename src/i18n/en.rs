@@ -80,6 +80,7 @@ pub(super) const EN: I18n = I18n {
     hex_width_tip: "Bytes per row: 4/8/16, mouse wheel also works; the panel width adjusts automatically",
     copy: "Copy",
     copied_row: "Row copied",
+    copied_selection: "Selected content copied",
     save_as: "Save as…",
     save_tip: "Save content to a file: raw bytes, visible text, or the guessed format",
     save_raw: "Raw binary (.bin)",
