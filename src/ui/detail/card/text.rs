@@ -256,7 +256,8 @@ fn text_edit_body(
                 hit_wrap_layouter.set(Some(wrap));
                 layout_job(ui, s.as_str(), syntax_kind, hit_range, &palette, wrap)
             };
-            let te_rect = ui.add(te.layouter(&mut layouter)).rect;
+            let te_response = ui.add(te.layouter(&mut layouter));
+            let te_rect = te_response.rect;
             if let Some(hit_abs) = scroll_to {
                 scroll_to_hit(
                     ui,
@@ -270,7 +271,35 @@ fn text_edit_body(
                     line_h,
                 );
             }
+            text_edge_auto_scroll(ui, &te_response, line_h);
         });
+}
+
+/// TextEdit 原生拖选路径的边缘自动滚动，与自绘文本/hex 视图使用相同速度曲线。
+fn text_edge_auto_scroll(ui: &mut egui::Ui, response: &egui::Response, line_h: f32) {
+    if !response.dragged() || !ui.input(|i| i.pointer.primary_down()) {
+        return;
+    }
+    let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) else {
+        return;
+    };
+    let view = ui.clip_rect();
+    let rect = response.rect;
+    let margin = 28.0;
+    let dt = ui.input(|i| i.stable_dt).min(0.05);
+    let max_speed = line_h * crate::ui::hexview::EDGE_SCROLL_MAX_ROWS_PER_SECOND;
+
+    if rect.top() < view.top() - 1.0 && pointer.y < view.top() + margin {
+        let factor =
+            crate::ui::hexview::edge_scroll_speed_fraction(view.top() + margin - pointer.y, margin);
+        ui.scroll_with_delta(egui::vec2(0.0, max_speed * factor * dt));
+    } else if rect.bottom() > view.bottom() + 1.0 && pointer.y > view.bottom() - margin {
+        let factor = crate::ui::hexview::edge_scroll_speed_fraction(
+            pointer.y - (view.bottom() - margin),
+            margin,
+        );
+        ui.scroll_with_delta(egui::vec2(0.0, -max_speed * factor * dt));
+    }
 }
 
 /// 按语法 token 与命中区间构造一行/整段的 layout job。
