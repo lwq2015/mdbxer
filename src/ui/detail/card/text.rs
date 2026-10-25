@@ -37,13 +37,22 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
         text_open: ctx.text_open,
         hex_open: ctx.hex_open,
     };
-    let (text_h, _) = layout::card_content_heights(ui, app, ctx.window, &display_text, &budget);
+    let every_display_row = layout::number_text_display_rows(app, ctx.side, ctx.bytes);
+    let (text_h, _) = layout::card_content_heights(
+        ui,
+        app,
+        ctx.window,
+        &display_text,
+        &budget,
+        every_display_row,
+    );
 
     let (guess_text, binary_guess) = guess_text(app, ctx);
     let scroll_to = scroll_target(app, ctx);
     let hit_range = hit_range(app, ctx, &display_text, binary_guess);
     let lines = fold_line_list(syntax_kind, &display_text);
     let fold_active = lines.iter().any(|f| f.fold_end.is_some());
+    let show_line_numbers = app.detail.show_text_line_numbers;
     let scroll_line = fold_scroll_line(fold_active, scroll_to, ctx, &display_text, &lines);
 
     let card = match ctx.side {
@@ -85,6 +94,7 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
                 ctx.side,
                 &display_text,
                 &lines,
+                show_line_numbers,
                 syntax_kind.unwrap_or(DecodeMode::Json),
                 &palette,
                 hit_range,
@@ -106,6 +116,8 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
             scroll_to,
             text_h,
             line_h,
+            show_line_numbers,
+            every_display_row,
         );
     });
 
@@ -297,6 +309,8 @@ fn text_edit_body(
     scroll_to: Option<usize>,
     text_h: f32,
     line_h: f32,
+    show_line_numbers: bool,
+    every_display_row: bool,
 ) {
     // TextEdit 自身无内部滚动、高度随内容无限增长，故必须包一层 ScrollArea；
     // + 12 ≈ TextEdit frame 上下内边距，保证整数行内容恰好不滚
@@ -324,7 +338,27 @@ fn text_edit_body(
                 hit_wrap_layouter.set(Some(wrap));
                 layout_job(ui, s.as_str(), syntax_kind, hit_range, &palette, wrap)
             };
-            let te_response = ui.add(te.layouter(&mut layouter));
+            let output = if show_line_numbers {
+                let gutter_width = line_number_gutter_width(ui, display_text, every_display_row);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let gutter_right = ui.cursor().left() + gutter_width - 4.0;
+                    ui.add_space(gutter_width);
+                    let output = te.layouter(&mut layouter).show(ui);
+                    paint_line_numbers(
+                        ui,
+                        &output.galley,
+                        output.galley_pos,
+                        gutter_right,
+                        every_display_row,
+                    );
+                    output
+                })
+                .inner
+            } else {
+                te.layouter(&mut layouter).show(ui)
+            };
+            let te_response = &output.response;
             let te_rect = te_response.rect;
             if let Some(hit_abs) = scroll_to {
                 scroll_to_hit(
@@ -339,8 +373,93 @@ fn text_edit_body(
                     line_h,
                 );
             }
-            text_edge_auto_scroll(ui, &te_response, line_h);
+            text_edge_auto_scroll(ui, te_response, line_h);
         });
+}
+
+fn line_number_gutter_width(ui: &egui::Ui, text: &str, every_display_row: bool) -> f32 {
+    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+    let digit_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font_id, '0'));
+    let digits = if every_display_row {
+        let available_width = (ui.available_width() - 16.0).max(digit_width);
+        let chars = text.chars().count();
+        let mut digits = 1;
+        loop {
+            let text_width = (available_width - digits as f32 * digit_width - 8.0).max(digit_width);
+            let chars_per_row = (text_width / digit_width).floor().max(1.0) as usize;
+            let rows = chars.div_ceil(chars_per_row).max(1);
+            let next_digits = rows.ilog10() + 1;
+            if next_digits == digits {
+                break digits;
+            }
+            digits = next_digits;
+        }
+    } else {
+        let line_count = text.bytes().filter(|&b| b == b'\n').count() + 1;
+        line_count.ilog10() + 1
+    };
+    digits as f32 * digit_width + 8.0
+}
+
+fn paint_line_numbers(
+    ui: &egui::Ui,
+    galley: &egui::Galley,
+    galley_pos: egui::Pos2,
+    right: f32,
+    every_display_row: bool,
+) {
+    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+    let color = with_alpha(ui.visuals().hyperlink_color, 128);
+    for (number, y) in line_number_positions(
+        galley
+            .rows
+            .iter()
+            .map(|row| (row.pos.y, row.ends_with_newline)),
+        every_display_row,
+    ) {
+        ui.painter().text(
+            egui::pos2(right, galley_pos.y + y),
+            egui::Align2::RIGHT_TOP,
+            number.to_string(),
+            font_id.clone(),
+            color,
+        );
+    }
+}
+
+fn with_alpha(color: egui::Color32, alpha: u8) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
+}
+
+fn line_number_positions(
+    rows: impl Iterator<Item = (f32, bool)>,
+    every_display_row: bool,
+) -> Vec<(usize, f32)> {
+    if every_display_row {
+        rows.enumerate()
+            .map(|(index, (y, _))| (index + 1, y))
+            .collect()
+    } else {
+        hard_line_number_positions(rows)
+    }
+}
+
+fn hard_line_number_positions(rows: impl IntoIterator<Item = (f32, bool)>) -> Vec<(usize, f32)> {
+    let mut positions = Vec::new();
+    let mut line_number = 1;
+    let mut starts_line = true;
+    for (y, ends_with_newline) in rows {
+        if starts_line {
+            positions.push((line_number, y));
+        }
+        if ends_with_newline {
+            line_number += 1;
+            starts_line = true;
+        } else {
+            starts_line = false;
+        }
+    }
+    positions
 }
 
 /// TextEdit 原生拖选路径的边缘自动滚动，与自绘文本/hex 视图使用相同速度曲线。
@@ -489,7 +608,10 @@ fn mono_line_height(ui: &egui::Ui) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ByteFormat, byte_range_in_byte_text, row_for_char};
+    use super::{
+        ByteFormat, byte_range_in_byte_text, hard_line_number_positions, line_number_positions,
+        row_for_char,
+    };
     use crate::fmt::{DecodeMode, Endian, HintFlags, decode};
 
     #[test]
@@ -507,6 +629,24 @@ mod tests {
         assert_eq!(row_for_char(rows, 3), 0);
         assert_eq!(row_for_char(rows, 4), 1);
         assert_eq!(row_for_char(rows, 8), 2);
+    }
+
+    #[test]
+    fn line_numbers_ignore_soft_wrap_rows() {
+        let rows = [(0.0, false), (16.0, true), (32.0, true), (48.0, false)];
+        assert_eq!(
+            hard_line_number_positions(rows),
+            [(1, 0.0), (2, 32.0), (3, 48.0)]
+        );
+    }
+
+    #[test]
+    fn hex_display_rows_number_soft_wraps() {
+        let rows = [(0.0, false), (16.0, false), (32.0, false)];
+        assert_eq!(
+            line_number_positions(rows.into_iter(), true),
+            [(1, 0.0), (2, 16.0), (3, 32.0)]
+        );
     }
 
     #[test]

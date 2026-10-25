@@ -18,8 +18,9 @@ use crate::fmt::DecodeMode;
 use crate::i18n::tr;
 use crate::ui::syntax::{FoldLine, JsonTok, append_line_colored, syntax_tokens};
 
-/// 行首 gutter（折叠三角点击区）宽度。
-const GUTTER: f32 = 18.0;
+/// 行首折叠三角区域宽度。
+const TRIANGLE_GUTTER: f32 = 18.0;
+const LINE_NUMBER_PADDING: f32 = 8.0;
 
 /// 渲染折叠视图，返回渲染后的折叠状态（内容指纹 + 折叠行号集合）。
 #[allow(clippy::too_many_arguments)]
@@ -28,6 +29,7 @@ pub(super) fn show(
     side: Side,
     text: &str,
     lines: &[FoldLine],
+    show_line_numbers: bool,
     mode: DecodeMode,
     palette: &[egui::Color32; 6],
     hit: Option<(usize, usize)>,
@@ -42,7 +44,7 @@ pub(super) fn show(
         .auto_shrink([false, true])
         .max_height(max_height)
         .show(ui, |ui| {
-            FoldView::new(ui, side, text, lines, mode, palette, hit).run(
+            FoldView::new(ui, side, text, lines, show_line_numbers, mode, palette, hit).run(
                 ui,
                 stored,
                 scroll_line,
@@ -73,12 +75,14 @@ struct FoldView<'a> {
     is_key: bool,
     text: &'a str,
     lines: &'a [FoldLine],
+    show_line_numbers: bool,
     toks: Vec<JsonTok>,
     palette: &'a [egui::Color32; 6],
     hit: Option<(usize, usize)>,
     base: egui::text::TextFormat,
     weak: egui::text::TextFormat,
     line_h: f32,
+    gutter_width: f32,
     sel_id: egui::Id,
     owner_id: egui::Id,
     sel_bg: egui::Color32,
@@ -91,6 +95,7 @@ impl<'a> FoldView<'a> {
         side: Side,
         text: &'a str,
         lines: &'a [FoldLine],
+        show_line_numbers: bool,
         mode: DecodeMode,
         palette: &'a [egui::Color32; 6],
         hit: Option<(usize, usize)>,
@@ -99,6 +104,13 @@ impl<'a> FoldView<'a> {
         // 行高与 Hex 视图一致（不额外加 extra_text_line_spacing），使同窗口内
         // 文本区和 hex 区行高对齐、总高度吻合，避免右栏下方多出/不足。
         let line_h = ui.fonts_mut(|f| f.row_height(&font_id));
+        let gutter_width = if show_line_numbers {
+            let digits = lines.len().max(1).ilog10() + 1;
+            let digit_width = ui.fonts_mut(|f| f.glyph_width(&font_id, '0'));
+            TRIANGLE_GUTTER + digits as f32 * digit_width + LINE_NUMBER_PADDING
+        } else {
+            TRIANGLE_GUTTER
+        };
         // 逐行 allocate 会带入 egui 的 item_spacing.y（默认 3px），使折叠视图行距
         // 比 TextEdit/hex（单个 widget 内部排版、纯 line_h）大。归零后三条渲染路径
         // 行距统一，card_content_heights 按 line_h 的 galley 估算也与实际吻合。
@@ -117,12 +129,14 @@ impl<'a> FoldView<'a> {
             is_key: side.is_key(),
             text,
             lines,
+            show_line_numbers,
             toks: syntax_tokens(mode, text),
             palette,
             hit,
             base,
             weak,
             line_h,
+            gutter_width,
             sel_id: egui::Id::new(("mdbxer_fold_sel", side.is_key())),
             owner_id: egui::Id::new("mdbxer_sel_owner"),
             sel_bg: with_alpha(ui.visuals().selection.bg_fill, 150),
@@ -145,7 +159,7 @@ impl<'a> FoldView<'a> {
             .ctx()
             .data(|d| d.get_temp::<Option<FoldDrag>>(self.sel_id))
             .flatten();
-        let wrap_w = (ui.available_width() - GUTTER - 12.0).max(60.0);
+        let wrap_w = (ui.available_width() - self.gutter_width - 12.0).max(60.0);
         let view = ui.clip_rect();
         let content_top = ui.cursor().top();
         let dt = ui.input(|i| i.stable_dt).min(0.05);
@@ -161,14 +175,23 @@ impl<'a> FoldView<'a> {
             self.handle_pointer(ui, fl, &lv, sel, drag);
 
             // 正文悬停显示文本光标（gutter/三角区域保持各自光标）
-            let in_body = |p: egui::Pos2| p.x >= lv.rect.left() + GUTTER;
+            let in_body = |p: egui::Pos2| p.x >= lv.rect.left() + self.gutter_width;
             if lv.resp.hovered() && ui.input(|i| i.pointer.hover_pos()).is_none_or(in_body) {
                 ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Text);
             }
 
             self.paint_selection(ui, fl, &lv, sel);
+            if self.show_line_numbers {
+                ui.painter().text(
+                    egui::pos2(lv.rect.left() + self.gutter_width - 4.0, lv.rect.top()),
+                    egui::Align2::RIGHT_TOP,
+                    (i + 1).to_string(),
+                    self.base.font_id.clone(),
+                    with_alpha(ui.visuals().hyperlink_color, 128),
+                );
+            }
             ui.painter().galley(
-                lv.rect.left_top() + egui::vec2(GUTTER, 0.0),
+                lv.rect.left_top() + egui::vec2(self.gutter_width, 0.0),
                 lv.galley.clone(),
                 self.base.color,
             );
@@ -255,10 +278,11 @@ impl<'a> FoldView<'a> {
         sel: &mut Option<(usize, usize)>,
         drag: Option<FoldDrag>,
     ) {
-        let in_body = |p: egui::Pos2| p.x >= lv.rect.left() + GUTTER;
+        let in_body = |p: egui::Pos2| p.x >= lv.rect.left() + self.gutter_width;
         let press_pos = lv.resp.interact_pointer_pos();
         if lv.resp.drag_started() && press_pos.is_some_and(in_body) {
-            let lp = press_pos.unwrap() - egui::vec2(lv.rect.left() + GUTTER, lv.rect.top());
+            let lp =
+                press_pos.unwrap() - egui::vec2(lv.rect.left() + self.gutter_width, lv.rect.top());
             let anchor = fl.start
                 + char_to_byte(
                     &self.text[fl.start..fl.end],
@@ -283,7 +307,7 @@ impl<'a> FoldView<'a> {
             && p.y < lv.rect.bottom()
             && in_body(p)
         {
-            let lp = p - egui::vec2(lv.rect.left() + GUTTER, lv.rect.top());
+            let lp = p - egui::vec2(lv.rect.left() + self.gutter_width, lv.rect.top());
             let line_str = &self.text[fl.start..fl.end];
             let cur = fl.start
                 + char_to_byte(
@@ -346,7 +370,7 @@ impl<'a> FoldView<'a> {
         let line_str = &self.text[fl.start..fl.end];
         let cs = line_str[..lo - fl.start].chars().count();
         let ce = cs + line_str[lo - fl.start..hi - fl.start].chars().count();
-        let origin = lv.rect.left_top() + egui::vec2(GUTTER, 0.0);
+        let origin = lv.rect.left_top() + egui::vec2(self.gutter_width, 0.0);
         let mut char_off = 0usize;
         'glyphs: for prow in &lv.galley.rows {
             for (gi, g) in prow.row.glyphs.iter().enumerate() {

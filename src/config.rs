@@ -97,6 +97,13 @@ pub struct UiPrefs {
     /// hex dump：显示 ASCII 列
     #[serde(default)]
     pub show_ascii: Option<bool>,
+    /// 详情文本行号（兼容旧配置项 show_line_numbers）
+    #[serde(default)]
+    #[serde(alias = "show_line_numbers")]
+    pub show_text_line_numbers: Option<bool>,
+    /// HexView 显示行号
+    #[serde(default)]
+    pub show_hex_line_numbers: Option<bool>,
     /// hex dump 紧凑格式：HEX 列字节间不加空格
     #[serde(default)]
     pub hex_compact: Option<bool>,
@@ -470,6 +477,8 @@ mod tests {
             show_addr: Some(true),
             show_hex: Some(false),
             show_ascii: Some(true),
+            show_text_line_numbers: Some(true),
+            show_hex_line_numbers: Some(false),
             hex_compact: Some(true),
             hex_width: Some(16),
             left_visible: Some(false),
@@ -497,6 +506,8 @@ mod tests {
         assert!(back.hint_value.magic);
         assert!(!back.hint_value.ipv4);
         assert_eq!(back.show_hex, Some(false));
+        assert_eq!(back.show_text_line_numbers, Some(true));
+        assert_eq!(back.show_hex_line_numbers, Some(false));
         assert_eq!(back.hex_compact, Some(true));
         assert_eq!(back.hex_width, Some(16));
         assert_eq!(back.left_visible, Some(false));
@@ -526,6 +537,8 @@ mod tests {
         assert!(back.show_addr.is_none());
         assert!(back.show_hex.is_none());
         assert!(back.show_ascii.is_none());
+        assert!(back.show_text_line_numbers.is_none());
+        assert!(back.show_hex_line_numbers.is_none());
         assert!(back.hex_compact.is_none());
         assert!(back.hex_width.is_none());
         assert!(back.left_visible.is_none());
@@ -534,6 +547,13 @@ mod tests {
         assert!(back.export_format.is_none());
         assert!(back.proto_files.is_none());
         assert!(back.proto_msg.is_none());
+    }
+
+    #[test]
+    fn legacy_line_number_preference_maps_to_text_only() {
+        let prefs: UiPrefs = serde_json::from_str(r#"{"show_line_numbers":true}"#).unwrap();
+        assert_eq!(prefs.show_text_line_numbers, Some(true));
+        assert_eq!(prefs.show_hex_line_numbers, None);
     }
 
     #[test]

@@ -158,6 +158,10 @@ pub struct DetailState {
     pub show_hex: bool,
     /// hex dump 是否显示 ASCII 列
     pub show_ascii: bool,
+    /// 详情文本行号开关
+    pub show_text_line_numbers: bool,
+    /// HexView 显示行号开关
+    pub show_hex_line_numbers: bool,
     /// hex dump 紧凑格式：HEX 列字节间不加空格
     pub hex_compact: bool,
     /// hex dump 行宽（每行字节数：4/8/16/32）
@@ -175,6 +179,8 @@ impl Default for DetailState {
             show_addr: true,
             show_hex: true,
             show_ascii: true,
+            show_text_line_numbers: false,
+            show_hex_line_numbers: false,
             hex_compact: false,
             hex_width: fmt::DEFAULT_HEX_WIDTH,
             proto_err: None,
@@ -275,6 +281,13 @@ impl DetailState {
 mod tests {
     use super::{CardState, DUP_PAGE_SIZE, DetailState, Side};
     use crate::fmt;
+
+    #[test]
+    fn line_number_options_default_to_off() {
+        let state = DetailState::default();
+        assert!(!state.show_text_line_numbers);
+        assert!(!state.show_hex_line_numbers);
+    }
 
     #[test]
     fn clear_resets_modes_and_inputs() {

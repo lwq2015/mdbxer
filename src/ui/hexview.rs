@@ -189,6 +189,7 @@ pub(crate) fn hex_view(
     bytes: &[u8],
     width: usize,
     show_addr: bool,
+    show_line_numbers: bool,
     show_hex: bool,
     show_ascii: bool,
     compact: bool,
@@ -204,6 +205,12 @@ pub(crate) fn hex_view(
 
     // 地址位数随数据大小变化（同一 dump 内所有行统一位数保证对齐）
     let digits = addr_digits(base_offset, bytes.len());
+    let line_number_digits = rows.ilog10() + 1;
+    let line_number_w = if show_line_numbers {
+        (line_number_digits + 1) as f32 * cw
+    } else {
+        0.0
+    };
     let addr_w = if show_addr {
         addr_chars(digits) as f32 * cw
     } else {
@@ -215,7 +222,7 @@ pub(crate) fn hex_view(
         0.0
     };
     let ascii_w = if show_ascii { n as f32 * cw } else { 0.0 };
-    let content_w = addr_w + hex_w + ascii_w;
+    let content_w = line_number_w + addr_w + hex_w + ascii_w;
 
     let total_h = rows as f32 * rh;
     let wanted = egui::vec2(ui.available_width().max(content_w), total_h);
@@ -224,15 +231,15 @@ pub(crate) fn hex_view(
     let resp = ui.interact(rect, id, egui::Sense::click_and_drag());
 
     let geom = Geom {
-        x0: rect.left(),
+        x0: rect.left() + line_number_w,
         top: rect.top(),
         cw,
         rh,
         // 每字节在 HEX 列占的字符数（紧凑 2 / 常规 3），数字两位恒为 2
         per: if compact { 2.0 } else { 3.0 },
-        hex_x: rect.left() + addr_w,
+        hex_x: rect.left() + line_number_w + addr_w,
         hex_w,
-        ascii_x: rect.left() + addr_w + hex_w,
+        ascii_x: rect.left() + line_number_w + addr_w + hex_w,
         ascii_w,
     };
 
@@ -256,6 +263,7 @@ pub(crate) fn hex_view(
             bytes.len(),
             width,
             show_addr,
+            show_line_numbers,
             show_hex,
             show_ascii,
             compact,
@@ -497,6 +505,16 @@ pub(crate) fn hex_view(
             painter.rect_filled(row_rect, 0.0, row_bg);
         }
 
+        if show_line_numbers {
+            painter.text(
+                egui::pos2(geom.x0 - 4.0, row_top),
+                egui::Align2::RIGHT_TOP,
+                (r + 1).to_string(),
+                font_id.clone(),
+                with_alpha(ui.visuals().hyperlink_color, 128),
+            );
+        }
+
         let chunk_len = (bytes.len() - r * n).min(n);
         for i in 0..chunk_len {
             let g = r * n + i;
@@ -566,7 +584,7 @@ pub(crate) fn hex_view(
                 ui.fonts_mut(|f| f.layout_job(job))
             })
             .clone();
-        painter.galley(egui::pos2(rect.left(), row_top), galley, text_color);
+        painter.galley(egui::pos2(geom.x0, row_top), galley, text_color);
     }
     ui.ctx().data_mut(|d| d.insert_temp(id, cache));
 

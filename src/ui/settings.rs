@@ -10,27 +10,115 @@ use super::MdbxerApp;
 /// 高级配置页主体。
 pub(crate) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     egui::ScrollArea::vertical().show(ui, |ui| {
-        // 四个分组统一宽度：内容区上限与组内 set_min_width 联动，
-        // 各组不再按内容自适应宽窄不一（上限取最宽的快捷键组）
-        ui.set_max_width(480.0);
         ui.add_space(8.0);
 
-        hint_section(ui, app);
-        ui.add_space(10.0);
-        display_section(ui, app);
-        ui.add_space(10.0);
-        log_section(ui);
-        ui.add_space(10.0);
-        shortcuts_section(ui);
+        let left_width = left_column_width(ui);
+        let shortcuts_width = shortcuts_width(ui);
+        let column_gap = 8.0;
+        if ui.available_width() >= left_width + column_gap + shortcuts_width {
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    hint_section(ui, app, left_width);
+                    ui.add_space(10.0);
+                    display_section(ui, app, left_width);
+                    ui.add_space(10.0);
+                    log_section(ui, left_width);
+                });
+                ui.add_space(column_gap);
+                shortcuts_section(ui, shortcuts_width);
+            });
+        } else {
+            hint_section(ui, app, left_width);
+            ui.add_space(10.0);
+            display_section(ui, app, left_width);
+            ui.add_space(10.0);
+            log_section(ui, left_width);
+            ui.add_space(10.0);
+            shortcuts_section(ui, shortcuts_width);
+        }
     });
 }
 
+fn measure_text(ui: &egui::Ui, text: &str) -> f32 {
+    let font_id = egui::TextStyle::Body.resolve(ui.style());
+    ui.fonts_mut(|fonts| {
+        fonts
+            .layout_no_wrap(text.to_owned(), font_id, egui::Color32::WHITE)
+            .size()
+            .x
+    })
+}
+
+fn max_text_width(ui: &egui::Ui, texts: &[&str]) -> f32 {
+    texts
+        .iter()
+        .map(|text| measure_text(ui, text))
+        .fold(0.0, f32::max)
+}
+
+fn left_column_width(ui: &egui::Ui) -> f32 {
+    let t = crate::i18n::tr();
+    let hint_labels = [
+        t.hint_col_format,
+        t.hint_ts,
+        t.hint_filetime,
+        t.hint_ipv4,
+        t.hint_mac,
+        t.hint_ipv6,
+        t.hint_magic,
+    ];
+    let display_labels = [
+        t.endian,
+        t.cell_max_label,
+        t.page_size_label,
+        t.thousands_label,
+        t.hex_compact_label,
+        t.text_line_numbers_label,
+        t.hex_line_numbers_label,
+    ];
+    let hint_width =
+        max_text_width(ui, &hint_labels) + ui.spacing().interact_size.x * 2.0 + 16.0 * 2.0 + 16.0;
+    let display_control_width =
+        measure_text(ui, "00D2FF01") + ui.spacing().interact_size.x + ui.spacing().item_spacing.x;
+    let display_width =
+        max_text_width(ui, &display_labels) + 16.0 + display_control_width.max(72.0 + 24.0) + 16.0;
+    let log_width =
+        measure_text(ui, t.log_level) + 16.0 + 72.0 + ui.spacing().interact_size.x + 16.0;
+    hint_width.max(display_width).max(log_width)
+}
+
+fn shortcuts_width(ui: &egui::Ui) -> f32 {
+    let t = crate::i18n::tr();
+    let keys = [
+        "Ctrl+O",
+        "Ctrl+F",
+        "F3 / Shift+F3",
+        "Esc",
+        "PgDn / PgUp",
+        "↑ / ↓",
+        "Ctrl+C",
+        "Enter",
+    ];
+    let descriptions = [
+        t.sc_open,
+        t.sc_search,
+        t.sc_f3,
+        t.sc_clear,
+        t.sc_page,
+        t.sc_rownav,
+        t.sc_copy_row,
+        t.sc_enter,
+        t.sc_hex_clear,
+    ];
+    max_text_width(ui, &keys) + max_text_width(ui, &descriptions) + 24.0 + 16.0
+}
+
 /// 节 1：单元格附注开关表（格式 | Key | Value 勾选）。
-fn hint_section(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+fn hint_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
     let t = crate::i18n::tr();
 
     ui.group(|ui| {
-        ui.set_min_width(ui.available_width());
+        ui.set_min_width(width);
         ui.label(egui::RichText::new(t.hint_section).strong())
             .on_hover_text(t.hint_section_tip);
         ui.add_space(4.0);
@@ -81,11 +169,11 @@ fn hint_row(
 }
 
 /// 节 2：显示参数（从顶栏移入：字节序/单元格长度/每页条数/千位分隔）。
-fn display_section(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+fn display_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
     let t = crate::i18n::tr();
 
     ui.group(|ui| {
-        ui.set_min_width(ui.available_width());
+        ui.set_min_width(width);
         ui.label(egui::RichText::new(t.disp_section).strong());
         ui.add_space(4.0);
 
@@ -175,6 +263,28 @@ fn display_section(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     app.save_ui_prefs();
                 }
                 ui.end_row();
+
+                // 文本行号：真实文本换行；HEX 格式按显示行
+                ui.label(t.text_line_numbers_label);
+                if ui
+                    .checkbox(&mut app.detail.show_text_line_numbers, "")
+                    .on_hover_text(t.text_line_numbers_tip)
+                    .changed()
+                {
+                    app.save_ui_prefs();
+                }
+                ui.end_row();
+
+                // 独立 HexView 的显示行号
+                ui.label(t.hex_line_numbers_label);
+                if ui
+                    .checkbox(&mut app.detail.show_hex_line_numbers, "")
+                    .on_hover_text(t.hex_line_numbers_tip)
+                    .changed()
+                {
+                    app.save_ui_prefs();
+                }
+                ui.end_row();
             });
     });
 }
@@ -183,11 +293,11 @@ fn display_section(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 const CELL_MAXES: &[usize] = &[64, 128, 256, 512, 1024, 4096];
 
 /// 节 3：日志（等级切换 + 打开日志目录）。
-fn log_section(ui: &mut egui::Ui) {
+fn log_section(ui: &mut egui::Ui, width: f32) {
     let t = crate::i18n::tr();
 
     ui.group(|ui| {
-        ui.set_min_width(ui.available_width());
+        ui.set_min_width(width);
         ui.label(egui::RichText::new(t.log_section).strong())
             .on_hover_text(t.log_section_tip);
         ui.add_space(4.0);
@@ -246,35 +356,37 @@ fn level_label(l: crate::logging::Level) -> &'static str {
 }
 
 /// 节 4：快捷键清单（只读，仅供查阅）。
-fn shortcuts_section(ui: &mut egui::Ui) {
+fn shortcuts_section(ui: &mut egui::Ui, width: f32) {
     let t = crate::i18n::tr();
 
     ui.group(|ui| {
-        ui.set_min_width(ui.available_width());
-        ui.label(egui::RichText::new(t.shortcut_section).strong())
-            .on_hover_text(t.shortcut_section_tip);
-        ui.add_space(4.0);
+        ui.set_min_width(width);
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(t.shortcut_section).strong())
+                .on_hover_text(t.shortcut_section_tip);
+            ui.add_space(4.0);
 
-        let rows: [(&str, &str); 9] = [
-            ("Ctrl+O", t.sc_open),
-            ("Ctrl+F", t.sc_search),
-            ("F3 / Shift+F3", t.sc_f3),
-            ("Esc", t.sc_clear),
-            ("PgDn / PgUp", t.sc_page),
-            ("↑ / ↓", t.sc_rownav),
-            ("Ctrl+C", t.sc_copy_row),
-            ("Enter", t.sc_enter),
-            ("Esc", t.sc_hex_clear),
-        ];
-        egui::Grid::new("shortcuts_grid")
-            .num_columns(2)
-            .spacing([24.0, 4.0])
-            .show(ui, |ui| {
-                for (key, desc) in rows {
-                    ui.label(egui::RichText::new(key).monospace().strong());
-                    ui.label(desc);
-                    ui.end_row();
-                }
-            });
+            let rows: [(&str, &str); 9] = [
+                ("Ctrl+O", t.sc_open),
+                ("Ctrl+F", t.sc_search),
+                ("F3 / Shift+F3", t.sc_f3),
+                ("Esc", t.sc_clear),
+                ("PgDn / PgUp", t.sc_page),
+                ("↑ / ↓", t.sc_rownav),
+                ("Ctrl+C", t.sc_copy_row),
+                ("Enter", t.sc_enter),
+                ("Esc", t.sc_hex_clear),
+            ];
+            egui::Grid::new("shortcuts_grid")
+                .num_columns(2)
+                .spacing([24.0, 4.0])
+                .show(ui, |ui| {
+                    for (key, desc) in rows {
+                        ui.label(egui::RichText::new(key).monospace().strong());
+                        ui.label(desc);
+                        ui.end_row();
+                    }
+                });
+        });
     });
 }

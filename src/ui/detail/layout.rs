@@ -65,8 +65,17 @@ pub(super) fn card_natural_height(
         text_open,
         hex_open,
     };
-    let (text_h, hex_h) = card_content_heights(ui, app, window, text, &budget);
+    let number_text_display_rows = number_text_display_rows(app, side, window);
+    let (text_h, hex_h) =
+        card_content_heights(ui, app, window, text, &budget, number_text_display_rows);
     fixed + text_h + hex_h
+}
+
+pub(super) fn number_text_display_rows(app: &MdbxerApp, side: Side, bytes: &[u8]) -> bool {
+    let mode = app.detail.mode_of(side);
+    mode == fmt::DecodeMode::Hex
+        || (mode == fmt::DecodeMode::Auto
+            && fmt::guess(bytes, app.endian, &app.hint_value).0 == crate::i18n::tr().guess_binary)
 }
 
 /// 卡片固定开销：标题行 + 两个折叠标题行 + 可选的分段/搜索/多值导航行 + 间距。
@@ -105,6 +114,7 @@ pub(super) fn card_content_heights(
     window: &[u8],
     text: &str,
     budget: &HeightBudget,
+    number_text_display_rows: bool,
 ) -> (f32, f32) {
     let HeightBudget {
         line_h,
@@ -119,7 +129,33 @@ pub(super) fn card_content_heights(
     // 文本区才能和 hex 区一样占满整块空间（否则会永久停在 16 行、下方留白）。
     let text_nat = if text_open {
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-        let wrap_w = (ui.available_width() - 40.0).max(80.0); // 扣折叠缩进/滚动条/文本框内边距
+        let line_number_gutter = if app.detail.show_text_line_numbers {
+            let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+            let digit_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font_id, '0'));
+            let digits = if number_text_display_rows {
+                let available_width = (ui.available_width() - 40.0).max(digit_width);
+                let chars = text.chars().count();
+                let mut digits = 1;
+                loop {
+                    let text_width =
+                        (available_width - digits as f32 * digit_width - 8.0).max(digit_width);
+                    let chars_per_row = (text_width / digit_width).floor().max(1.0) as usize;
+                    let rows = chars.div_ceil(chars_per_row).max(1);
+                    let next_digits = rows.ilog10() + 1;
+                    if next_digits == digits {
+                        break digits;
+                    }
+                    digits = next_digits;
+                }
+            } else {
+                let line_count = text.bytes().filter(|&b| b == b'\n').count() + 1;
+                line_count.ilog10() + 1
+            };
+            digits as f32 * digit_width + 8.0
+        } else {
+            0.0
+        };
+        let wrap_w = (ui.available_width() - 40.0 - line_number_gutter).max(80.0);
         let galley =
             ui.fonts_mut(|f| f.layout(text.to_string(), font_id, egui::Color32::WHITE, wrap_w));
         let raw_h = galley.size().y.max(line_h);
@@ -182,6 +218,10 @@ pub(super) fn detail_needed_width(ui: &egui::Ui, d: &DetailState, addr_max_off: 
 
     let n = d.hex_width as f32;
     let mut line_chars = 0.0_f32;
+    if d.show_hex_line_numbers {
+        let rows = (addr_max_off + 1).div_ceil(d.hex_width).max(1);
+        line_chars += (rows.ilog10() + 2) as f32;
+    }
     if d.show_addr {
         // 地址位数随数据大小变化（最小 4 位）+ 列后 2 空格
         line_chars += fmt::addr_chars(fmt::addr_digits(0, addr_max_off + 1)) as f32;

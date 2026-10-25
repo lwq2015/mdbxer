@@ -394,6 +394,11 @@ pub struct I18n {
     /// 「无空格 HEX」开关标签与提示（紧凑格式：HEX 列字节间不加空格）
     pub hex_compact_label: &'static str,
     pub hex_compact_tip: &'static str,
+    /// 详情文本与 HexView 行号开关
+    pub text_line_numbers_label: &'static str,
+    pub text_line_numbers_tip: &'static str,
+    pub hex_line_numbers_label: &'static str,
+    pub hex_line_numbers_tip: &'static str,
     /// 快捷键清单节标题与提示
     pub shortcut_section: &'static str,
     pub shortcut_section_tip: &'static str,

@@ -5,8 +5,8 @@
 
 use super::CardCtx;
 use crate::i18n::tr;
-use crate::ui::detail::state::Side;
 use crate::ui::MdbxerApp;
+use crate::ui::detail::state::Side;
 use crate::ui::hexview;
 
 /// 渲染 hex 区（可折叠）。`card_top` 为卡片内容起始游标，用于实测回填高度。
@@ -50,6 +50,7 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>, ca
         // hex 显示配置先读成局部量，下面才能可变借用卡片选区
         let width = app.detail.hex_width;
         let show_addr = app.detail.show_addr;
+        let show_line_numbers = app.detail.show_hex_line_numbers;
         let show_hex = app.detail.show_hex;
         let show_ascii = app.detail.show_ascii;
         let compact = app.detail.hex_compact;
@@ -75,6 +76,7 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>, ca
                     ctx.window,
                     width,
                     show_addr,
+                    show_line_numbers,
                     show_hex,
                     show_ascii,
                     compact,

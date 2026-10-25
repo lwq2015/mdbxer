@@ -622,6 +622,8 @@ impl MdbxerApp {
         detail.show_addr = prefs.show_addr.unwrap_or(true);
         detail.show_hex = prefs.show_hex.unwrap_or(true);
         detail.show_ascii = prefs.show_ascii.unwrap_or(true);
+        detail.show_text_line_numbers = prefs.show_text_line_numbers.unwrap_or(false);
+        detail.show_hex_line_numbers = prefs.show_hex_line_numbers.unwrap_or(false);
         detail.hex_compact = prefs.hex_compact.unwrap_or(false);
         // 脏配置兜底：HEX/ASCII 至少保留一项（手动改错配置文件时）
         if !detail.show_hex && !detail.show_ascii {
@@ -1061,18 +1063,20 @@ impl MdbxerApp {
             });
 
         let mut right_clicked = false;
-        egui::Area::new(egui::Id::new("right_edge_toggle"))
-            .order(egui::Order::Middle)
-            .fixed_pos(egui::Pos2::new(
-                screen.right() - 10.0,
-                area.center().y - 23.0,
-            ))
-            .show(&ctx, |ui| {
-                let sym = if self.detail_visible { ">" } else { "<" };
-                if edge_toggle_btn(ui, sym, t.panel_detail) {
-                    right_clicked = true;
-                }
-            });
+        if self.tab == CenterTab::Data {
+            egui::Area::new(egui::Id::new("right_edge_toggle"))
+                .order(egui::Order::Middle)
+                .fixed_pos(egui::Pos2::new(
+                    screen.right() - 10.0,
+                    area.center().y - 23.0,
+                ))
+                .show(&ctx, |ui| {
+                    let sym = if self.detail_visible { ">" } else { "<" };
+                    if edge_toggle_btn(ui, sym, t.panel_detail) {
+                        right_clicked = true;
+                    }
+                });
+        }
 
         if left_clicked {
             self.left_visible = !self.left_visible;
@@ -2158,6 +2162,8 @@ impl MdbxerApp {
             show_addr: Some(self.detail.show_addr),
             show_hex: Some(self.detail.show_hex),
             show_ascii: Some(self.detail.show_ascii),
+            show_text_line_numbers: Some(self.detail.show_text_line_numbers),
+            show_hex_line_numbers: Some(self.detail.show_hex_line_numbers),
             hex_compact: Some(self.detail.hex_compact),
             hex_width: Some(self.detail.hex_width),
 
@@ -2698,7 +2704,7 @@ impl eframe::App for MdbxerApp {
             if self.left_visible {
                 sidebar::show(ui, self);
             }
-            if self.detail_visible {
+            if self.detail_visible && self.tab == CenterTab::Data {
                 detail::show(ui, self);
             }
         }
