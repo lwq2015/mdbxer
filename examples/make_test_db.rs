@@ -252,27 +252,44 @@ fn proto_samples() -> Vec<(Vec<u8>, Vec<u8>)> {
     ]
 }
 
-fn main() -> libmdbx::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let base = Path::new("testdata");
-    std::fs::create_dir_all(base).ok();
+    std::fs::create_dir_all(base)?;
 
     // 测试协议：proto_* 样本的 schema，供 UI Protobuf 排版载入
-    std::fs::write(base.join("test.proto"), TEST_PROTO).ok();
+    std::fs::write(base.join("test.proto"), TEST_PROTO)?;
 
-    // 目录模式：传入目录路径，mdbx 在内部创建 data.mdbx
+    // 每次都从空环境重建，避免旧样本/旧表在重复生成后残留。
     let dir_db = base.join("dir_db");
-    std::fs::create_dir_all(&dir_db).ok();
+    remove_dir_if_exists(&dir_db)?;
+    std::fs::create_dir_all(&dir_db)?;
     build(&dir_db, false)?;
 
     // 单文件模式（MDBX_NOSUBDIR）
     let file_db = base.join("file_db.mdbx");
-    if file_db.exists() {
-        std::fs::remove_file(&file_db).ok();
-    }
+    let lock_file = base.join("file_db.mdbx-lck");
+    remove_file_if_exists(&lock_file)?;
+    remove_file_if_exists(&file_db)?;
     build(&file_db, true)?;
 
     println!("已生成：\n  {}\n  {}", dir_db.display(), file_db.display());
     Ok(())
+}
+
+fn remove_dir_if_exists(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+fn remove_file_if_exists(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
@@ -614,7 +631,9 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
         // ── 压缩容器穿透：Auto 应识别魔数并解压，显示 `gzip → JSON` 等 ──
         // 四种算法压同一份紧凑 JSON，可对照未压缩的 json_object
         (b"gz_json_object", gz(JSON_SAMPLE)),
+        (b"zlib_json_object", zlib(JSON_SAMPLE)),
         (b"zstd_json_object", zstd::stream::encode_all(JSON_SAMPLE, 3).unwrap()),
+        (b"lz4_json_object", lz4(JSON_SAMPLE)),
         (b"bz2_json_object", bz2(JSON_SAMPLE)),
         (b"xz_json_object", xz(JSON_SAMPLE)),
         // snappy（framed 流有魔数）/ brotli（无魔数试探解码，样本用长 JSON
@@ -632,10 +651,10 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
             b"ipv6_sample",
             vec![0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01],
         ),
+        // 固定为 2026-01-01 00:00:00 UTC，重复生成的数据保持完全一致。
         (
             b"filetime_sample",
-            ((chrono::Utc::now().timestamp() as u64 + 11_644_473_600) * 10_000_000
-                + chrono::Utc::now().timestamp_subsec_nanos() as u64 / 100)
+            ((1_767_225_600u64 + 11_644_473_600) * 10_000_000)
                 .to_le_bytes()
                 .to_vec(),
         ),
@@ -790,6 +809,20 @@ fn cbor_to_vec(v: &ciborium::value::Value) -> Vec<u8> {
 /// gzip 压缩
 fn gz(data: &[u8]) -> Vec<u8> {
     let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    e.write_all(data).unwrap();
+    e.finish().unwrap()
+}
+
+/// zlib 压缩
+fn zlib(data: &[u8]) -> Vec<u8> {
+    let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    e.write_all(data).unwrap();
+    e.finish().unwrap()
+}
+
+/// LZ4 frame 压缩
+fn lz4(data: &[u8]) -> Vec<u8> {
+    let mut e = lz4_flex::frame::FrameEncoder::new(Vec::new());
     e.write_all(data).unwrap();
     e.finish().unwrap()
 }
