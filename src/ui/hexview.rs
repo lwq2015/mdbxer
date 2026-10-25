@@ -18,12 +18,20 @@ use std::sync::Arc;
 
 use crate::fmt::{addr_chars, addr_digits, hex_line, hex_section_chars, mid_gap_index};
 
+pub(crate) const EDGE_SCROLL_MAX_ROWS_PER_SECOND: f32 = 60.0;
+const EDGE_SCROLL_MAX_DEPTH: f32 = 4.0;
+
+pub(crate) fn edge_scroll_speed_fraction(distance: f32, margin: f32) -> f32 {
+    let depth = (distance / margin).clamp(0.0, EDGE_SCROLL_MAX_DEPTH);
+    (depth / EDGE_SCROLL_MAX_DEPTH).powi(2)
+}
+
 /// Galley 缓存：内容指纹变化时整体作废。
 #[derive(Default, Clone)]
 struct GalleyCache {
     /// 内容/配置/主题指纹（见 hex_view 内 tag 计算），不符时整表作废重建
     tag: u64,
-    /// 行号 → 已排版的行文本，仅缓存当前可见行
+    /// 行号 → 已排版的行文本，仅缓存可视区及前后少量缓冲行
     rows: HashMap<usize, Arc<egui::Galley>>,
 }
 
@@ -69,7 +77,7 @@ impl Geom {
             return None;
         }
         let row = row as usize;
-        if row == usize::MAX || chunk_len == 0 {
+        if chunk_len == 0 {
             return None;
         }
 
@@ -91,10 +99,10 @@ impl Geom {
             }
             let (bi, frac) = (raw / per, raw % per);
             // 每字节只有两位 hex 数字可点：常规格式第 3 位是空格，紧凑格式两位全是数字
-            (bi >= 0 && (bi as usize) < chunk_len && frac < 2).then_some((row, bi as usize))
+            ((bi as usize) < chunk_len && frac < 2).then_some((row, bi as usize))
         } else if self.ascii_w > 0.0 && p.x >= self.ascii_x && p.x < self.ascii_x + self.ascii_w {
             let bi = ((p.x - self.ascii_x) / self.cw).floor() as isize;
-            (bi >= 0 && (bi as usize) < chunk_len).then_some((row, bi as usize))
+            ((bi as usize) < chunk_len).then_some((row, bi as usize))
         } else {
             None
         }
@@ -285,18 +293,18 @@ pub(crate) fn hex_view(
             let view = ui.clip_rect();
             let margin = 28.0;
             let dt = ui.input(|i| i.stable_dt).min(0.05);
-            // 速度曲线：二次方——贴边缓慢精修，越出边缘越远越快；上限约 60 行高/秒
-            let max_speed = rh * 60.0; // 点/秒
+            // 二次曲线：靠近触发边缘时慢，指针越过边缘越远越快，最多 60 行/秒。
+            let max_speed = rh * EDGE_SCROLL_MAX_ROWS_PER_SECOND;
             let mut edge = false;
             if rect.top() < view.top() - 1.0 && p.y < view.top() + margin {
                 // egui 约定 scroll delta 正值 = 向上看
-                let k = ((view.top() + margin - p.y) / margin).clamp(0.0, 4.0);
-                ui.scroll_with_delta(egui::vec2(0.0, max_speed * k * k * dt));
+                let factor = edge_scroll_speed_fraction(view.top() + margin - p.y, margin);
+                ui.scroll_with_delta(egui::vec2(0.0, max_speed * factor * dt));
                 p.y = view.top() + 1.0;
                 edge = true;
             } else if rect.bottom() > view.bottom() + 1.0 && p.y > view.bottom() - margin {
-                let k = ((p.y - (view.bottom() - margin)) / margin).clamp(0.0, 4.0);
-                ui.scroll_with_delta(egui::vec2(0.0, -max_speed * k * k * dt));
+                let factor = edge_scroll_speed_fraction(p.y - (view.bottom() - margin), margin);
+                ui.scroll_with_delta(egui::vec2(0.0, -max_speed * factor * dt));
                 p.y = view.bottom() - 2.0;
                 edge = true;
             }
@@ -398,6 +406,10 @@ pub(crate) fn hex_view(
     } else {
         resp.hover_pos()
     };
+    let hover_row = pointer
+        .filter(|p| rect.contains(*p))
+        .map(|p| ((p.y - rect.top()) / rh).floor() as usize)
+        .filter(|&r| r < rows);
     let hover = pointer.and_then(hit_at);
     if hover.is_some() {
         ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Text);
@@ -427,6 +439,11 @@ pub(crate) fn hex_view(
             rows: HashMap::new(),
         };
     }
+    let cache_first = vis_first.saturating_sub(2);
+    let cache_last = vis_last.saturating_add(2).min(rows);
+    cache
+        .rows
+        .retain(|&r, _| (cache_first..cache_last).contains(&r));
 
     for r in vis_first..vis_last {
         let row_top = rect.top() + r as f32 * rh;
@@ -436,7 +453,7 @@ pub(crate) fn hex_view(
         );
 
         // 1) 整行悬停背景
-        if hover.is_some_and(|(hr, _)| hr == r) {
+        if hover_row == Some(r) {
             painter.rect_filled(row_rect, 0.0, row_bg);
         }
 
@@ -523,4 +540,64 @@ pub(crate) fn hex_view(
         resp
     };
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Geom, edge_scroll_speed_fraction};
+    use crate::fmt::hex_section_chars;
+
+    fn geom(width: usize, compact: bool, show_ascii: bool) -> Geom {
+        let cw = 10.0;
+        let addr_w = 20.0;
+        let hex_w = hex_section_chars(width, compact) as f32 * cw;
+        Geom {
+            x0: 0.0,
+            top: 0.0,
+            cw,
+            rh: 10.0,
+            per: if compact { 2.0 } else { 3.0 },
+            hex_x: addr_w,
+            hex_w,
+            ascii_x: addr_w + hex_w,
+            ascii_w: if show_ascii { width as f32 * cw } else { 0.0 },
+        }
+    }
+
+    #[test]
+    fn hit_maps_hex_ascii_and_rows_to_same_byte() {
+        let g = geom(8, false, true);
+        assert_eq!(g.hit(egui::pos2(25.0, 5.0), 8, 8), Some((0, 0)));
+        assert_eq!(g.hit(egui::pos2(185.0, 5.0), 8, 8), Some((0, 5)));
+        assert_eq!(g.hit(egui::pos2(g.ascii_x + 55.0, 5.0), 8, 8), Some((0, 5)));
+        assert_eq!(g.hit(egui::pos2(25.0, 15.0), 8, 8), Some((1, 0)));
+    }
+
+    #[test]
+    fn hit_rejects_address_gaps_and_missing_bytes() {
+        let g = geom(8, false, true);
+        assert_eq!(g.hit(egui::pos2(10.0, 5.0), 8, 8), None);
+        assert_eq!(g.hit(egui::pos2(45.0, 5.0), 8, 8), None);
+        assert_eq!(g.hit(egui::pos2(140.0, 5.0), 8, 8), None);
+        assert_eq!(g.hit(egui::pos2(111.0, 5.0), 8, 3), None);
+    }
+
+    #[test]
+    fn hit_accounts_for_compact_mid_gap() {
+        let g = geom(8, true, false);
+        assert_eq!(g.hit(egui::pos2(100.0, 5.0), 8, 8), None);
+        assert_eq!(g.hit(egui::pos2(111.0, 5.0), 8, 8), Some((0, 4)));
+    }
+
+    #[test]
+    fn edge_scroll_accelerates_with_pointer_distance_and_is_capped() {
+        let near = edge_scroll_speed_fraction(28.0, 28.0);
+        let farther = edge_scroll_speed_fraction(56.0, 28.0);
+        let farthest = edge_scroll_speed_fraction(112.0, 28.0);
+        assert!(near > 0.0);
+        assert!(farther > near);
+        assert!(farthest > farther);
+        assert_eq!(farthest, 1.0);
+        assert_eq!(edge_scroll_speed_fraction(200.0, 28.0), 1.0);
+    }
 }

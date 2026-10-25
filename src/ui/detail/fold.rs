@@ -426,14 +426,18 @@ impl<'a> FoldView<'a> {
             return;
         };
         let margin = 28.0;
-        let max_speed = self.line_h * 60.0; // 点/秒
+        let max_speed = self.line_h * crate::ui::hexview::EDGE_SCROLL_MAX_ROWS_PER_SECOND;
         if content_top < view.top() - 1.0 && p.y < view.top() + margin {
-            let k = ((view.top() + margin - p.y) / margin).clamp(0.0, 4.0);
+            let factor =
+                crate::ui::hexview::edge_scroll_speed_fraction(view.top() + margin - p.y, margin);
             // egui 约定 scroll delta 正值 = 向上看
-            ui.scroll_with_delta(egui::vec2(0.0, max_speed * k * k * dt));
+            ui.scroll_with_delta(egui::vec2(0.0, max_speed * factor * dt));
         } else if ui.cursor().top() > view.bottom() + 1.0 && p.y > view.bottom() - margin {
-            let k = ((p.y - (view.bottom() - margin)) / margin).clamp(0.0, 4.0);
-            ui.scroll_with_delta(egui::vec2(0.0, -max_speed * k * k * dt));
+            let factor = crate::ui::hexview::edge_scroll_speed_fraction(
+                p.y - (view.bottom() - margin),
+                margin,
+            );
+            ui.scroll_with_delta(egui::vec2(0.0, -max_speed * factor * dt));
         }
     }
 

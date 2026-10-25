@@ -83,17 +83,19 @@ impl Default for CardState {
 }
 
 impl CardState {
-    /// 换值/换段后失效的搜索与分段状态；格式、搜索输入与折叠状态保留。
+    /// 换值/换段后失效的搜索、分段与 hex 选区；格式、搜索输入与折叠状态保留。
     pub fn reset_transient(&mut self) {
         self.seg_off = 0;
         self.seg_input.clear();
         self.blob_hit = None;
         self.blob_matches = None;
         self.blob_scroll = None;
+        self.hex.sel = None;
+        self.hex.fp = None;
     }
 
     /// 换行/换表/关库：格式回到 Auto，搜索与分段输入全部清空
-    /// （折叠/hex 选区按内容指纹自然失效，无需显式清理）。
+    /// （折叠状态按内容指纹失效；hex 选区显式清除）。
     pub fn reset_all(&mut self) {
         self.mode = DecodeMode::Auto;
         self.blob_input.clear();
@@ -283,6 +285,8 @@ mod tests {
         st.key.blob_input = "abc".into();
         st.key.blob_hit = Some((1, 3));
         st.key.fold = Some((7, vec![1]));
+        st.key.hex.sel = Some((1, 3));
+        st.key.hex.fp = Some((0, 4, Some(0), 0));
         st.dup.total = 9;
         st.dup.values = vec![b"v".to_vec()];
 
@@ -295,6 +299,8 @@ mod tests {
         assert_eq!(st.key.blob_hit, None);
         // 折叠状态按内容指纹失效，不在 clear 里强行清空
         assert_eq!(st.key.fold, Some((7, vec![1])));
+        assert_eq!(st.key.hex.sel, None);
+        assert_eq!(st.key.hex.fp, None);
         assert_eq!(st.dup.total, 1);
         assert!(st.dup.values.is_empty());
     }
@@ -357,6 +363,8 @@ mod tests {
             blob_matches: Some((2, 3)),
             ..CardState::default()
         };
+        card.hex.sel = Some((2, 5));
+        card.hex.fp = Some((0, 8, Some(0), 0));
 
         card.reset_transient();
 
@@ -364,6 +372,8 @@ mod tests {
         assert_eq!(card.blob_input, "needle");
         assert_eq!(card.seg_off, 0);
         assert_eq!(card.blob_matches, None);
+        assert_eq!(card.hex.sel, None);
+        assert_eq!(card.hex.fp, None);
     }
 
     #[test]
