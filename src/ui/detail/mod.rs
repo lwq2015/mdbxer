@@ -22,6 +22,17 @@ use crate::fmt;
 use crate::i18n::tr;
 use crate::ui::MdbxerApp;
 
+/// Key tooltip：按表格当前 Key 解码格式生成有界预览。
+pub(super) fn tooltip_key_text(
+    bytes: &[u8],
+    mode: fmt::DecodeMode,
+    endian: fmt::Endian,
+    hints: &fmt::HintFlags,
+    max_chars: usize,
+) -> String {
+    fmt::decode_key(bytes, mode, endian, max_chars, hints)
+}
+
 /// Value 单元格 tooltip：Auto 命中详情页支持的结构化/压缩/proto 格式时使用
 /// 同一显示决议美化；其它情况按表格当前解码格式返回有界预览。
 pub(super) fn tooltip_value_text(
@@ -114,8 +125,20 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
 #[cfg(test)]
 mod tests {
-    use super::tooltip_value_text;
+    use super::{tooltip_key_text, tooltip_value_text};
     use crate::fmt::{DecodeMode, Endian, HintFlags};
+
+    #[test]
+    fn key_tooltip_uses_selected_decode_mode() {
+        let text = tooltip_key_text(
+            b"key",
+            DecodeMode::Base64,
+            Endian::Little,
+            &HintFlags::default(),
+            512,
+        );
+        assert_eq!(text, "a2V5");
+    }
 
     #[test]
     fn auto_value_tooltip_prettifies_structured_json() {

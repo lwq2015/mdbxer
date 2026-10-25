@@ -4,7 +4,7 @@
 //! 中间 "数据" 页签：工具条 + 表格。
 
 use super::{MdbxerApp, SortCol};
-use crate::fmt::{self, DecodeMode, Endian, HintFlags};
+use crate::fmt::{DecodeMode, Endian, HintFlags};
 use crate::i18n::tr;
 use egui_extras::{Column, TableBuilder};
 
@@ -21,7 +21,7 @@ fn header_cell(ui: &mut egui::Ui, text: &str, tip: &str) -> bool {
 }
 
 /// tooltip 内容至少显示的字符数（长内容单元格悬停时可见更多原文）
-const TOOLTIP_CHARS: usize = 512;
+pub(super) const TOOLTIP_CHARS: usize = 512;
 
 /// tooltip 最大宽度：等宽字体下让 512 字尽量少折行
 const TOOLTIP_MAX_WIDTH: f32 = 720.0;
@@ -40,6 +40,23 @@ fn text_is_elided(ui: &egui::Ui, resp: &egui::Response, full: &str) -> bool {
     width > resp.rect.width()
 }
 
+/// 被截断的等宽按钮文本显示完整预览。
+pub(super) fn button_tooltip(ui: &egui::Ui, resp: egui::Response, full: &str) -> egui::Response {
+    let mono = egui::FontId::monospace(ui.style().text_styles[&egui::TextStyle::Body].size);
+    let width = ui.fonts_mut(|f| {
+        f.layout_no_wrap(full.to_string(), mono, egui::Color32::WHITE)
+            .size()
+            .x
+    });
+    let content_width = (resp.rect.width() - ui.spacing().button_padding.x * 2.0).max(0.0);
+    if width <= content_width {
+        return resp;
+    }
+
+    let text = preview_chars(full, TOOLTIP_CHARS);
+    resp.on_hover_ui(move |ui| tooltip_body(ui, &text))
+}
+
 /// 截取前 `max` 个字符（超出补省略号）。
 fn preview_chars(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -50,7 +67,7 @@ fn preview_chars(s: &str, max: usize) -> String {
 }
 
 /// tooltip 正文：等宽、默认色（避免选中行白字白底），限定宽高后可滚动。
-fn tooltip_body(ui: &mut egui::Ui, text: &str) {
+pub(super) fn tooltip_body(ui: &mut egui::Ui, text: &str) {
     ui.set_max_width(TOOLTIP_MAX_WIDTH);
     let max_height = (ui.ctx().viewport_rect().height() * 0.8).min(TOOLTIP_MAX_HEIGHT);
     egui::ScrollArea::vertical()
@@ -114,7 +131,7 @@ fn cell_tooltip(
             hints,
             || {
                 if is_key {
-                    fmt::decode_key(raw, mode, endian, TOOLTIP_CHARS, &hints)
+                    super::detail::tooltip_key_text(raw, mode, endian, &hints, TOOLTIP_CHARS)
                 } else {
                     let text =
                         super::detail::tooltip_value_text(raw, mode, endian, &hints, TOOLTIP_CHARS);

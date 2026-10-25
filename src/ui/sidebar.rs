@@ -170,16 +170,15 @@ fn show_tables(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n) {
                         row_fav_toggled = Some(tbl.name.clone());
                     }
                     let text = t.table_entry(&tbl.display(), tbl.entries, &tbl.flags_desc());
-                    if ui
-                        .add(
-                            egui::Button::selectable(
-                                selected,
-                                egui::RichText::new(text).monospace(),
-                            )
-                            .truncate(),
+                    let resp = ui.add(
+                        egui::Button::selectable(
+                            selected,
+                            egui::RichText::new(text.clone()).monospace(),
                         )
-                        .clicked()
-                    {
+                        .truncate(),
+                    );
+                    let resp = super::dataview::button_tooltip(ui, resp, &text);
+                    if resp.clicked() {
                         clicked = Some(i);
                     }
                 });
@@ -248,16 +247,15 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                             fav_table_toggle = Some(fname.clone());
                         }
                         // 表名占剩余宽度
-                        if ui
-                            .add(
-                                egui::Button::selectable(
-                                    selected,
-                                    egui::RichText::new(display).monospace(),
-                                )
-                                .truncate(),
+                        let resp = ui.add(
+                            egui::Button::selectable(
+                                selected,
+                                egui::RichText::new(display.clone()).monospace(),
                             )
-                            .clicked()
-                        {
+                            .truncate(),
+                        );
+                        let resp = super::dataview::button_tooltip(ui, resp, &display);
+                        if resp.clicked() {
                             if let Some(pos) = dbh.tables.iter().position(|ti| ti.name == *fname) {
                                 fav_table_pick = Some(pos);
                             }
@@ -267,22 +265,28 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                 .body_unindented(|ui| {
                     for i in key_idx {
                         let fk = &app.fav_keys[i];
-                        let key_text = crate::ui::parse_hex(&fk.key_hex)
-                            .map(|b| {
-                                crate::fmt::decode_key(
-                                    &b,
+                        let key_bytes = crate::ui::parse_hex(&fk.key_hex).ok();
+                        let key_text = key_bytes
+                            .as_deref()
+                            .map(|bytes| {
+                                super::detail::tooltip_key_text(
+                                    bytes,
                                     crate::fmt::DecodeMode::Auto,
                                     app.endian,
-                                    24,
                                     &app.hint_key,
+                                    24,
                                 )
                             })
-                            .unwrap_or_else(|_| fk.key_hex.chars().take(16).collect());
+                            .unwrap_or_else(|| fk.key_hex.chars().take(16).collect());
                         let label = if fk.note.is_empty() {
                             key_text
                         } else {
                             format!("{} · {key_text}", fk.note)
                         };
+                        let key_mode = app.key_mode;
+                        let endian = app.endian;
+                        let hints = app.hint_key;
+                        let jump_tip = t.fav_jump_tip;
                         ui.horizontal(|ui| {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -303,10 +307,26 @@ fn show_favorites(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n)
                                             )
                                             .truncate(),
                                         )
-                                        .on_hover_text(format!(
-                                            "{}\n{}",
-                                            t.fav_jump_tip, fk.key_hex
-                                        ))
+                                        .on_hover_ui(move |ui| {
+                                            let key_text = key_bytes
+                                                .as_deref()
+                                                .map(|bytes| {
+                                                    super::detail::tooltip_key_text(
+                                                        bytes,
+                                                        key_mode,
+                                                        endian,
+                                                        &hints,
+                                                        super::dataview::TOOLTIP_CHARS,
+                                                    )
+                                                })
+                                                .unwrap_or_else(|| {
+                                                    fk.key_hex.chars().take(16).collect()
+                                                });
+                                            super::dataview::tooltip_body(
+                                                ui,
+                                                &format!("{jump_tip}\n\n{key_text}"),
+                                            );
+                                        })
                                         .clicked()
                                     {
                                         fav_key_action = Some((i, true));
