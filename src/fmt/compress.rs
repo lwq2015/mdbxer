@@ -84,9 +84,14 @@ pub(crate) fn decompress(bytes: &[u8]) -> Option<(&'static str, Vec<u8>)> {
     None
 }
 
-/// 带上限的 Write：超出 cap 即报错（配合 lzma_rs 一体式 API 限制输出）。
+/// 为不支持读取限长的解压 API 提供有界写入目标。
+///
+/// `lzma_rs` 将解压数据直接写入 `Write`，因此在这里检查累计字节数，确保
+/// XZ 解压结果不会超过 `cap`，超限时立即返回错误并中止解压。
 struct LimitedWriter<'a> {
+    /// 允许写入的最大总字节数。
     cap: usize,
+    /// 已接收的解压数据缓冲区。
     out: &'a mut Vec<u8>,
 }
 

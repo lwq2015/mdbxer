@@ -20,9 +20,16 @@ use crate::ui::syntax::{FoldLine, JsonTok, append_line_colored, syntax_tokens};
 
 /// 行首折叠三角区域宽度。
 const TRIANGLE_GUTTER: f32 = 18.0;
+/// 行号与折叠三角区域之间的留白。
 const LINE_NUMBER_PADDING: f32 = 8.0;
 
-/// 渲染折叠视图，返回渲染后的折叠状态（内容指纹 + 折叠行号集合）。
+/// 在独立滚动区中绘制文本折叠视图。
+///
+/// 展示语法高亮、折叠三角、可选行号和文本选区；根据内容指纹恢复折叠状态，
+/// 返回本次渲染后的内容指纹与折叠行号集合，供调用方持久化。
+///
+/// `hit` 是显示文本中的命中字符区间，`scroll_line` 是需要滚动到可见区的逻辑行号；
+/// `stored` 和 `sel` 分别承载上次折叠状态与当前选区。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show(
     ui: &mut egui::Ui,
@@ -63,33 +70,52 @@ struct FoldDrag {
     moved: bool,
 }
 
-/// 单行渲染结果。
+/// 单个逻辑行的绘制数据与交互响应。
 struct LineView {
+    /// 行占用的布局矩形，也是行级鼠标交互的命中区域。
     rect: egui::Rect,
+    /// 该行的点击、拖拽与右键事件状态。
     resp: egui::Response,
+    /// 已排版的行内容，供绘制、字符命中和选区背景计算共用。
     galley: std::sync::Arc<egui::Galley>,
 }
 
-/// 一次折叠视图渲染的上下文与状态。
+/// 单次折叠视图绘制期间共享的输入、样式和交互状态。
 struct FoldView<'a> {
+    /// 当前卡片是否为 Key，用于隔离 Key/Value 的交互 ID。
     is_key: bool,
+    /// 完整显示文本，行切片与选区偏移均以其字节位置为基准。
     text: &'a str,
+    /// 语法分析生成的逻辑行及其可折叠范围。
     lines: &'a [FoldLine],
+    /// 是否在每个逻辑文本行前绘制行号。
     show_line_numbers: bool,
+    /// 文本中的语法 token，用于逐行生成着色排版。
     toks: Vec<JsonTok>,
+    /// 各语法 token 对应的主题颜色。
     palette: &'a [egui::Color32; 6],
+    /// 当前搜索命中的显示文本字符区间。
     hit: Option<(usize, usize)>,
+    /// 正文的基础字体和前景色格式。
     base: egui::text::TextFormat,
+    /// 折叠摘要使用的弱化文本格式。
     weak: egui::text::TextFormat,
+    /// 与 TextEdit/HexView 对齐的单行高度。
     line_h: f32,
+    /// 行首三角、行号占用的总宽度。
     gutter_width: f32,
+    /// 当前卡片折叠文本选择状态的临时数据 ID。
     sel_id: egui::Id,
+    /// 最近交互视图标记的共享 ID，用于分配全局快捷键。
     owner_id: egui::Id,
+    /// 绘制选区字符背景时使用的半透明颜色。
     sel_bg: egui::Color32,
+    /// 当前折叠的逻辑行索引集合。
     folded: std::collections::BTreeSet<usize>,
 }
 
 impl<'a> FoldView<'a> {
+    /// 根据当前文本、语法和显示选项初始化一次折叠视图。
     fn new(
         ui: &mut egui::Ui,
         side: Side,
@@ -144,6 +170,9 @@ impl<'a> FoldView<'a> {
         }
     }
 
+    /// 绘制所有未被祖先折叠隐藏的行，并处理折叠、选区、滚动和键盘事件。
+    ///
+    /// 返回内容指纹及更新后的折叠行索引，供外层写回卡片状态。
     fn run(
         mut self,
         ui: &mut egui::Ui,

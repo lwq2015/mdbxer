@@ -11,14 +11,21 @@
 
 use crate::fmt::{self, DecodeMode};
 
-/// 一个词法 token：字节区间（相对传入文本）+ 类别。
+/// 语法高亮使用的词法单元，记录其在原始 UTF-8 文本中的字节范围和语法类别。
+///
+/// `start..end` 采用半开区间，可直接用于字符串切片；分词及着色逻辑共用此范围，
+/// 因而不会因多字节字符导致高亮位置偏移。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct JsonTok {
+    /// token 在输入文本中的起始字节偏移（包含）。
     start: usize,
+    /// token 在输入文本中的结束字节偏移（不包含）。
     end: usize,
+    /// token 的语法类别，用于选择对应的主题颜色。
     kind: TokKind,
 }
 
+/// 跨 JSON、YAML、TOML、XML 等格式复用的语法高亮类别。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum TokKind {
     /// 键（JSON 的 "k":、YAML/TOML 的 k: / k =、XML 标签名）
