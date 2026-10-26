@@ -376,6 +376,9 @@ pub(crate) fn hex_view(
         }
         ui.ctx().data_mut(|d| d.remove_temp::<Option<Drag>>(id));
     }
+    if resp.clicked_by(egui::PointerButton::Primary) && sel.is_some() {
+        *sel = None;
+    }
     // 右键：有选区时复制并取消选择（右键 = 复制 + 取消所选）；
     // 单击空白/Esc 仍取消选择
     let rmb_pos = resp.interact_pointer_pos();

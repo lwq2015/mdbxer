@@ -371,6 +371,13 @@ impl<'a> FoldView<'a> {
                 .data_mut(|d| d.remove_temp::<Option<FoldDrag>>(self.sel_id));
         }
 
+        if lv.resp.clicked_by(egui::PointerButton::Primary)
+            && press_pos.is_some_and(in_body)
+            && sel.is_some()
+        {
+            *sel = None;
+        }
+
         // 右键单击正文：有选区时复制并取消选择（右键 = 复制 + 取消所选）
         if lv.resp.secondary_clicked()
             && press_pos.is_some_and(in_body)
