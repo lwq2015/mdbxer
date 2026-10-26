@@ -2672,6 +2672,10 @@ impl eframe::App for MdbxerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
+        crate::logging::set_crash_context(detail::crash_context(
+            self,
+            self.db.is_some() && self.detail_visible && self.tab == CenterTab::Data,
+        ));
         // 主窗口首帧居中：winit 默认把窗口放在屏幕左上角附近。
         // monitor_size 上报前一帧为 None，未成功前逐帧重试
         if !self.centered {

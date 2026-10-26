@@ -40,7 +40,8 @@ fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1280.0, 760.0])
         .with_min_inner_size([900.0, 560.0])
-        .with_drag_and_drop(true);
+        .with_drag_and_drop(true)
+        .with_icon(std::sync::Arc::new(app_icon()));
     // 恢复上次会话的窗口置顶状态
     if config::load_ui_prefs().always_on_top.unwrap_or(false) {
         viewport = viewport.with_always_on_top();
@@ -72,6 +73,18 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(app))
         }),
     )
+}
+
+fn app_icon() -> egui::IconData {
+    let image = image::load_from_memory(include_bytes!("../assets/mdbxer.png"))
+        .expect("failed to load the MDBXer application icon")
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    egui::IconData {
+        rgba: image.into_raw(),
+        width,
+        height,
+    }
 }
 
 /// 窗口标题："MDBXer v<版本> · <构建日期>"。

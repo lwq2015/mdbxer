@@ -22,6 +22,55 @@ use crate::fmt;
 use crate::i18n::tr;
 use crate::ui::MdbxerApp;
 
+/// 生成不含 Key/Value 原文的详情面板崩溃上下文。
+pub(super) fn crash_context(app: &MdbxerApp, visible: bool) -> String {
+    if !visible {
+        return "详情面板当前不可见".to_string();
+    }
+
+    let table = app
+        .db
+        .as_ref()
+        .and_then(|db| app.selected_table.and_then(|i| db.tables.get(i)))
+        .map(|table| table.name.as_deref().unwrap_or("(main)"))
+        .unwrap_or("(none)");
+    let Some(row_idx) = app.selected_row else {
+        return format!(
+            "详情面板可见；数据库={:?}，表={table:?}，未选中行",
+            app.opened_path
+        );
+    };
+    let Some(row) = app.rows.get(row_idx) else {
+        return format!(
+            "详情面板可见；数据库={:?}，表={table:?}，选中行索引={row_idx} 无效",
+            app.opened_path
+        );
+    };
+
+    let row_no = app
+        .base_index
+        .map(|base| base.saturating_add(row_idx).saturating_add(1).to_string())
+        .unwrap_or_else(|| "未知".to_string());
+    let value_len = app
+        .detail
+        .current_dup_value()
+        .map_or(row.value.len(), Vec::len);
+    format!(
+        "详情面板可见；数据库={:?}，表={table:?}，行索引={row_idx}，行号={row_no}，\
+         Key 字节数={}（格式={:?}，偏移={}），Value 字节数={}（格式={:?}，偏移={}），\
+         多值序号={}/{}",
+        app.opened_path,
+        row.key.len(),
+        app.detail.key.mode,
+        app.detail.key.seg_off,
+        value_len,
+        app.detail.val.mode,
+        app.detail.val.seg_off,
+        app.detail.dup.index.saturating_add(1),
+        app.detail.dup.total
+    )
+}
+
 /// Key tooltip：按表格当前 Key 解码格式生成有界预览。
 pub(super) fn tooltip_key_text(
     bytes: &[u8],
@@ -87,6 +136,7 @@ const CARD_GAP: f32 = 8.0;
 
 /// 右栏入口：无选中行时显示提示；有选中行时显示 Key/Value 两张卡片。
 pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    crate::logging::set_crash_context(crash_context(app, true));
     let t = tr();
     let left_w = if app.left_visible {
         app.left_panel_w

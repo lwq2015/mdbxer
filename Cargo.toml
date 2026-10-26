@@ -8,6 +8,7 @@ license = "Apache-2.0"
 eframe = "0.36.2"
 egui = "0.36.2"
 egui_extras = "0.36.2"
+image = { version = "0.25", default-features = false, features = ["png"] }
 libmdbx = { git = "https://github.com/vorot93/libmdbx-rs.git", branch = "master" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 serde = { version = "1", features = ["derive"] }
@@ -32,6 +33,9 @@ roxmltree = "0.20"
 snap = "1"
 # 仅运行时解压（brotli 无魔数，试探解码兜底）
 brotli-decompressor = "4"
+
+[build-dependencies]
+winres = "0.1"
 
 [dev-dependencies]
 # 测试用：生成 brotli 压缩样本（运行时只用 brotli-decompressor）

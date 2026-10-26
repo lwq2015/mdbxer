@@ -15,6 +15,7 @@
 //! 写盘失败退化为 stderr，绝不影响主流程。
 
 use chrono::Local;
+use std::backtrace::Backtrace;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -73,6 +74,7 @@ impl Level {
 }
 
 static LEVEL: AtomicU8 = AtomicU8::new(Level::Info as u8);
+static CRASH_CONTEXT: Mutex<String> = Mutex::new(String::new());
 
 /// 当前日志等级。
 pub fn level() -> Level {
@@ -261,6 +263,14 @@ pub fn debug(msg: &str) {
     write(Level::Debug, msg);
 }
 
+/// 更新 panic 日志附带的最近界面上下文。
+pub fn set_crash_context(context: String) {
+    match CRASH_CONTEXT.lock() {
+        Ok(mut current) => *current = context,
+        Err(poisoned) => *poisoned.into_inner() = context,
+    }
+}
+
 /// 把 panic 记入日志（Error 级，含位置）后转交原钩子，保留默认行为。
 pub fn install_panic_hook() {
     let prev = std::panic::take_hook();
@@ -269,7 +279,14 @@ pub fn install_panic_hook() {
             .location()
             .map(|l| l.to_string())
             .unwrap_or_else(|| "未知位置".to_string());
-        error(&format!("panic：{info}（{loc}）"));
+        let backtrace = Backtrace::force_capture();
+        let context = match CRASH_CONTEXT.lock() {
+            Ok(current) => current.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        error(&format!(
+            "panic：{info}（{loc}）\n崩溃上下文：{context}\n崩溃栈：\n{backtrace}"
+        ));
         prev(info);
     }));
 }
