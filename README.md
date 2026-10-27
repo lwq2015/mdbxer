@@ -1,5 +1,9 @@
 # MDBXer
 
+[简体中文](README.md) | [English](README.en.md)
+
+MDBXer is a cross-platform GUI viewer and browser for [libmdbx](https://libmdbx.dqdkfa.ru/) databases. Built with Rust and egui, it lets you browse tables, keys, and values, and inspect structured or binary data including JSON, BSON, and Protocol Buffers. Available for Windows, Linux, and macOS.
+
 [libmdbx](https://libmdbx.dqdkfa.ru/) 数据库的图形浏览工具，日常以只读方式打开；用户可显式确认执行恢复。Rust 2024 + egui 0.36 实现，单文件分发，跨平台（Windows / Linux / macOS）。
 
 > 向 libmdbx 及其作者 Leonid Yuriev 致敬——本工具内置俄语界面（Русский）。
@@ -56,6 +60,21 @@
 - Key/Value 复制完整解码文本、另存原始字节（不经截断/解码）
 - 三栏宽度互相约束（左栏 120–320，中央区域保底 300）
 - 工具栏下拉支持滚轮切换
+
+## 与其它 MDBX 可视化工具对比
+
+以下对比聚焦于公开资料中可直接核实的 [MDBX Navigator](https://github.com/wmitsuda/mdbx-navigator)；不代表对其未列出功能的判断，也不是完整的同类产品清单。
+
+| 维度 | MDBXer | MDBX Navigator |
+|---|---|---|
+| 交互方式 | Windows / Linux / macOS 桌面 GUI | 本地后端提供 Web UI，通过浏览器访问 |
+| 打开方式 | 文件、目录或自动判断；支持文件选择、拖放和命令行路径 | 启动后端时指定数据库文件路径 |
+| 打开策略 | 日常只读；只读打开失败时，可由用户确认尝试恢复 | README 描述为只读、独占方式打开 |
+| 浏览重点 | 表格浏览、锚点分页、多值表导航与大字段分段 | 以只读浏览 libmdbx 数据内容为目标的轻量 UI |
+| 值内容检查 | 35 种格式自动识别或手动解析，包含压缩穿透、JSON/BSON/Protobuf 和 Hex | 公开 README 重点介绍通过浏览器浏览数据库表内容 |
+| 获取与构建 | 提供 Windows、Linux、macOS 预编译版本；源码构建使用 Rust | README 描述 Go 后端与内嵌 Web UI；源码构建还涉及 Node.js 与 pnpm |
+
+**如何选择：**想用桌面应用快速打开数据库，并重点检查编码、结构化或二进制 Value，可考虑 MDBXer；偏好通过浏览器访问本地只读浏览界面，可看看 MDBX Navigator。具体能力和平台支持请以各项目的最新文档与发布包为准。
 
 ## 构建与运行
 
