@@ -623,6 +623,7 @@ impl MdbxerApp {
         detail.show_hex = prefs.show_hex.unwrap_or(true);
         detail.show_ascii = prefs.show_ascii.unwrap_or(true);
         detail.show_text_line_numbers = prefs.show_text_line_numbers.unwrap_or(false);
+        detail.highlight_all_matches = prefs.highlight_all_matches.unwrap_or(false);
         detail.show_hex_line_numbers = prefs.show_hex_line_numbers.unwrap_or(false);
         detail.hex_compact = prefs.hex_compact.unwrap_or(false);
         // 脏配置兜底：HEX/ASCII 至少保留一项（手动改错配置文件时）
@@ -2163,6 +2164,7 @@ impl MdbxerApp {
             show_hex: Some(self.detail.show_hex),
             show_ascii: Some(self.detail.show_ascii),
             show_text_line_numbers: Some(self.detail.show_text_line_numbers),
+            highlight_all_matches: Some(self.detail.highlight_all_matches),
             show_hex_line_numbers: Some(self.detail.show_hex_line_numbers),
             hex_compact: Some(self.detail.hex_compact),
             hex_width: Some(self.detail.hex_width),

@@ -102,6 +102,8 @@ pub(super) const EN: I18n = I18n {
     search_hint: "Search values: text, hex(...), binary(...), or dec(...)",
     search_prev_tip: "Search backward (Shift+Enter/Ctrl+Enter; Shift+F3 from anywhere; wraps at ends)",
     search_next_tip: "Search forward (Enter; F3 from anywhere; wraps at ends)",
+    highlight_all_matches: "All",
+    highlight_all_matches_tip: "Highlight every match in the current segment; the current match uses a brighter color",
     guess_line_t: "Guessed: {label}, {n} bytes",
     bytes_t: "{n} bytes",
     fold_summary_t: "… {n} lines",

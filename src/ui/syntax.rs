@@ -25,6 +25,13 @@ pub(crate) struct JsonTok {
     kind: TokKind,
 }
 
+/// Display-coordinate ranges for search matches and the currently selected match.
+#[derive(Default)]
+pub(crate) struct SearchHighlights {
+    pub(crate) ranges: Vec<(usize, usize)>,
+    pub(crate) active: Option<(usize, usize)>,
+}
+
 /// 跨 JSON、YAML、TOML、XML 等格式复用的语法高亮类别。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum TokKind {
@@ -680,21 +687,14 @@ pub(crate) fn append_colored(
     tokens: &[JsonTok],
     base: egui::text::TextFormat,
     palette: &[egui::Color32; 6],
-    hit: Option<(usize, usize)>,
+    highlights: &SearchHighlights,
 ) {
-    let hit_bg = egui::Color32::from_rgba_unmultiplied(0xF5, 0xA6, 0x23, 0x66);
     let mut fmt_for = |start: usize, end: usize, color: egui::Color32| {
-        let mut f = egui::text::TextFormat {
+        let format = egui::text::TextFormat {
             color,
             ..base.clone()
         };
-        if let Some((hs, he)) = hit
-            && start < he
-            && end > hs
-        {
-            f.background = hit_bg;
-        }
-        job.append(&s[start..end], 0.0, f);
+        append_highlighted(job, &s[start..end], start, format, highlights);
     };
     let mut pos = 0usize;
     for tok in tokens {
@@ -706,6 +706,39 @@ pub(crate) fn append_colored(
     }
     if pos < s.len() {
         fmt_for(pos, s.len(), base.color);
+    }
+}
+
+fn append_highlighted(
+    job: &mut egui::text::LayoutJob,
+    text: &str,
+    offset: usize,
+    format: egui::text::TextFormat,
+    highlights: &SearchHighlights,
+) {
+    let end = offset + text.len();
+    let mut boundaries = vec![0, text.len()];
+    for (start, stop) in highlights.ranges.iter().copied().chain(highlights.active) {
+        let start = start.max(offset);
+        let stop = stop.min(end);
+        if start < stop {
+            boundaries.push(start - offset);
+            boundaries.push(stop - offset);
+        }
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+
+    for pair in boundaries.windows(2) {
+        let (start, stop) = (pair[0], pair[1]);
+        if start == stop {
+            continue;
+        }
+        let mut fragment_format = format.clone();
+        if let Some(background) = highlight_background(offset + start, offset + stop, highlights) {
+            fragment_format.background = background;
+        }
+        job.append(&text[start..stop], 0.0, fragment_format);
     }
 }
 
@@ -821,9 +854,8 @@ pub(crate) fn append_line_colored(
     le: usize,
     base: egui::text::TextFormat,
     palette: &[egui::Color32; 6],
-    hit: Option<(usize, usize)>,
+    highlights: &SearchHighlights,
 ) {
-    let hit_bg = egui::Color32::from_rgba_unmultiplied(0xF5, 0xA6, 0x23, 0x66);
     let mut pos = ls;
     for tok in toks {
         let ts = tok.start.max(ls);
@@ -832,21 +864,34 @@ pub(crate) fn append_line_colored(
             continue; // token 与本行不相交
         }
         if ts > pos {
-            job.append(&line[pos - ls..ts - ls], 0.0, base.clone());
+            append_highlighted(job, &line[pos - ls..ts - ls], pos, base.clone(), highlights);
         }
         let mut f = base.clone();
         f.color = palette[tok.kind.palette_index()];
-        if let Some((hs, he)) = hit
-            && ts < he
-            && te > hs
-        {
-            f.background = hit_bg;
-        }
-        job.append(&line[ts - ls..te - ls], 0.0, f);
+        append_highlighted(job, &line[ts - ls..te - ls], ts, f, highlights);
         pos = te;
     }
     if pos < le {
-        job.append(&line[pos - ls..le - ls], 0.0, base);
+        append_highlighted(job, &line[pos - ls..le - ls], pos, base, highlights);
+    }
+}
+
+fn highlight_background(
+    start: usize,
+    end: usize,
+    highlights: &SearchHighlights,
+) -> Option<egui::Color32> {
+    let overlaps = |(hs, he): &(usize, usize)| start < *he && end > *hs;
+    if highlights.active.as_ref().is_some_and(overlaps) {
+        Some(egui::Color32::from_rgba_unmultiplied(
+            0xF5, 0xA6, 0x23, 0x99,
+        ))
+    } else if highlights.ranges.iter().any(overlaps) {
+        Some(egui::Color32::from_rgba_unmultiplied(
+            0x45, 0x91, 0xD5, 0x55,
+        ))
+    } else {
+        None
     }
 }
 
@@ -854,8 +899,111 @@ pub(crate) fn append_line_colored(
 mod tests {
     // ── JSON 语法着色 ──────────────────────────────────────────────
 
-    use super::{TokKind, json_tokens, syntax_mode};
+    use super::{
+        JsonTok, SearchHighlights, TokKind, append_colored, append_line_colored,
+        highlight_background, json_tokens, syntax_mode,
+    };
+
+    fn highlighted_text(job: &egui::text::LayoutJob) -> Vec<&str> {
+        job.sections
+            .iter()
+            .filter(|section| section.format.background != egui::Color32::TRANSPARENT)
+            .map(|section| &job.text[section.byte_range.start.0..section.byte_range.end.0])
+            .collect()
+    }
+
+    fn base_format() -> egui::text::TextFormat {
+        egui::text::TextFormat::default()
+    }
+
+    #[test]
+    fn plain_text_highlights_only_matching_ranges() {
+        let text = "prefix needle and needle suffix";
+        let highlights = SearchHighlights {
+            ranges: vec![(7, 13), (18, 24)],
+            active: Some((18, 24)),
+        };
+        let mut job = egui::text::LayoutJob::default();
+
+        append_colored(
+            &mut job,
+            text,
+            &[],
+            base_format(),
+            &[egui::Color32::WHITE; 6],
+            &highlights,
+        );
+
+        assert_eq!(highlighted_text(&job), ["needle", "needle"]);
+    }
+
+    #[test]
+    fn search_highlight_splits_json_string_token_at_match_boundaries() {
+        let text = "\"request needle completed\"";
+        let start = text.find("needle").unwrap();
+        let highlights = SearchHighlights {
+            ranges: vec![(start, start + "needle".len())],
+            active: Some((start, start + "needle".len())),
+        };
+        let token = JsonTok {
+            start: 0,
+            end: text.len(),
+            kind: TokKind::Str,
+        };
+        let mut job = egui::text::LayoutJob::default();
+
+        append_colored(
+            &mut job,
+            text,
+            &[token],
+            base_format(),
+            &[egui::Color32::WHITE; 6],
+            &highlights,
+        );
+
+        assert_eq!(highlighted_text(&job), ["needle"]);
+    }
+
+    #[test]
+    fn folded_line_highlight_splits_token_at_match_boundaries() {
+        let text = "  \"request needle completed\"";
+        let start = text.find("needle").unwrap();
+        let highlights = SearchHighlights {
+            ranges: vec![(start, start + "needle".len())],
+            active: Some((start, start + "needle".len())),
+        };
+        let token = JsonTok {
+            start: 2,
+            end: text.len(),
+            kind: TokKind::Str,
+        };
+        let mut job = egui::text::LayoutJob::default();
+
+        append_line_colored(
+            &mut job,
+            text,
+            &[token],
+            0,
+            text.len(),
+            base_format(),
+            &[egui::Color32::WHITE; 6],
+            &highlights,
+        );
+
+        assert_eq!(highlighted_text(&job), ["needle"]);
+    }
     use crate::fmt::DecodeMode;
+
+    #[test]
+    fn active_search_hit_uses_stronger_background_than_other_hits() {
+        let highlights = SearchHighlights {
+            ranges: vec![(0, 2), (4, 6)],
+            active: Some((4, 6)),
+        };
+        let other_bg = highlight_background(0, 2, &highlights).unwrap();
+        let active_bg = highlight_background(4, 6, &highlights).unwrap();
+        assert_ne!(other_bg, active_bg);
+    }
 
     /// 取 (文本片段, 类别) 列表，方便断言。
     fn tok_pairs(s: &str) -> Vec<(&str, TokKind)> {

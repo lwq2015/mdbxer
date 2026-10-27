@@ -12,7 +12,9 @@ use crate::i18n::tr;
 use crate::ui::MdbxerApp;
 use crate::ui::detail::state::Side;
 use crate::ui::detail::text_fp;
-use crate::ui::syntax::{FoldLine, append_colored, fold_lines, json_palette, syntax_tokens};
+use crate::ui::syntax::{
+    FoldLine, SearchHighlights, append_colored, fold_lines, json_palette, syntax_tokens,
+};
 
 /// 渲染文本区（含折叠头、猜测行、内容滚动）。
 pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
@@ -49,7 +51,14 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
 
     let (guess_text, binary_guess) = guess_text(app, ctx);
     let scroll_to = scroll_target(app, ctx);
-    let hit_range = hit_range(app, ctx, &display_text, binary_guess);
+    let highlights = hit_ranges(
+        app,
+        ctx,
+        &display_text,
+        binary_guess,
+        syntax_kind,
+        app.detail.highlight_all_matches,
+    );
     let lines = fold_line_list(syntax_kind, &display_text);
     let fold_active = lines.iter().any(|f| f.fold_end.is_some());
     let show_line_numbers = app.detail.show_text_line_numbers;
@@ -97,7 +106,7 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
                 show_line_numbers,
                 syntax_kind.unwrap_or(DecodeMode::Json),
                 &palette,
-                hit_range,
+                &highlights,
                 scroll_line,
                 &stored,
                 &mut sel,
@@ -112,7 +121,7 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
             ctx,
             &display_text,
             syntax_kind,
-            hit_range,
+            &highlights,
             scroll_to,
             text_h,
             line_h,
@@ -166,23 +175,86 @@ fn scroll_target(app: &mut MdbxerApp, ctx: &CardCtx<'_>) -> Option<usize> {
     }
 }
 
-/// 文本区命中高亮区间（相对显示文本）：仅当"实际显示文本"与窗口字节 1:1
-/// （即显示原文，长度相等且为合法 UTF-8）时可靠；hex/数值/pretty JSON 等
-/// 重编码显示不映射，只滚动不高亮。
-fn hit_range(
+/// 将当前段内的搜索命中映射到显示文本坐标；pretty JSON 按原始出现序号映射。
+fn hit_ranges(
     app: &MdbxerApp,
     ctx: &CardCtx<'_>,
     display_text: &str,
     binary_guess: bool,
-) -> Option<(usize, usize)> {
-    let (hit_abs, hit_len) = match ctx.side {
+    syntax_kind: Option<DecodeMode>,
+    highlight_all: bool,
+) -> SearchHighlights {
+    let card = match ctx.side {
         Side::Key => &app.detail.key,
         Side::Value => &app.detail.val,
+    };
+    let active = card.blob_hit.and_then(|(hit_abs, hit_len)| {
+        if hit_abs < ctx.off || hit_abs >= ctx.off + ctx.window.len() {
+            return None;
+        }
+        map_hit_range(
+            ctx,
+            display_text,
+            binary_guess,
+            syntax_kind,
+            hit_abs - ctx.off,
+            hit_len,
+        )
+    });
+    let hit_query = card.blob_query.as_deref();
+    if !highlight_all {
+        return SearchHighlights {
+            ranges: active.into_iter().collect(),
+            active,
+        };
     }
-    .blob_hit?;
-    if hit_abs < ctx.off || hit_abs >= ctx.off + ctx.window.len() {
-        return None;
+
+    let Some(query) = hit_query else {
+        return SearchHighlights {
+            ranges: active.into_iter().collect(),
+            active,
+        };
+    };
+    if query.is_empty() || query.len() > ctx.window.len() {
+        return SearchHighlights {
+            ranges: active.into_iter().collect(),
+            active,
+        };
     }
+
+    let raw_hits = super::super::search::find_all_hits(ctx.window, query, ctx.off);
+    let mut hits = Vec::new();
+    for (abs_start, byte_len) in raw_hits {
+        if let Some(range) = map_hit_range(
+            ctx,
+            display_text,
+            binary_guess,
+            syntax_kind,
+            abs_start - ctx.off,
+            byte_len,
+        ) {
+            hits.push(range);
+        }
+    }
+    if let Some(active) = active
+        && !hits.contains(&active)
+    {
+        hits.push(active);
+    }
+    SearchHighlights {
+        ranges: hits,
+        active,
+    }
+}
+
+fn map_hit_range(
+    ctx: &CardCtx<'_>,
+    display_text: &str,
+    binary_guess: bool,
+    syntax_kind: Option<DecodeMode>,
+    byte_start: usize,
+    byte_len: usize,
+) -> Option<(usize, usize)> {
     let byte_format = match ctx.mode {
         DecodeMode::Hex => Some(ByteFormat::Hex),
         DecodeMode::Binary => Some(ByteFormat::Binary),
@@ -191,19 +263,17 @@ fn hit_range(
         _ => None,
     };
     if let Some(format) = byte_format {
-        return byte_range_in_byte_text(
-            display_text,
-            ctx.window,
-            hit_abs - ctx.off,
-            hit_len,
-            format,
-        );
+        return byte_range_in_byte_text(display_text, ctx.window, byte_start, byte_len, format);
     }
-    if display_text.len() != ctx.window.len() || std::str::from_utf8(ctx.window).is_err() {
+    if display_text.as_bytes() != ctx.window {
+        if syntax_kind == Some(DecodeMode::Json) {
+            let end = byte_start.checked_add(byte_len)?;
+            return remapped_text_hit_range(ctx.window, byte_start, end, display_text);
+        }
         return None;
     }
-    let mut hs = hit_abs - ctx.off;
-    let mut he = (hs + hit_len).min(display_text.len());
+    let mut hs = byte_start;
+    let mut he = hs.checked_add(byte_len)?.min(display_text.len());
     while hs > 0 && !display_text.is_char_boundary(hs) {
         hs -= 1;
     }
@@ -211,6 +281,41 @@ fn hit_range(
         he += 1;
     }
     (hs < he).then_some((hs, he))
+}
+
+/// 把压缩 JSON 中的 UTF-8 子串命中映射到 pretty JSON 中相同子串的对应出现位置。
+fn remapped_text_hit_range(
+    source: &[u8],
+    hit_start: usize,
+    hit_end: usize,
+    display_text: &str,
+) -> Option<(usize, usize)> {
+    let matched = std::str::from_utf8(source.get(hit_start..hit_end)?).ok()?;
+    if matched.is_empty() {
+        return None;
+    }
+
+    let mut occurrence = 0;
+    let mut scan = 0;
+    while scan < hit_start {
+        let Some(relative) = source[scan..]
+            .windows(matched.len())
+            .position(|window| window == matched.as_bytes())
+        else {
+            break;
+        };
+        let start = scan + relative;
+        if start >= hit_start {
+            break;
+        }
+        occurrence += 1;
+        scan = start + matched.len();
+    }
+
+    display_text
+        .match_indices(matched)
+        .nth(occurrence)
+        .map(|(start, text)| (start, start + text.len()))
 }
 
 #[derive(Clone, Copy)]
@@ -305,7 +410,7 @@ fn text_edit_body(
     ctx: &CardCtx<'_>,
     display_text: &str,
     syntax_kind: Option<DecodeMode>,
-    hit_range: Option<(usize, usize)>,
+    highlights: &SearchHighlights,
     scroll_to: Option<usize>,
     text_h: f32,
     line_h: f32,
@@ -336,10 +441,11 @@ fn text_edit_body(
             // 一致（同 wrap、同 row_height、保留尾空白），故可安全无条件使用。
             let mut layouter = move |ui: &egui::Ui, s: &dyn egui::TextBuffer, wrap: f32| {
                 hit_wrap_layouter.set(Some(wrap));
-                layout_job(ui, s.as_str(), syntax_kind, hit_range, &palette, wrap)
+                layout_job(ui, s.as_str(), syntax_kind, highlights, &palette, wrap)
             };
-            let output = if show_line_numbers {
-                let gutter_width = line_number_gutter_width(ui, display_text, every_display_row);
+            let gutter_width = show_line_numbers
+                .then(|| line_number_gutter_width(ui, display_text, every_display_row));
+            let mut output = if let Some(gutter_width) = gutter_width {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     let gutter_right = ui.cursor().left() + gutter_width - 4.0;
@@ -358,6 +464,49 @@ fn text_edit_body(
             } else {
                 te.layouter(&mut layouter).show(ui)
             };
+            let line_selection = gutter_width.and_then(|gutter_width| {
+                let gutter_rect = egui::Rect::from_min_max(
+                    egui::pos2(
+                        output.galley_pos.x - gutter_width + 4.0,
+                        output.galley_pos.y,
+                    ),
+                    egui::pos2(
+                        output.galley_pos.x,
+                        output.galley_pos.y + output.galley.size().y,
+                    ),
+                );
+                let response = ui.interact(
+                    gutter_rect,
+                    output.response.id.with("line_number_gutter"),
+                    egui::Sense::click(),
+                );
+                if response.hovered() {
+                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                }
+                if !response.clicked_by(egui::PointerButton::Primary) {
+                    return None;
+                }
+                let pointer = response.interact_pointer_pos()?;
+                if every_display_row {
+                    visual_row_char_range(
+                        output.galley.rows.iter().map(|row| {
+                            (
+                                row.pos.y,
+                                row.row.size.y,
+                                row.char_count_including_newline().0,
+                            )
+                        }),
+                        pointer.y - output.galley_pos.y,
+                    )
+                } else {
+                    let char_index = output
+                        .galley
+                        .cursor_from_pos(pointer - output.galley_pos)
+                        .index
+                        .0;
+                    Some(line_char_range(display_text, char_index))
+                }
+            });
             let te_response = &output.response;
             let te_rect = te_response.rect;
             if let Some(hit_abs) = scroll_to {
@@ -366,7 +515,7 @@ fn text_edit_body(
                     te_rect,
                     content_top,
                     display_text,
-                    hit_range,
+                    highlights.active,
                     hit_abs,
                     ctx,
                     &hit_wrap,
@@ -374,7 +523,51 @@ fn text_edit_body(
                 );
             }
             text_edge_auto_scroll(ui, te_response, line_h);
+            if let Some((start, end)) = line_selection {
+                output.response.request_focus();
+                output
+                    .state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(start),
+                        egui::text::CCursor::new(end),
+                    )));
+                output.state.store(ui.ctx(), output.response.id);
+            }
         });
+}
+
+fn line_char_range(text: &str, char_index: usize) -> (usize, usize) {
+    let char_count = text.chars().count();
+    let char_index = char_index.min(char_count);
+    let start = text
+        .chars()
+        .take(char_index)
+        .enumerate()
+        .filter_map(|(index, ch)| (ch == '\n').then_some(index + 1))
+        .last()
+        .unwrap_or(0);
+    let end = text
+        .chars()
+        .enumerate()
+        .skip(char_index)
+        .find_map(|(index, ch)| (ch == '\n').then_some(index + 1))
+        .unwrap_or(char_count);
+    (start, end)
+}
+
+fn visual_row_char_range(
+    rows: impl IntoIterator<Item = (f32, f32, usize)>,
+    y: f32,
+) -> Option<(usize, usize)> {
+    let mut char_start = 0;
+    for (row_y, row_height, char_count) in rows {
+        if y >= row_y && y < row_y + row_height {
+            return (char_count > 0).then_some((char_start, char_start + char_count));
+        }
+        char_start += char_count;
+    }
+    None
 }
 
 fn line_number_gutter_width(ui: &egui::Ui, text: &str, every_display_row: bool) -> f32 {
@@ -494,7 +687,7 @@ fn layout_job(
     ui: &egui::Ui,
     s: &str,
     syntax: Option<DecodeMode>,
-    hit: Option<(usize, usize)>,
+    highlights: &SearchHighlights,
     palette: &[egui::Color32; 6],
     wrap: f32,
 ) -> std::sync::Arc<egui::Galley> {
@@ -508,24 +701,10 @@ fn layout_job(
         ..Default::default()
     };
     let mut job = egui::text::LayoutJob::default();
-    if let Some(mode) = syntax {
-        // s 即整段解码文本（合法结构化文本，pretty 多行），按格式分派词法分词器着色
-        let toks = syntax_tokens(mode, s);
-        append_colored(&mut job, s, &toks, base, palette, hit);
-    } else if let Some((hs, he)) = hit {
-        job.append(&s[..hs], 0.0, base.clone());
-        job.append(
-            &s[hs..he],
-            0.0,
-            egui::text::TextFormat {
-                background: egui::Color32::from_rgba_unmultiplied(0xF5, 0xA6, 0x23, 0x66),
-                ..base.clone()
-            },
-        );
-        job.append(&s[he..], 0.0, base);
-    } else {
-        job.append(s, 0.0, base);
-    }
+    let tokens = syntax
+        .map(|mode| syntax_tokens(mode, s))
+        .unwrap_or_default();
+    append_colored(&mut job, s, &tokens, base, palette, highlights);
     job.wrap.max_width = wrap;
     job.keep_trailing_whitespace = true;
     ui.fonts_mut(|f| f.layout_job(job))
@@ -538,7 +717,7 @@ fn scroll_to_hit(
     te_rect: egui::Rect,
     content_top: f32,
     display_text: &str,
-    hit_range: Option<(usize, usize)>,
+    active_hit: Option<(usize, usize)>,
     hit_abs: usize,
     ctx: &CardCtx<'_>,
     hit_wrap: &std::rc::Rc<std::cell::Cell<Option<f32>>>,
@@ -550,7 +729,7 @@ fn scroll_to_hit(
     // 命中字符偏移（基于显示文本，与高亮/折行同源）：1:1 时直接取高亮起点或
     // 字节转字符；非 1:1（lossy 重编码的二进制 blob）按字符比例近似——
     // 每行字数比字节数均匀，比字节比例更贴近视觉折行。
-    let pc = if let Some((hs, _)) = hit_range {
+    let pc = if let Some((hs, _)) = active_hit {
         display_text[..hs].chars().count()
     } else if std::str::from_utf8(ctx.window).is_ok() {
         display_text.chars().take(hit_abs - ctx.off).count()
@@ -609,8 +788,8 @@ fn mono_line_height(ui: &egui::Ui) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ByteFormat, byte_range_in_byte_text, hard_line_number_positions, line_number_positions,
-        row_for_char,
+        ByteFormat, byte_range_in_byte_text, hard_line_number_positions, line_char_range,
+        line_number_positions, remapped_text_hit_range, row_for_char, visual_row_char_range,
     };
     use crate::fmt::{DecodeMode, Endian, HintFlags, decode};
 
@@ -621,6 +800,34 @@ mod tests {
         assert_eq!(row_for_char(rows, 5), 0);
         assert_eq!(row_for_char(rows, 6), 1);
         assert_eq!(row_for_char(rows, 12), 2);
+    }
+
+    #[test]
+    fn line_number_selection_includes_newline_and_handles_utf8() {
+        let text = "键一\nsecond\nlast";
+        let (start, end) = line_char_range(text, 1);
+        assert_eq!(
+            &text.chars().collect::<Vec<_>>()[start..end],
+            ['键', '一', '\n']
+        );
+        let (start, end) = line_char_range(text, 5);
+        assert_eq!(
+            &text.chars().collect::<Vec<_>>()[start..end],
+            "second\n".chars().collect::<Vec<_>>()
+        );
+        let (start, end) = line_char_range(text, usize::MAX);
+        assert_eq!(
+            &text.chars().collect::<Vec<_>>()[start..end],
+            ['l', 'a', 's', 't']
+        );
+    }
+
+    #[test]
+    fn binary_line_number_selects_only_the_clicked_visual_row() {
+        let rows = [(0.0, 16.0, 24), (16.0, 16.0, 24), (32.0, 16.0, 8)];
+        assert_eq!(visual_row_char_range(rows, 20.0), Some((24, 48)));
+        assert_eq!(visual_row_char_range(rows, 40.0), Some((48, 56)));
+        assert_eq!(visual_row_char_range(rows, 60.0), None);
     }
 
     #[test]
@@ -699,6 +906,46 @@ mod tests {
         assert_eq!(
             byte_range_in_byte_text(text, &bytes, 1, 4, ByteFormat::Hex),
             Some((3, 5))
+        );
+    }
+
+    #[test]
+    fn pretty_json_search_hit_maps_to_matching_occurrence() {
+        let source = br#"{"first":22,"second":22}"#;
+        let display = "{\n  \"first\": 22,\n  \"second\": 22\n}";
+        let second_hit = source
+            .windows(2)
+            .rposition(|window| window == b"22")
+            .unwrap();
+        let range = remapped_text_hit_range(source, second_hit, second_hit + 2, display).unwrap();
+        let expected = display.rfind("22").unwrap();
+        assert_eq!(range, (expected, expected + 2));
+    }
+
+    #[test]
+    fn pretty_json_all_search_hits_map_to_visible_text() {
+        let source = br#"{"first":22,"second":22}"#;
+        let display = "{\n  \"first\": 22,\n  \"second\": 22\n}";
+        let ranges: Vec<_> = super::super::super::search::find_all_hits(source, b"22", 0)
+            .into_iter()
+            .filter_map(|(start, len)| remapped_text_hit_range(source, start, start + len, display))
+            .collect();
+        assert_eq!(ranges.len(), 2);
+        assert!(
+            ranges
+                .iter()
+                .all(|&(start, end)| &display[start..end] == "22")
+        );
+    }
+
+    #[test]
+    fn pretty_json_search_does_not_highlight_unrepresented_query() {
+        let source = br#"{"value":22,"next":1}"#;
+        let display = "{\n  \"value\": 22\n}";
+        let start = source.windows(2).position(|window| window == b",\"");
+        assert_eq!(
+            start.and_then(|start| remapped_text_hit_range(source, start, start + 2, display)),
+            None
         );
     }
 }

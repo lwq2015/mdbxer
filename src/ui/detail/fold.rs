@@ -16,7 +16,7 @@ use super::state::Side;
 use super::text_fp;
 use crate::fmt::DecodeMode;
 use crate::i18n::tr;
-use crate::ui::syntax::{FoldLine, JsonTok, append_line_colored, syntax_tokens};
+use crate::ui::syntax::{FoldLine, JsonTok, SearchHighlights, append_line_colored, syntax_tokens};
 
 /// 行首折叠三角区域宽度。
 const TRIANGLE_GUTTER: f32 = 18.0;
@@ -28,7 +28,8 @@ const LINE_NUMBER_PADDING: f32 = 8.0;
 /// 展示语法高亮、折叠三角、可选行号和文本选区；根据内容指纹恢复折叠状态，
 /// 返回本次渲染后的内容指纹与折叠行号集合，供调用方持久化。
 ///
-/// `hit` 是显示文本中的命中字符区间，`scroll_line` 是需要滚动到可见区的逻辑行号；
+/// `highlights` 包含显示文本中的匹配区间与当前命中；
+/// `scroll_line` 是需要滚动到可见区的逻辑行号；
 /// `stored` 和 `sel` 分别承载上次折叠状态与当前选区。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show(
@@ -39,7 +40,7 @@ pub(super) fn show(
     show_line_numbers: bool,
     mode: DecodeMode,
     palette: &[egui::Color32; 6],
-    hit: Option<(usize, usize)>,
+    highlights: &SearchHighlights,
     scroll_line: Option<usize>,
     stored: &Option<(u64, Vec<usize>)>,
     sel: &mut Option<(usize, usize)>,
@@ -51,12 +52,17 @@ pub(super) fn show(
         .auto_shrink([false, true])
         .max_height(max_height)
         .show(ui, |ui| {
-            FoldView::new(ui, side, text, lines, show_line_numbers, mode, palette, hit).run(
+            FoldView::new(
                 ui,
-                stored,
-                scroll_line,
-                sel,
+                side,
+                text,
+                lines,
+                show_line_numbers,
+                mode,
+                palette,
+                highlights,
             )
+            .run(ui, stored, scroll_line, sel)
         })
         .inner
 }
@@ -94,8 +100,9 @@ struct FoldView<'a> {
     toks: Vec<JsonTok>,
     /// 各语法 token 对应的主题颜色。
     palette: &'a [egui::Color32; 6],
-    /// 当前搜索命中的显示文本字符区间。
-    hit: Option<(usize, usize)>,
+    /// 搜索命中的显示文本字符区间。
+    /// 搜索命中与当前命中的显示文本字符区间。
+    highlights: &'a SearchHighlights,
     /// 正文的基础字体和前景色格式。
     base: egui::text::TextFormat,
     /// 折叠摘要使用的弱化文本格式。
@@ -124,7 +131,7 @@ impl<'a> FoldView<'a> {
         show_line_numbers: bool,
         mode: DecodeMode,
         palette: &'a [egui::Color32; 6],
-        hit: Option<(usize, usize)>,
+        highlights: &'a SearchHighlights,
     ) -> Self {
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
         // 行高与 Hex 视图一致（不额外加 extra_text_line_spacing），使同窗口内
@@ -158,7 +165,7 @@ impl<'a> FoldView<'a> {
             show_line_numbers,
             toks: syntax_tokens(mode, text),
             palette,
-            hit,
+            highlights,
             base,
             weak,
             line_h,
@@ -201,12 +208,21 @@ impl<'a> FoldView<'a> {
             }
             let is_folded = self.folded.contains(&i);
             let lv = self.render_line(ui, i, fl, is_folded, wrap_w);
-            self.handle_pointer(ui, fl, &lv, sel, drag);
+            self.handle_pointer(ui, i, fl, &lv, sel, drag);
 
             // 正文悬停显示文本光标（gutter/三角区域保持各自光标）
             let in_body = |p: egui::Pos2| p.x >= lv.rect.left() + self.gutter_width;
             if lv.resp.hovered() && ui.input(|i| i.pointer.hover_pos()).is_none_or(in_body) {
                 ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Text);
+            }
+            if lv.resp.hovered()
+                && ui.input(|i| i.pointer.any_pressed())
+                && ui
+                    .input(|i| i.pointer.interact_pos())
+                    .is_some_and(|p| p.x >= lv.rect.left() + TRIANGLE_GUTTER)
+            {
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(self.owner_id, Some(self.sel_id)));
             }
 
             self.paint_selection(ui, fl, &lv, sel);
@@ -276,7 +292,7 @@ impl<'a> FoldView<'a> {
             fl.end,
             self.base.clone(),
             self.palette,
-            self.hit,
+            self.highlights,
         );
         if is_folded {
             let hidden = fl.fold_end.unwrap_or(i) - i;
@@ -302,6 +318,7 @@ impl<'a> FoldView<'a> {
     fn handle_pointer(
         &self,
         ui: &mut egui::Ui,
+        i: usize,
         fl: FoldLine,
         lv: &LineView,
         sel: &mut Option<(usize, usize)>,
@@ -309,6 +326,29 @@ impl<'a> FoldView<'a> {
     ) {
         let in_body = |p: egui::Pos2| p.x >= lv.rect.left() + self.gutter_width;
         let press_pos = lv.resp.interact_pointer_pos();
+        if lv.resp.double_clicked_by(egui::PointerButton::Primary) && press_pos.is_some_and(in_body)
+        {
+            let pointer = press_pos.unwrap();
+            let local = pointer - egui::vec2(lv.rect.left() + self.gutter_width, lv.rect.top());
+            let char_index = galley_char_offset(&lv.galley, local, self.line_chars(fl));
+            let line = &self.text[fl.start..fl.end];
+            let (start, end) = word_byte_range(line, char_index);
+            *sel = Some((fl.start + start, fl.start + end));
+        }
+
+        if self.show_line_numbers
+            && lv.resp.clicked_by(egui::PointerButton::Primary)
+            && let Some(pointer) = press_pos
+            && pointer.x >= lv.rect.left() + TRIANGLE_GUTTER
+            && pointer.x < lv.rect.left() + self.gutter_width
+        {
+            let line_end = self
+                .lines
+                .get(i + 1)
+                .map_or(self.text.len(), |next| next.start);
+            *sel = Some((fl.start, line_end));
+        }
+
         if lv.resp.drag_started() && press_pos.is_some_and(in_body) {
             let lp =
                 press_pos.unwrap() - egui::vec2(lv.rect.left() + self.gutter_width, lv.rect.top());
@@ -360,10 +400,11 @@ impl<'a> FoldView<'a> {
 
         if lv.resp.drag_stopped() {
             // 单击正文（没拖动）不保留选区，等同放置光标
-            if let Some(FoldDrag { moved: false, .. }) = ui
-                .ctx()
-                .data(|d| d.get_temp::<Option<FoldDrag>>(self.sel_id))
-                .flatten()
+            if !lv.resp.double_clicked_by(egui::PointerButton::Primary)
+                && let Some(FoldDrag { moved: false, .. }) = ui
+                    .ctx()
+                    .data(|d| d.get_temp::<Option<FoldDrag>>(self.sel_id))
+                    .flatten()
             {
                 *sel = None;
             }
@@ -373,6 +414,7 @@ impl<'a> FoldView<'a> {
 
         if lv.resp.clicked_by(egui::PointerButton::Primary)
             && press_pos.is_some_and(in_body)
+            && !lv.resp.double_clicked_by(egui::PointerButton::Primary)
             && sel.is_some()
         {
             *sel = None;
@@ -388,8 +430,7 @@ impl<'a> FoldView<'a> {
         }
     }
 
-    /// 选区背景：正文选中字符逐 glyph 画半透明底色（先于文字绘制；
-    /// 摘要后缀不在选区内，天然不着色；折行后跨视觉行也按字符精确覆盖）。
+    /// 选区背景：每个视觉行画连续底色（先于文字绘制；摘要后缀不参与选择）。
     fn paint_selection(
         &self,
         ui: &egui::Ui,
@@ -408,19 +449,22 @@ impl<'a> FoldView<'a> {
         let ce = cs + line_str[lo - fl.start..hi - fl.start].chars().count();
         let origin = lv.rect.left_top() + egui::vec2(self.gutter_width, 0.0);
         let mut char_off = 0usize;
-        'glyphs: for prow in &lv.galley.rows {
-            for (gi, g) in prow.row.glyphs.iter().enumerate() {
-                let idx = char_off + gi;
-                if idx >= ce {
-                    break 'glyphs;
-                }
-                if idx >= cs {
-                    let grect = egui::Rect::from_min_size(
-                        origin + prow.pos.to_vec2() + egui::vec2(g.pos.x, 0.0),
-                        egui::vec2(g.advance_width, prow.row.size.y),
-                    );
-                    ui.painter().rect_filled(grect, 1.5, self.sel_bg);
-                }
+        for prow in &lv.galley.rows {
+            let row_char_start = char_off;
+            let row_char_end = row_char_start + prow.row.glyphs.len();
+            let selected_start = cs.max(row_char_start);
+            let selected_end = ce.min(row_char_end);
+            if selected_start < selected_end {
+                let first = &prow.row.glyphs[selected_start - row_char_start];
+                let last = &prow.row.glyphs[selected_end - row_char_start - 1];
+                let left = first.pos.x.min(last.pos.x);
+                let right =
+                    (first.pos.x + first.advance_width).max(last.pos.x + last.advance_width);
+                let rect = egui::Rect::from_min_max(
+                    origin + prow.pos.to_vec2() + egui::vec2(left, 0.0),
+                    origin + prow.pos.to_vec2() + egui::vec2(right, prow.row.size.y),
+                );
+                ui.painter().rect_filled(rect, 0.0, self.sel_bg);
             }
             char_off += prow.char_count_including_newline().0;
         }
@@ -512,14 +556,18 @@ impl<'a> FoldView<'a> {
         if owner != Some(self.sel_id) {
             return;
         }
-        let (copy, escape) = ui.input(|i| {
+        let (select_all, copy, escape) = ui.input(|i| {
             (
+                i.key_pressed(egui::Key::A) && i.modifiers.command,
                 i.events
                     .iter()
                     .any(|e| matches!(e, egui::Event::Copy | egui::Event::Cut)),
                 i.key_pressed(egui::Key::Escape),
             )
         });
+        if select_all {
+            *sel = Some((0, self.text.len()));
+        }
         if copy && let Some((a, b)) = *sel {
             let (lo, hi) = (a.min(b), a.max(b));
             ui.ctx().copy_text(self.text[lo..hi].to_owned());
@@ -545,6 +593,17 @@ fn char_to_byte(s: &str, n_chars: usize) -> usize {
     s.char_indices().nth(n_chars).map_or(s.len(), |(b, _)| b)
 }
 
+fn word_byte_range(text: &str, char_index: usize) -> (usize, usize) {
+    let cursor = egui::text::CCursor::new(char_index);
+    let start = egui::text_selection::text_cursor_state::ccursor_previous_word(text, cursor)
+        .index
+        .0;
+    let end = egui::text_selection::text_cursor_state::ccursor_next_word(text, cursor)
+        .index
+        .0;
+    (char_to_byte(text, start), char_to_byte(text, end))
+}
+
 /// 指针相对行 galley 左上角的位置 → galley 全文字符偏移（逐视觉行累计，自动处理
 /// 折行），再 clamp 到 `line_chars`：折叠摘要后缀不计入选区，落在摘要上视作正文行尾。
 fn galley_char_offset(galley: &egui::Galley, p: egui::Pos2, line_chars: usize) -> usize {
@@ -563,4 +622,16 @@ fn galley_char_offset(galley: &egui::Galley, p: egui::Pos2, line_chars: usize) -
     let row = &galley.rows[idx];
     off += row.row.char_at(p.x - row.pos.x).0;
     off.min(line_chars)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::word_byte_range;
+
+    #[test]
+    fn double_click_word_range_uses_utf8_byte_offsets() {
+        let text = "键 needle-amber 完成";
+        let range = word_byte_range(text, 5);
+        assert_eq!(&text[range.0..range.1], "needle");
+    }
 }

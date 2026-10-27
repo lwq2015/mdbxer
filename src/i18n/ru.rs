@@ -102,6 +102,8 @@ pub(super) const RU: I18n = I18n {
     search_hint: "Поиск значений: текст, hex(...), binary(...) или dec(...)",
     search_prev_tip: "Искать назад (Shift+Enter/Ctrl+Enter; Shift+F3 глобально; с переходом в конце)",
     search_next_tip: "Искать вперёд (Enter; F3 глобально; с переходом в конце)",
+    highlight_all_matches: "Все",
+    highlight_all_matches_tip: "Подсветить все совпадения в текущем сегменте; текущее совпадение выделено ярче",
     guess_line_t: "Тип: {label}, {n} байт",
     bytes_t: "{n} байт",
     fold_summary_t: "… {n} строк",

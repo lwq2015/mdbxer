@@ -252,6 +252,57 @@ fn proto_samples() -> Vec<(Vec<u8>, Vec<u8>)> {
     ]
 }
 
+/// Long structured JSON sample with repeated searchable text and values.
+fn long_json_sample() -> Vec<u8> {
+    let records: Vec<_> = (0..96)
+        .map(|i| {
+            let category = ["network", "storage", "worker"][i % 3];
+            serde_json::json!({
+                "sequence": i,
+                "category": category,
+                "message": format!("record-{i:03}: needle-amber request completed"),
+                "details": {
+                    "durationMs": (i * 17) % 500,
+                    "success": i % 7 != 0,
+                    "tags": ["searchable", "json", format!("batch-{:02}", i / 8)],
+                    "trace": format!("trace-{i:03}-cafe"),
+                },
+            })
+        })
+        .collect();
+    serde_json::to_vec(&serde_json::json!({
+        "title": "Long JSON search sample",
+        "description": "Long fixture for checking repeated matches and next/previous navigation.",
+        "records": records,
+        "summary": {
+            "recordCount": 96,
+            "source": "MDBXer test fixture",
+            "enabled": true,
+        },
+    }))
+    .expect("serialize long JSON search sample")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::long_json_sample;
+
+    #[test]
+    fn long_json_sample_has_many_searchable_matches() {
+        let bytes = long_json_sample();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let records = value["records"].as_array().unwrap();
+        let matches = bytes
+            .windows(b"needle-amber".len())
+            .filter(|window| *window == b"needle-amber")
+            .count();
+
+        assert!(bytes.len() > 512);
+        assert_eq!(records.len(), 96);
+        assert_eq!(matches, 96);
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let base = Path::new("testdata");
     std::fs::create_dir_all(base)?;
@@ -470,6 +521,8 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
             .as_bytes()
             .to_vec(),
         ),
+        // 长 JSON：重复的 needle-amber 可用于测试多处命中、高亮全部和上下条导航。
+        (b"json_search_long", long_json_sample()),
         // 非法 JSON：手动 Json 排版时应原样回退为文本
         (b"json_invalid", b"not a json string".to_vec()),
         // ── 新格式：BSON（Auto 应自动识别为 BSON，显示宽松扩展 JSON）──

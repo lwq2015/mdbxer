@@ -101,6 +101,9 @@ pub struct UiPrefs {
     #[serde(default)]
     #[serde(alias = "show_line_numbers")]
     pub show_text_line_numbers: Option<bool>,
+    /// 搜索时高亮当前段内的全部匹配项
+    #[serde(default)]
+    pub highlight_all_matches: Option<bool>,
     /// HexView 显示行号
     #[serde(default)]
     pub show_hex_line_numbers: Option<bool>,
@@ -478,6 +481,7 @@ mod tests {
             show_hex: Some(false),
             show_ascii: Some(true),
             show_text_line_numbers: Some(true),
+            highlight_all_matches: Some(true),
             show_hex_line_numbers: Some(false),
             hex_compact: Some(true),
             hex_width: Some(16),
@@ -507,6 +511,7 @@ mod tests {
         assert!(!back.hint_value.ipv4);
         assert_eq!(back.show_hex, Some(false));
         assert_eq!(back.show_text_line_numbers, Some(true));
+        assert_eq!(back.highlight_all_matches, Some(true));
         assert_eq!(back.show_hex_line_numbers, Some(false));
         assert_eq!(back.hex_compact, Some(true));
         assert_eq!(back.hex_width, Some(16));
@@ -538,6 +543,7 @@ mod tests {
         assert!(back.show_hex.is_none());
         assert!(back.show_ascii.is_none());
         assert!(back.show_text_line_numbers.is_none());
+        assert!(back.highlight_all_matches.is_none());
         assert!(back.show_hex_line_numbers.is_none());
         assert!(back.hex_compact.is_none());
         assert!(back.hex_width.is_none());

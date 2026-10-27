@@ -53,6 +53,8 @@ pub struct CardState {
     pub blob_input: String,
     /// 最近一次搜索命中区间（全局偏移 start, len），用于 hex 高亮
     pub blob_hit: Option<(usize, usize)>,
+    /// 最近一次成功搜索的查询字节，用于绘制当前段内的全部匹配
+    pub blob_query: Option<Vec<u8>>,
     /// 搜索命中序号与总数（1 起，VSCode 风格 n/m）
     pub blob_matches: Option<(usize, usize)>,
     /// 待滚动的命中字节位置（全局偏移，消费一次后清空）
@@ -73,6 +75,7 @@ impl Default for CardState {
             seg_input: String::new(),
             blob_input: String::new(),
             blob_hit: None,
+            blob_query: None,
             blob_matches: None,
             blob_scroll: None,
             fold: None,
@@ -88,6 +91,7 @@ impl CardState {
         self.seg_off = 0;
         self.seg_input.clear();
         self.blob_hit = None;
+        self.blob_query = None;
         self.blob_matches = None;
         self.blob_scroll = None;
         self.hex.sel = None;
@@ -160,6 +164,8 @@ pub struct DetailState {
     pub show_ascii: bool,
     /// 详情文本行号开关
     pub show_text_line_numbers: bool,
+    /// 是否同时高亮当前段内的全部搜索匹配
+    pub highlight_all_matches: bool,
     /// HexView 显示行号开关
     pub show_hex_line_numbers: bool,
     /// hex dump 紧凑格式：HEX 列字节间不加空格
@@ -180,6 +186,7 @@ impl Default for DetailState {
             show_hex: true,
             show_ascii: true,
             show_text_line_numbers: false,
+            highlight_all_matches: false,
             show_hex_line_numbers: false,
             hex_compact: false,
             hex_width: fmt::DEFAULT_HEX_WIDTH,
@@ -286,6 +293,7 @@ mod tests {
     fn line_number_options_default_to_off() {
         let state = DetailState::default();
         assert!(!state.show_text_line_numbers);
+        assert!(!state.highlight_all_matches);
         assert!(!state.show_hex_line_numbers);
     }
 
@@ -297,6 +305,7 @@ mod tests {
         st.key.seg_input = "0x10".into();
         st.key.blob_input = "abc".into();
         st.key.blob_hit = Some((1, 3));
+        st.key.blob_query = Some(b"abc".to_vec());
         st.key.fold = Some((7, vec![1]));
         st.key.hex.sel = Some((1, 3));
         st.key.hex.fp = Some((0, 4, Some(0), 0));
@@ -310,6 +319,7 @@ mod tests {
         assert!(st.key.seg_input.is_empty());
         assert!(st.key.blob_input.is_empty());
         assert_eq!(st.key.blob_hit, None);
+        assert_eq!(st.key.blob_query, None);
         // 折叠状态按内容指纹失效，不在 clear 里强行清空
         assert_eq!(st.key.fold, Some((7, vec![1])));
         assert_eq!(st.key.hex.sel, None);

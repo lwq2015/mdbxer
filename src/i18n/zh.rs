@@ -103,6 +103,8 @@ pub(super) const ZH: I18n = I18n {
     search_hint: "搜索值：文本、hex(...)、binary(...) 或 dec(...)",
     search_prev_tip: "向前查找（Shift+Enter/Ctrl+Enter；Shift+F3 全局继续；到头回绕）",
     search_next_tip: "向后查找（Enter；F3 全局继续；到头回绕）",
+    highlight_all_matches: "全部",
+    highlight_all_matches_tip: "同时高亮当前段内的全部匹配；当前命中使用更醒目的颜色",
     guess_line_t: "猜测：{label}，{n} 字节",
     bytes_t: "{n} 字节",
     fold_summary_t: "… {n} 行",

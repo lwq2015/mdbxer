@@ -88,6 +88,15 @@ pub(super) fn blob_search_row(ui: &mut egui::Ui, app: &mut MdbxerApp, side: Side
         } {
             ui.weak(format!("{n}/{m}"));
         }
+        let mut highlight_all = app.detail.highlight_all_matches;
+        if ui
+            .checkbox(&mut highlight_all, tr().highlight_all_matches)
+            .on_hover_text(tr().highlight_all_matches_tip)
+            .changed()
+        {
+            app.detail.highlight_all_matches = highlight_all;
+            app.save_ui_prefs();
+        }
     });
 }
 

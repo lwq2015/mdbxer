@@ -208,6 +208,8 @@ pub struct I18n {
     pub search_hint: &'static str,
     pub search_prev_tip: &'static str,
     pub search_next_tip: &'static str,
+    pub highlight_all_matches: &'static str,
+    pub highlight_all_matches_tip: &'static str,
     /// 猜测行模板 {label} {n}
     pub guess_line_t: &'static str,
     /// 字节数模板 {n}
@@ -832,6 +834,8 @@ mod tests {
         for table in &TABLES {
             assert!(!table.toolbar_search_hint.is_empty());
             assert!(!table.search_hint.is_empty());
+            assert!(!table.highlight_all_matches.is_empty());
+            assert!(!table.highlight_all_matches_tip.is_empty());
             assert!(!table.dup_prompt.is_empty());
             assert!(!table.blob_prompt.is_empty());
             assert!(!table.search_box_tip.is_empty());

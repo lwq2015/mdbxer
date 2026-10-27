@@ -80,7 +80,7 @@ cargo test
 
 ## 测试数据
 
-`examples/make_test_db.rs` 可生成功能全覆盖的测试库（`testdata/dir_db` + `testdata/file_db.mdbx`）：普通表、多值表、INTEGER_KEY 表、大字段、数值/边界值全覆盖、JSON/BSON/MessagePack/CBOR 样本（Auto 可识别）、8 种压缩容器（zstd、gzip、zlib、LZ4 frame、bzip2、xz、snappy frame、brotli）穿透样本、地址/时间戳样本、文件魔数样本、以及 Protobuf 样本。每次运行都会先删除并重建这两个输出，防止旧表或已删除样本残留；若数据库被 MDBXer 占用或清理/写入失败，命令会报错退出，不会伪报成功：
+`examples/make_test_db.rs` 可生成功能全覆盖的测试库（`testdata/dir_db` + `testdata/file_db.mdbx`）：普通表、多值表、INTEGER_KEY 表、大字段、数值/边界值全覆盖、JSON/BSON/MessagePack/CBOR 样本（Auto 可识别）、8 种压缩容器（zstd、gzip、zlib、LZ4 frame、bzip2、xz、snappy frame、brotli）穿透样本、地址/时间戳样本、文件魔数样本、以及 Protobuf 样本。长 JSON 搜索样本 `json_search_long` 含 96 条记录，可用 `needle-amber` 测试多次命中、全部高亮和上下条导航。每次运行都会先删除并重建这两个输出，防止旧表或已删除样本残留；若数据库被 MDBXer 占用或清理/写入失败，命令会报错退出，不会伪报成功：
 
 - Protobuf 协议 `testdata/test.proto` 由脚本自动生成，覆盖全 15 种标量（int varint / sint zigzag / fixed 定宽）、enum、repeated、嵌套消息、map（三种值型）、oneof、optional
 - 样本 `proto_simple` / `proto_mixed` / `proto_scalars` / `proto_shapes` / `proto_tables` 与 UI 解码同一管线动态编码，wire 数据与 schema 自洽

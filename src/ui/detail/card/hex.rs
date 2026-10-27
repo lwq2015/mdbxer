@@ -8,6 +8,7 @@ use crate::i18n::tr;
 use crate::ui::MdbxerApp;
 use crate::ui::detail::state::Side;
 use crate::ui::hexview;
+use crate::ui::syntax::SearchHighlights;
 
 /// 渲染 hex 区（可折叠）。`card_top` 为卡片内容起始游标，用于实测回填高度。
 pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>, card_top: f32) {
@@ -34,10 +35,25 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>, ca
     })
     .body(|ui| {
         // 搜索命中先取（避免与下面 sel 的可变借用冲突）
-        let blob_hit = match ctx.side {
-            Side::Key => app.detail.key.blob_hit,
-            Side::Value => app.detail.val.blob_hit,
+        let card = match ctx.side {
+            Side::Key => &app.detail.key,
+            Side::Value => &app.detail.val,
         };
+        let active_hit = card.blob_hit;
+        let mut highlights = SearchHighlights::default();
+        if app.detail.highlight_all_matches
+            && let Some(query) = card.blob_query.as_deref()
+            && !query.is_empty()
+            && query.len() <= ctx.window.len()
+        {
+            highlights.ranges = super::super::search::find_all_hits(ctx.window, query, ctx.off);
+        }
+        if let Some(hit) = active_hit
+            && !highlights.ranges.contains(&hit)
+        {
+            highlights.ranges.push(hit);
+        }
+        highlights.active = active_hit;
         let scroll_to = app.detail.blob_scroll_take(ctx.side);
         // 内容指纹：换行/翻多值/切段后字节变了，选区作废
         let fp = (
@@ -82,7 +98,7 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>, ca
                     compact,
                     ctx.off,
                     &mut sel_state.sel,
-                    blob_hit,
+                    &highlights,
                     scroll_to,
                 );
             });

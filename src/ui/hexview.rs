@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::fmt::{addr_chars, addr_digits, hex_line, hex_section_chars, mid_gap_index};
+use crate::ui::syntax::SearchHighlights;
 
 pub(crate) const EDGE_SCROLL_MAX_ROWS_PER_SECOND: f32 = 60.0;
 const EDGE_SCROLL_MAX_DEPTH: f32 = 4.0;
@@ -170,6 +171,14 @@ fn with_alpha(c: egui::Color32, a: u8) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
 }
 
+fn line_byte_range(row: usize, width: usize, byte_len: usize) -> Option<(usize, usize)> {
+    let start = row.checked_mul(width)?;
+    if width == 0 || start >= byte_len {
+        return None;
+    }
+    Some((start, (start + width).min(byte_len) - 1))
+}
+
 /// Key/Value 两个 hex 视图的全局稳定组件 id（不依赖 ui 层级），
 /// 便于全局快捷键判断焦点是否在 hex 视图内。
 pub(crate) fn view_id(is_key: bool) -> egui::Id {
@@ -181,7 +190,8 @@ pub(crate) fn view_id(is_key: bool) -> egui::Id {
 /// - `id`：组件唯一 id（Key/Value 卡片各一）；
 /// - `base_offset`：本段在原始字节中的起始偏移（地址列用）；
 /// - `sel`：当前选区（字节全局序号，端点顺序无关）；内容切换由调用方负责清空。
-/// - `hit`：内容搜索命中区间（字节全局序号 start, len），琥珀色高亮；与选区重叠时让位于选区。
+/// - `highlights`：内容搜索匹配区间及当前命中（字节全局序号 start, len）；
+///   当前命中使用更醒目的颜色；与选区重叠时让位于选区。
 /// - `scroll_to`：需要滚动到可见的命中字节（全局偏移，卡片搜索命中后由调用方一次性传入）。
 pub(crate) fn hex_view(
     ui: &mut egui::Ui,
@@ -195,7 +205,7 @@ pub(crate) fn hex_view(
     compact: bool,
     base_offset: usize,
     sel: &mut Option<(usize, usize)>,
-    hit: Option<(usize, usize)>,
+    highlights: &SearchHighlights,
     scroll_to: Option<usize>,
 ) -> egui::Response {
     let n = width.max(1);
@@ -242,7 +252,6 @@ pub(crate) fn hex_view(
         ascii_x: rect.left() + line_number_w + addr_w + hex_w,
         ascii_w,
     };
-
     // 搜索命中后自动滚动：命中字节在本段内时，把该行滚到可视区（调用方一次性传入）
     if let Some(g) = scroll_to {
         if g >= base_offset && g < base_offset + bytes.len() {
@@ -291,6 +300,16 @@ pub(crate) fn hex_view(
         }
         Some((r, i))
     };
+    let line_number_at = |pointer: egui::Pos2| {
+        show_line_numbers
+            && pointer.x >= rect.left()
+            && pointer.x < geom.x0
+            && pointer.y >= rect.top()
+            && pointer.y < rect.bottom()
+    };
+    if resp.hovered() && resp.hover_pos().is_some_and(line_number_at) {
+        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+    }
 
     // ── 指针交互：按下定锚点、拖拽更新选区（HEX/ASCII 高亮联动，
     //    复制时 HEX 与 ASCII 同时输出，与起手列无关）──
@@ -302,23 +321,28 @@ pub(crate) fn hex_view(
         ui.ctx()
             .data_mut(|d| d.insert_temp(egui::Id::new("mdbxer_sel_owner"), Some(id)));
         if let Some(p) = resp.interact_pointer_pos() {
-            match hit_at(p) {
-                Some((r, i)) => {
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(
-                            id,
-                            Some(Drag {
-                                anchor: r * n + i,
-                                moved: false,
-                            }),
-                        )
-                    });
+            if !line_number_at(p) {
+                match hit_at(p) {
+                    Some((r, i)) => {
+                        ui.ctx().data_mut(|d| {
+                            d.insert_temp(
+                                id,
+                                Some(Drag {
+                                    anchor: r * n + i,
+                                    moved: false,
+                                }),
+                            )
+                        });
+                    }
+                    None => {
+                        *sel = None;
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp::<Option<Drag>>(id, None));
+                    }
                 }
-                None => {
-                    *sel = None;
-                    ui.ctx()
-                        .data_mut(|d| d.insert_temp::<Option<Drag>>(id, None));
-                }
+            } else {
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp::<Option<Drag>>(id, None));
             }
         }
     }
@@ -376,7 +400,21 @@ pub(crate) fn hex_view(
         }
         ui.ctx().data_mut(|d| d.remove_temp::<Option<Drag>>(id));
     }
-    if resp.clicked_by(egui::PointerButton::Primary) && sel.is_some() {
+    let line_number_clicked = resp.clicked_by(egui::PointerButton::Primary)
+        && resp.interact_pointer_pos().is_some_and(line_number_at);
+    if line_number_clicked
+        && let Some(pointer) = resp.interact_pointer_pos()
+        && !bytes.is_empty()
+    {
+        let row = ((pointer.y - rect.top()) / rh).floor() as usize;
+        if let Some(range) = line_byte_range(row, n, bytes.len()) {
+            *sel = Some(range);
+            resp.request_focus();
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::new("mdbxer_sel_owner"), Some(id)));
+        }
+    }
+    if resp.clicked_by(egui::PointerButton::Primary) && !line_number_clicked && sel.is_some() {
         *sel = None;
     }
     // 右键：有选区时复制并取消选择（右键 = 复制 + 取消所选）；
@@ -449,7 +487,8 @@ pub(crate) fn hex_view(
     let byte_bg = with_alpha(vis.selection.bg_fill, 80);
     let sel_bg = with_alpha(vis.selection.bg_fill, 150);
     // 搜索命中：琥珀色（固定色，深浅主题下都与蓝色选区可区分）
-    let hit_bg = egui::Color32::from_rgba_unmultiplied(0xF5, 0xA6, 0x23, 0x66);
+    let active_hit_bg = egui::Color32::from_rgba_unmultiplied(0xF5, 0xA6, 0x23, 0x99);
+    let other_hit_bg = egui::Color32::from_rgba_unmultiplied(0x45, 0x91, 0xD5, 0x55);
 
     // 悬停字节（未拖拽时用 hover 位置；拖拽中用指针位置联动）
     let pointer = if resp.dragged() {
@@ -468,16 +507,18 @@ pub(crate) fn hex_view(
 
     let sel_norm = sel.map(|(a, b)| (a.min(b), a.max(b)));
     // 搜索命中（全局偏移）裁剪到本段，转为段内闭区间
-    let hit_norm = hit.and_then(|(s, l)| {
-        let g_hi = s + l;
+    let normalize_hit = |(s, l): &(usize, usize)| {
+        let g_hi = s.saturating_add(*l);
         let seg_end = base_offset + bytes.len();
-        if g_hi <= base_offset || s >= seg_end {
+        if g_hi <= base_offset || *s >= seg_end {
             return None;
         }
         let lo = s.saturating_sub(base_offset);
         let hi = g_hi.min(seg_end) - base_offset - 1;
         Some((lo, hi))
-    });
+    };
+    let hit_norm: Vec<_> = highlights.ranges.iter().filter_map(normalize_hit).collect();
+    let active_hit_norm = highlights.active.as_ref().and_then(normalize_hit);
 
     // galley 缓存：本帧取一次、帧末写回
     let mut cache = ui
@@ -522,7 +563,8 @@ pub(crate) fn hex_view(
         for i in 0..chunk_len {
             let g = r * n + i;
             let selected = sel_norm.is_some_and(|(lo, hi)| g >= lo && g <= hi);
-            let hit_now = hit_norm.is_some_and(|(lo, hi)| g >= lo && g <= hi);
+            let active_hit_now = active_hit_norm.is_some_and(|(lo, hi)| g >= lo && g <= hi);
+            let hit_now = hit_norm.iter().any(|&(lo, hi)| g >= lo && g <= hi);
             let hovered = hover.is_some_and(|(hr, hi)| hr == r && hi == i);
 
             // 2) 选区 / 搜索命中 / 悬停字节背景（HEX 与 ASCII 联动）；选区优先于命中
@@ -534,12 +576,23 @@ pub(crate) fn hex_view(
                 if show_ascii {
                     painter.rect_filled(geom.ascii_cell(r, i).shrink2(v_inset), 1.5, sel_bg);
                 }
-            } else if hit_now {
+            } else if active_hit_now {
                 if show_hex {
-                    painter.rect_filled(geom.hex_cell(n, r, i).shrink2(v_inset), 1.5, hit_bg);
+                    painter.rect_filled(
+                        geom.hex_cell(n, r, i).shrink2(v_inset),
+                        1.5,
+                        active_hit_bg,
+                    );
                 }
                 if show_ascii {
-                    painter.rect_filled(geom.ascii_cell(r, i).shrink2(v_inset), 1.5, hit_bg);
+                    painter.rect_filled(geom.ascii_cell(r, i).shrink2(v_inset), 1.5, active_hit_bg);
+                }
+            } else if hit_now {
+                if show_hex {
+                    painter.rect_filled(geom.hex_cell(n, r, i).shrink2(v_inset), 1.5, other_hit_bg);
+                }
+                if show_ascii {
+                    painter.rect_filled(geom.ascii_cell(r, i).shrink2(v_inset), 1.5, other_hit_bg);
                 }
             } else if hovered {
                 if show_hex {
@@ -605,7 +658,7 @@ pub(crate) fn hex_view(
 
 #[cfg(test)]
 mod tests {
-    use super::{Geom, edge_scroll_speed_fraction};
+    use super::{Geom, edge_scroll_speed_fraction, line_byte_range};
     use crate::fmt::hex_section_chars;
 
     fn geom(width: usize, compact: bool, show_ascii: bool) -> Geom {
@@ -641,6 +694,15 @@ mod tests {
         assert_eq!(g.hit(egui::pos2(45.0, 5.0), 8, 8), None);
         assert_eq!(g.hit(egui::pos2(140.0, 5.0), 8, 8), None);
         assert_eq!(g.hit(egui::pos2(111.0, 5.0), 8, 3), None);
+    }
+
+    #[test]
+    fn line_selection_covers_visible_row_and_clips_partial_last_row() {
+        assert_eq!(line_byte_range(0, 16, 40), Some((0, 15)));
+        assert_eq!(line_byte_range(1, 16, 40), Some((16, 31)));
+        assert_eq!(line_byte_range(2, 16, 40), Some((32, 39)));
+        assert_eq!(line_byte_range(3, 16, 40), None);
+        assert_eq!(line_byte_range(0, 0, 4), None);
     }
 
     #[test]

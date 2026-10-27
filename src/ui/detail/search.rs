@@ -75,6 +75,39 @@ fn count_hits(bytes: &[u8], needle: &[u8], pos: usize) -> (usize, usize) {
     (cur_no.max(1), total)
 }
 
+/// 列出一段字节中的全部非重叠命中，偏移相对完整内容起点。
+pub(crate) fn find_all_hits(
+    bytes: &[u8],
+    needle: &[u8],
+    base_offset: usize,
+) -> Vec<(usize, usize)> {
+    if needle.is_empty() || needle.len() > bytes.len() {
+        return Vec::new();
+    }
+
+    let mut hits = Vec::new();
+    let mut scan = 0;
+    while scan + needle.len() <= bytes.len() {
+        let Some(relative) = bytes[scan..]
+            .windows(needle.len())
+            .position(|window| window == needle)
+        else {
+            break;
+        };
+        let start = scan + relative;
+        hits.push((base_offset + start, needle.len()));
+        scan = start + needle.len();
+    }
+    hits
+}
+
+fn clear_blob_search(card: &mut super::state::CardState) {
+    card.blob_hit = None;
+    card.blob_query = None;
+    card.blob_matches = None;
+    card.blob_scroll = None;
+}
+
 impl DetailState {
     /// 在卡片完整字节中做字节子串搜索：文本按 UTF-8，其它格式查询先解析为字节。
     /// `forward=false` 向小偏移方向；以当前命中为起点跳过自身，主方向无命中回绕。
@@ -87,10 +120,10 @@ impl DetailState {
         }
         .to_string();
         if input.is_empty() {
-            match side {
-                Side::Key => self.key.blob_matches = None,
-                Side::Value => self.val.blob_matches = None,
-            }
+            clear_blob_search(match side {
+                Side::Key => &mut self.key,
+                Side::Value => &mut self.val,
+            });
             return (MsgLevel::Warn, t.blob_prompt.to_string());
         }
 
@@ -100,10 +133,10 @@ impl DetailState {
         };
 
         if needle.is_empty() || needle.len() > bytes.len() {
-            match side {
-                Side::Key => self.key.blob_matches = None,
-                Side::Value => self.val.blob_matches = None,
-            }
+            clear_blob_search(match side {
+                Side::Key => &mut self.key,
+                Side::Value => &mut self.val,
+            });
             return (MsgLevel::Warn, t.blob_nomatch.to_string());
         }
 
@@ -112,10 +145,10 @@ impl DetailState {
             Side::Value => self.val.blob_hit,
         };
         let Some((pos, wrapped)) = find_hit(bytes, &needle, cur, forward) else {
-            match side {
-                Side::Key => self.key.blob_matches = None,
-                Side::Value => self.val.blob_matches = None,
-            }
+            clear_blob_search(match side {
+                Side::Key => &mut self.key,
+                Side::Value => &mut self.val,
+            });
             return (MsgLevel::Warn, t.blob_nomatch.to_string());
         };
 
@@ -128,6 +161,7 @@ impl DetailState {
             Side::Value => &mut self.val,
         };
         card.blob_hit = Some((pos, needle.len()));
+        card.blob_query = Some(needle);
         card.blob_matches = Some((cur_no, total));
         card.seg_off = seg_off;
         card.blob_scroll = Some(pos);
@@ -142,7 +176,7 @@ impl DetailState {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_hits, find_hit};
+    use super::{count_hits, find_all_hits, find_hit};
     use crate::ui::detail::state::{DetailState, Side};
 
     /// 构造带搜索输入的状态，跑一次搜索，返回 (命中区间, 段偏移)。
@@ -190,6 +224,12 @@ mod tests {
         assert_eq!(count_hits(b"aaaa", b"aa", 2), (2, 2));
         assert_eq!(count_hits(b"ab--ab--ab", b"ab", 4), (2, 3));
         assert_eq!(count_hits(b"ab--ab--ab", b"ab", 8), (3, 3));
+    }
+
+    #[test]
+    fn find_all_hits_are_non_overlapping_and_keep_absolute_offsets() {
+        assert_eq!(find_all_hits(b"aaaa", b"aa", 10), [(10, 2), (12, 2)]);
+        assert!(find_all_hits(b"abc", b"", 0).is_empty());
     }
 
     #[test]
@@ -278,6 +318,16 @@ mod tests {
         let data = b"hello world";
         let (hit, _) = run_search("zzz", data, true);
         assert_eq!(hit, None);
+
+        let mut st = DetailState::default();
+        st.val.blob_input = "zzz".into();
+        st.val.blob_hit = Some((0, 3));
+        st.val.blob_query = Some(b"old".to_vec());
+        st.val.blob_matches = Some((1, 1));
+        st.blob_search(Side::Value, data, true);
+        assert_eq!(st.val.blob_hit, None);
+        assert_eq!(st.val.blob_query, None);
+        assert_eq!(st.val.blob_matches, None);
     }
 
     #[test]
