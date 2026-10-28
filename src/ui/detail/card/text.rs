@@ -62,7 +62,14 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
     let lines = fold_line_list(syntax_kind, &display_text);
     let fold_active = lines.iter().any(|f| f.fold_end.is_some());
     let show_line_numbers = app.detail.show_text_line_numbers;
-    let scroll_line = fold_scroll_line(fold_active, scroll_to, ctx, &display_text, &lines);
+    let scroll_line = fold_scroll_line(
+        fold_active,
+        scroll_to,
+        highlights.active,
+        ctx,
+        &display_text,
+        &lines,
+    );
 
     let card = match ctx.side {
         Side::Key => &app.detail.key,
@@ -372,12 +379,12 @@ fn fold_line_list(syntax: Option<DecodeMode>, text: &str) -> Vec<FoldLine> {
     }
 }
 
-/// 折叠视图滚动目标行：显示文本与窗口字节 1:1 时按字节精确定位行，
-/// 重编码显示（pretty）按字节比例估算；命中行被祖先折叠遮盖时，
-/// fold_view_body 渲染中自动展开覆盖它的祖先折叠。
+/// 折叠视图滚动优先使用命中高亮映射后的显示文本偏移；无法映射时，
+/// 再按窗口字节偏移估算。命中行被祖先折叠遮盖时会自动展开祖先。
 fn fold_scroll_line(
     fold_active: bool,
     scroll_to: Option<usize>,
+    active_hit: Option<(usize, usize)>,
     ctx: &CardCtx<'_>,
     display_text: &str,
     lines: &[FoldLine],
@@ -390,20 +397,39 @@ fn fold_scroll_line(
         return None;
     }
     let hit_rel = hit_abs - ctx.off;
-    let mut bp =
+    let estimated =
         if display_text.len() == ctx.window.len() && std::str::from_utf8(ctx.window).is_ok() {
             hit_rel
         } else {
             display_text.len() * hit_rel / ctx.window.len().max(1)
         };
-    while bp > 0 && !display_text.is_char_boundary(bp) {
-        bp -= 1;
-    }
-    Some(lines.partition_point(|fl| fl.start <= bp).saturating_sub(1))
+    let display_offset = active_hit
+        .filter(|(start, end)| start < end && *end <= display_text.len())
+        .map_or(estimated, |(start, _)| start);
+    fold_line_for_display_offset(display_text, lines, display_offset)
 }
 
-/// TextEdit 渲染路径（无可折叠块时）：自定义 layouter 负责语法着色/命中高亮，
-/// 并记录实际折行宽度供命中的滚动定位复用。
+fn fold_line_for_display_offset(
+    display_text: &str,
+    lines: &[FoldLine],
+    mut display_offset: usize,
+) -> Option<usize> {
+    if lines.is_empty() {
+        return None;
+    }
+    display_offset = display_offset.min(display_text.len());
+    while display_offset > 0 && !display_text.is_char_boundary(display_offset) {
+        display_offset -= 1;
+    }
+    Some(
+        lines
+            .partition_point(|line| line.start <= display_offset)
+            .saturating_sub(1),
+    )
+}
+
+/// TextEdit 渲染路径（无可折叠块时）：自定义 layouter 负责语法着色/命中高亮；
+/// 命中滚动定位直接使用其实际 galley。
 #[allow(clippy::too_many_arguments)]
 fn text_edit_body(
     ui: &mut egui::Ui,
@@ -426,21 +452,16 @@ fn text_edit_body(
         .auto_shrink([false, true])
         .max_height(text_h)
         .show(ui, |ui| {
-            let content_top = ui.cursor().min.y;
-            // 记录 layouter 拿到的实际 wrap 宽度（与 TextEdit 渲染完全一致），
-            // 供命中滚动定位复用——估算 wrap 会导致大文本折行次数与渲染不一致。
-            // Rc 让 move 闭包与滚动定位共享同一个 Cell。
-            let hit_wrap = std::rc::Rc::new(std::cell::Cell::new(None::<f32>));
-            let hit_wrap_layouter = hit_wrap.clone();
+            // TextEdit 与命中高亮共用同一 layouter；滚动定位直接读取 TextEdit
+            // 实际生成的 galley，避免重新估算折行。
             let te = egui::TextEdit::multiline(&mut text_owned)
                 .font(egui::TextStyle::Monospace)
                 .desired_width(f32::INFINITY)
                 .desired_rows(1);
-            // 无条件走自定义 layouter：即使无高亮/无语法，也要让 hit_wrap
-            // 记录到 TextEdit 实际折行宽度。无高亮时其行为与 egui 默认 multiline
+            // 无条件走自定义 layouter：即使无高亮/无语法，也要让滚动定位拿到
+            // TextEdit 实际生成的 galley。无高亮时其行为与 egui 默认 multiline
             // 一致（同 wrap、同 row_height、保留尾空白），故可安全无条件使用。
             let mut layouter = move |ui: &egui::Ui, s: &dyn egui::TextBuffer, wrap: f32| {
-                hit_wrap_layouter.set(Some(wrap));
                 layout_job(ui, s.as_str(), syntax_kind, highlights, &palette, wrap)
             };
             let gutter_width = show_line_numbers
@@ -508,18 +529,14 @@ fn text_edit_body(
                 }
             });
             let te_response = &output.response;
-            let te_rect = te_response.rect;
             if let Some(hit_abs) = scroll_to {
                 scroll_to_hit(
                     ui,
-                    te_rect,
-                    content_top,
-                    display_text,
+                    output.galley_pos,
+                    &output.galley,
                     highlights.active,
                     hit_abs,
                     ctx,
-                    &hit_wrap,
-                    line_h,
                 );
             }
             text_edge_auto_scroll(ui, te_response, line_h);
@@ -711,17 +728,13 @@ fn layout_job(
 }
 
 /// 搜索命中：滚到命中所在行。必须与渲染/高亮使用**同一文本 display_text** 构图。
-#[allow(clippy::too_many_arguments)]
 fn scroll_to_hit(
     ui: &mut egui::Ui,
-    te_rect: egui::Rect,
-    content_top: f32,
-    display_text: &str,
+    galley_pos: egui::Pos2,
+    galley: &egui::Galley,
     active_hit: Option<(usize, usize)>,
     hit_abs: usize,
     ctx: &CardCtx<'_>,
-    hit_wrap: &std::rc::Rc<std::cell::Cell<Option<f32>>>,
-    line_h: f32,
 ) {
     if hit_abs < ctx.off || hit_abs >= ctx.off + ctx.window.len() {
         return;
@@ -729,6 +742,7 @@ fn scroll_to_hit(
     // 命中字符偏移（基于显示文本，与高亮/折行同源）：1:1 时直接取高亮起点或
     // 字节转字符；非 1:1（lossy 重编码的二进制 blob）按字符比例近似——
     // 每行字数比字节数均匀，比字节比例更贴近视觉折行。
+    let display_text = galley.text();
     let pc = if let Some((hs, _)) = active_hit {
         display_text[..hs].chars().count()
     } else if std::str::from_utf8(ctx.window).is_ok() {
@@ -736,19 +750,6 @@ fn scroll_to_hit(
     } else {
         display_text.chars().count() * (hit_abs - ctx.off) / ctx.window.len().max(1)
     };
-    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-    // 与 TextEdit 渲染完全一致的 wrap（layouter 实际给的值）；
-    // 仅当未走自定义 layouter 时才回退估算宽度。
-    let wrap_w = hit_wrap.get().unwrap_or((te_rect.width() - 12.0).max(40.0));
-    let galley = ui.fonts_mut(|f| {
-        f.layout(
-            display_text.to_string(),
-            font_id,
-            egui::Color32::WHITE,
-            wrap_w,
-        )
-    });
-
     // Galley 不把硬换行作为 glyph 保存，需额外计入 ends_with_newline，
     // 否则文本越靠后，滚动目标就会逐行向后漂移。
     let row_idx = row_for_char(
@@ -760,8 +761,8 @@ fn scroll_to_hit(
     );
     let row_y = galley.rows[row_idx].rect().top();
     let rect = egui::Rect::from_min_size(
-        egui::pos2(te_rect.left(), content_top + 8.0 + row_y),
-        egui::vec2(4.0, line_h),
+        egui::pos2(galley_pos.x, galley_pos.y + row_y),
+        egui::vec2(4.0, galley.rows[row_idx].rect().height()),
     );
     ui.scroll_to_rect(rect, Some(egui::Align::Center));
 }
@@ -788,8 +789,9 @@ fn mono_line_height(ui: &egui::Ui) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ByteFormat, byte_range_in_byte_text, hard_line_number_positions, line_char_range,
-        line_number_positions, remapped_text_hit_range, row_for_char, visual_row_char_range,
+        ByteFormat, byte_range_in_byte_text, fold_line_for_display_offset,
+        hard_line_number_positions, line_char_range, line_number_positions,
+        remapped_text_hit_range, row_for_char, visual_row_char_range,
     };
     use crate::fmt::{DecodeMode, Endian, HintFlags, decode};
 
@@ -920,6 +922,22 @@ mod tests {
         let range = remapped_text_hit_range(source, second_hit, second_hit + 2, display).unwrap();
         let expected = display.rfind("22").unwrap();
         assert_eq!(range, (expected, expected + 2));
+    }
+
+    #[test]
+    fn pretty_json_second_22_hit_scrolls_to_122_line() {
+        let source = br#"{"binNos":[22,122]}"#;
+        let display = "{\n  \"binNos\": [\n    22,\n    122\n  ]\n}";
+        let lines = super::fold_line_list(Some(DecodeMode::Json), display);
+        let hits = super::super::super::search::find_all_hits(source, b"22", 0);
+        assert_eq!(hits.len(), 2);
+
+        let second = hits[1];
+        let range =
+            remapped_text_hit_range(source, second.0, second.0 + second.1, display).unwrap();
+        let line = fold_line_for_display_offset(display, &lines, range.0).unwrap();
+
+        assert!(display[lines[line].start..lines[line].end].contains("122"));
     }
 
     #[test]
