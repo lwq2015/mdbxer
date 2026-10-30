@@ -80,7 +80,10 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>, ca
             sel_state.sel = None;
         }
 
-        // 独立滚动区：宽度填满、高度随内容收缩；超过卡片分到的预算才出滚动条
+        // 独立滚动区：宽度填满、高度随内容收缩；超过卡片分到的预算才出滚动条。
+        // 每行字节数固定为工具栏所选（4/8/16）；面板最小宽度按当前配置所需
+        // 行宽钳制（见 detail/mod.rs 的 size_range），整行始终完整可见，
+        // 不会横向溢出，也不会有滚动条压住 ASCII 列。
         egui::ScrollArea::vertical()
             .id_salt(("detail_hex_scroll", ctx.side.is_key()))
             .auto_shrink([false, true])

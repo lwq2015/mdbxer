@@ -253,7 +253,7 @@ pub(super) const EN: I18n = I18n {
     sc_copy_row: "Copy selected row Key + Value (tab-separated)",
     sc_enter: "Enter in search: next; Ctrl / Shift+Enter: previous",
     sc_hex_clear: "Clear hex byte selection",
-    cell_max_label: "Cell max chars",
+    cell_max_label: "Value max chars",
 
     log_section: "Logging",
     log_section_tip: "Logs go to the log\\ folder next to the exe (falls back to %APPDATA%\\mdbxer\\log when not writable); one file per month, rolled with a numeric suffix at 100MB",

@@ -174,6 +174,11 @@ pub struct DetailState {
     pub hex_width: usize,
     /// Protobuf 载入 .proto 失败的错误信息（会话态，成功载入后清空）
     pub proto_err: Option<String>,
+    /// 右栏宽度是否继续按内容自适应：用户手动拖过边线后置 false，
+    /// 之后尊重用户拖出的宽度；改 hex 显示配置时重新置 true 收紧回内容宽度。
+    pub panel_auto_fit: bool,
+    /// 上一次由程序自动设定的右栏宽度（用于区分"自己改的"与"用户拖的"）。
+    pub panel_fit_w: f32,
 }
 
 impl Default for DetailState {
@@ -191,6 +196,8 @@ impl Default for DetailState {
             hex_compact: false,
             hex_width: fmt::DEFAULT_HEX_WIDTH,
             proto_err: None,
+            panel_auto_fit: true,
+            panel_fit_w: 0.0,
         }
     }
 }

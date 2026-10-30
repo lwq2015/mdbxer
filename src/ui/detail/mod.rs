@@ -151,14 +151,21 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         .map_or(0, |r| r.key.len());
     let addr_max_off = (app.detail.seg_off(Side::Key) + key_len.saturating_sub(1))
         .max(app.detail.seg_off(Side::Value) + val_len.saturating_sub(1));
-    let max_w = layout::detail_max_width(ui, &app.detail, left_w, addr_max_off);
+    // 面板宽度按内容贴合：下限 = 当前 hex 配置（4/8/16 列 + 各列开关）完整显示
+    // 一行所需宽度，拖窄到下限即停，ASCII 列不会被裁剪、也不需要横向滚动条；
+    // 用户没手动拖过边线时，宽度还会自动收紧到内容宽度，右侧不留大块空白。
+    let limit =
+        (ui.ctx().viewport_rect().width() - left_w - crate::ui::MIDDLE_MIN_WIDTH).max(240.0);
+    let needed = layout::detail_needed_width(ui, &app.detail, addr_max_off);
+    let min_w = needed.clamp(240.0, limit);
+    let max_w = needed.max(720.0).min(limit);
 
     // 行宽/列开关变化后按新配置内容宽度自动收放右栏（面板本体只会被超宽内容
     // 撑到上限，内容变窄时不会自动缩回，需在 show 结束后改写 PanelState）
     let mut hex_pref_changed = false;
     let resp = egui::Panel::right("detail_panel")
         .default_size(360.0)
-        .size_range(240.0..=max_w)
+        .size_range(min_w..=max_w)
         .show(ui, |ui| {
             let Some(row_idx) = app.selected_row else {
                 ui.vertical_centered(|ui| {
@@ -190,12 +197,24 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             );
         });
 
-    app.detail_panel_w = resp.response.rect.width();
+    let now_w = resp.response.rect.width();
+    let prev_w = app.detail_panel_w;
+    app.detail_panel_w = now_w;
+    // 用户手动拖过边线：宽度不是本程序自动设的（与本帧变化不符）→ 尊重用户，
+    // 停止自动收紧，直到下次改 hex 显示配置再重新贴合内容宽度。
+    // panel_fit_w 为 0 表示本程序还没设过宽度（首帧/刚启动），此时的变化不算拖拽。
+    let fit_known = app.detail.panel_fit_w > 0.0;
     if hex_pref_changed {
-        let limit =
-            (ui.ctx().viewport_rect().width() - left_w - crate::ui::MIDDLE_MIN_WIDTH).max(240.0);
-        let target = layout::detail_needed_width(ui, &app.detail, addr_max_off).clamp(240.0, limit);
-        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(target, 0.0));
+        app.detail.panel_auto_fit = true;
+    } else if fit_known
+        && (now_w - prev_w).abs() > 0.2
+        && (now_w - app.detail.panel_fit_w).abs() > 2.0
+    {
+        app.detail.panel_auto_fit = false;
+    }
+    if app.detail.panel_auto_fit && (now_w - min_w).abs() > 1.0 {
+        app.detail.panel_fit_w = min_w;
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(min_w, 0.0));
         ui.ctx().data_mut(|d| {
             d.insert_persisted(
                 egui::Id::new("detail_panel"),

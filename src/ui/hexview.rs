@@ -208,21 +208,23 @@ pub(crate) fn hex_view(
     highlights: &SearchHighlights,
     scroll_to: Option<usize>,
 ) -> egui::Response {
-    let n = width.max(1);
-    let rows = bytes.len().div_ceil(n).max(1);
     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
     let (cw, rh) = ui.fonts_mut(|f| (f.glyph_width(&font_id, '0'), f.row_height(&font_id)));
 
     // 地址位数随数据大小变化（同一 dump 内所有行统一位数保证对齐）
     let digits = addr_digits(base_offset, bytes.len());
-    let line_number_digits = rows.ilog10() + 1;
-    let line_number_w = if show_line_numbers {
-        (line_number_digits + 1) as f32 * cw
+    let addr_w = if show_addr {
+        addr_chars(digits) as f32 * cw
     } else {
         0.0
     };
-    let addr_w = if show_addr {
-        addr_chars(digits) as f32 * cw
+    // 每行字节数固定为工具栏所选值（4/8/16）：右栏最小宽度按当前配置所需
+    // 行宽钳制（detail/mod.rs 的 size_range），拖窄到下限即停，
+    // 整行始终完整可见，这里无需再按可用宽度缩减列数。
+    let n = width.max(1);
+    let rows = bytes.len().div_ceil(n).max(1);
+    let line_number_w = if show_line_numbers {
+        (rows.ilog10() + 2) as f32 * cw
     } else {
         0.0
     };

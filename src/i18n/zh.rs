@@ -254,7 +254,7 @@ pub(super) const ZH: I18n = I18n {
     sc_copy_row: "复制选中行的 Key + Value（Tab 分隔）",
     sc_enter: "搜索框回车：下一个；Ctrl / Shift+回车：上一个",
     sc_hex_clear: "清除 hex 字节选区",
-    cell_max_label: "单元格显示长度",
+    cell_max_label: "Value显示长度",
 
     log_section: "日志",
     log_section_tip: "日志写入 exe 同目录 log\\（无写权限时退化为 %APPDATA%\\mdbxer\\log）；按月分文件，单文件超过 100MB 自动加编号滚动",

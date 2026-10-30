@@ -253,7 +253,7 @@ pub(super) const RU: I18n = I18n {
     sc_copy_row: "Копировать строку Key + Value (через таб)",
     sc_enter: "Enter в поиске: дальше; Ctrl / Shift+Enter: назад",
     sc_hex_clear: "Снять выделение hex-байтов",
-    cell_max_label: "Символов в ячейке",
+    cell_max_label: "Длина отображ. значения",
 
     log_section: "Журнал",
     log_section_tip: "Журнал пишется в папку log\\ рядом с exe (при отсутствии прав — в %APPDATA%\\mdbxer\\log); файл на месяц, при 100МБ — новый файл с номером",

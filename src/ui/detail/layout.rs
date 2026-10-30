@@ -193,23 +193,6 @@ pub(super) fn card_content_heights(
     }
 }
 
-/// 右栏宽度上限：保证当前 hex 配置下最长一行（16 字节时最宽）
-/// 在面板内不折行。按等宽字体实测字宽计算，再扣除各级边距；
-/// 同时不超过窗口宽度减去左栏与中央表格最小保留宽度，
-/// 窄窗口时下限放宽到右栏最小宽度 240，优先保证中央表格。
-pub(super) fn detail_max_width(
-    ui: &egui::Ui,
-    d: &DetailState,
-    left_w: f32,
-    addr_max_off: usize,
-) -> f32 {
-    let needed = detail_needed_width(ui, d, addr_max_off);
-    let screen = ui.ctx().viewport_rect().width();
-    needed
-        .max(720.0)
-        .min((screen - left_w - crate::ui::MIDDLE_MIN_WIDTH).max(240.0))
-}
-
 /// 当前 hex 配置（行宽 + 地址/HEX/ASCII 开关）下内容实际所需宽度。
 /// `addr_max_off` 为当前数据（Key/Value 中较大者）的最大绝对偏移，决定地址列位数。
 pub(super) fn detail_needed_width(ui: &egui::Ui, d: &DetailState, addr_max_off: usize) -> f32 {
@@ -233,10 +216,23 @@ pub(super) fn detail_needed_width(ui: &egui::Ui, d: &DetailState, addr_max_off: 
     if d.show_ascii {
         line_chars += n;
     }
-    // 面板边框/分组 frame/折叠缩进/滚动条余量（实测约 60~70，留少量冗余；
-    // 估小了内容超宽会把面板顶回去，估大了右侧留空白）
-    const CHROME: f32 = 80.0;
-    line_chars * char_w + CHROME
+    // 固定开销按实际布局算，别用拍脑袋的常数：估大了右栏最小宽度过宽、
+    // 内容右侧留一条明显空白；估小了内容超宽会被裁。
+    // - 面板 frame（side_top_panel）：内边距 8 + 8，可拖边留 1px 分隔线；
+    // - 卡片 group frame：内边距 6 + 6，边框 1×2（egui 把 stroke 计入总边距）；
+    // - 折叠体缩进：spacing.indent（只在左侧）；
+    // - 浮动滚动条不占宽度但会压在内容右缘，按其宽度预留，免得压住 ASCII 末字符；
+    // - 末尾 2px 取整余量。
+    let chrome = 8.0
+        + 8.0
+        + 1.0
+        + 6.0
+        + 6.0
+        + 2.0
+        + ui.spacing().indent
+        + ui.spacing().scroll.bar_width
+        + 2.0;
+    line_chars * char_w + chrome
 }
 
 #[cfg(test)]
