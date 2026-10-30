@@ -221,7 +221,8 @@ pub(super) fn detail_needed_width(ui: &egui::Ui, d: &DetailState, addr_max_off: 
     // - 面板 frame（side_top_panel）：内边距 8 + 8，可拖边留 1px 分隔线；
     // - 卡片 group frame：内边距 6 + 6，边框 1×2（egui 把 stroke 计入总边距）；
     // - 折叠体缩进：spacing.indent（只在左侧）；
-    // - 浮动滚动条不占宽度但会压在内容右缘，按其宽度预留，免得压住 ASCII 末字符；
+    // - 滚动条按 bar_width 预留占位（主题里 floating_allocated_width 已设为同值，
+    //   悬停展开到 bar_width 时也不会压住 ASCII 末字符）；
     // - 末尾 2px 取整余量。
     let chrome = 8.0
         + 8.0

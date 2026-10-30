@@ -19,6 +19,7 @@ pub use hexdump::{DEFAULT_HEX_WIDTH, HEX_WIDTHS, PAGE_BYTES};
 pub(crate) use hexdump::{
     addr_chars, addr_digits, hex_copy_selection, hex_line, hex_section_chars, mid_gap_index,
 };
+pub(crate) use value::with_sep;
 pub use value::{decode, decode_key};
 
 /// 整数千位分隔开关（默认开）：1,625,981,420 vs 1625981420。

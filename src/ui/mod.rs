@@ -2337,6 +2337,9 @@ pub fn apply_theme(ctx: &egui::Context, dark: bool) {
         scroll.foreground_color = true;
         scroll.bar_width = 7.0; // 悬停/拖拽时的宽度（默认 10，太粗）
         scroll.floating_width = 4.0; // 滚动时细条宽度（默认 3）
+        // 浮动条也预留横向占位（与 bar_width 相同）：否则滚动条会浮在内容右缘，
+        // 右侧文字（表格 Value 列、ASCII 列）会被压住一部分。
+        scroll.floating_allocated_width = 7.0;
         scroll.active_handle_opacity = 0.75; // 滚动中淡显（默认 0.6 偏淡）
         scroll.interact_handle_opacity = 0.95; // 悬停/拖拽接近实色
     });

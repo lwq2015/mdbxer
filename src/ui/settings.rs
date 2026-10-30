@@ -247,6 +247,10 @@ fn display_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
                     .changed()
                 {
                     crate::fmt::set_thousands_sep(ts);
+                    // 表统计/环境信息的值在取数时就已按分隔符格式化，缓存必须失效
+                    // 才能让开关立即生效（否则要手动点"刷新"才更新）。
+                    app.stat_cache = None;
+                    app.env_cache = None;
                     app.save_ui_prefs();
                 }
                 ui.end_row();

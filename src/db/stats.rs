@@ -6,6 +6,11 @@
 
 use libmdbx::{Database, NoWriteMap};
 
+/// 数值加千位分隔（与列表/解码显示共用同一全局开关）。
+fn num(v: impl ToString) -> String {
+    crate::fmt::with_sep(v.to_string())
+}
+
 fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut v = bytes as f64;
@@ -15,9 +20,9 @@ fn human_size(bytes: u64) -> String {
         i += 1;
     }
     if i == 0 {
-        format!("{bytes} B")
+        format!("{} B", num(bytes))
     } else {
-        format!("{v:.2} {} ({bytes} B)", UNITS[i])
+        format!("{v:.2} {} ({} B)", UNITS[i], num(bytes))
     }
 }
 
@@ -36,17 +41,11 @@ pub fn table_stat_view(
     let flags = txn.table_flags(&table).map_err(|e| e.to_string())?;
 
     Ok(vec![
-        (t.k_entries.to_string(), stat.entries().to_string()),
-        (t.k_depth.to_string(), stat.depth().to_string()),
-        (
-            t.k_branch_pages.to_string(),
-            stat.branch_pages().to_string(),
-        ),
-        (t.k_leaf_pages.to_string(), stat.leaf_pages().to_string()),
-        (
-            t.k_overflow_pages.to_string(),
-            stat.overflow_pages().to_string(),
-        ),
+        (t.k_entries.to_string(), num(stat.entries())),
+        (t.k_depth.to_string(), num(stat.depth())),
+        (t.k_branch_pages.to_string(), num(stat.branch_pages())),
+        (t.k_leaf_pages.to_string(), num(stat.leaf_pages())),
+        (t.k_overflow_pages.to_string(), num(stat.overflow_pages())),
         (
             t.k_page_size.to_string(),
             human_size(stat.page_size() as u64),
@@ -89,24 +88,35 @@ pub fn env_info_view(db: &Database<NoWriteMap>) -> Result<Vec<(String, String, S
         human_size(geo.shrink_threshold()),
     );
     push(t.g_map, t.k_map_size, human_size(info.map_size() as u64));
-    push(t.g_map, t.k_pages_used, (info.last_pgno() + 1).to_string());
-    push(t.g_map, t.k_free_pages, freelist.to_string());
-    push(t.g_txn, t.k_last_txnid, info.last_txnid().to_string());
-    push(t.g_readers, t.k_max_readers, info.max_readers().to_string());
-    push(t.g_readers, t.k_num_readers, info.num_readers().to_string());
+    push(t.g_map, t.k_pages_used, num(info.last_pgno() + 1));
+    push(t.g_map, t.k_free_pages, num(freelist));
+    push(t.g_txn, t.k_last_txnid, num(info.last_txnid()));
+    push(t.g_readers, t.k_max_readers, num(info.max_readers()));
+    push(t.g_readers, t.k_num_readers, num(info.num_readers()));
     push(t.g_main, t.k_page_size, human_size(stat.page_size() as u64));
-    push(t.g_main, t.k_depth, stat.depth().to_string());
-    push(t.g_main, t.k_branch, stat.branch_pages().to_string());
-    push(t.g_main, t.k_leaf, stat.leaf_pages().to_string());
-    push(t.g_main, t.k_overflow, stat.overflow_pages().to_string());
-    push(t.g_main, t.k_entries, stat.entries().to_string());
+    push(t.g_main, t.k_depth, num(stat.depth()));
+    push(t.g_main, t.k_branch, num(stat.branch_pages()));
+    push(t.g_main, t.k_leaf, num(stat.leaf_pages()));
+    push(t.g_main, t.k_overflow, num(stat.overflow_pages()));
+    push(t.g_main, t.k_entries, num(stat.entries()));
 
     Ok(rows)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::human_size;
+    use super::{human_size, num};
+
+    #[test]
+    fn stats_numbers_use_thousands_sep() {
+        let prev = crate::fmt::thousands_sep();
+        crate::fmt::set_thousands_sep(true);
+        assert_eq!(num(20000u64), "20,000");
+        assert_eq!(human_size(1_474_560), "1.41 MB (1,474,560 B)");
+        crate::fmt::set_thousands_sep(false);
+        assert_eq!(num(20000u64), "20000");
+        crate::fmt::set_thousands_sep(prev);
+    }
 
     #[test]
     fn human_size_bytes() {
