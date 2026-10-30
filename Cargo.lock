@@ -2209,7 +2209,7 @@ dependencies = [
 
 [[package]]
 name = "mdbxer"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "brotli",
  "brotli-decompressor",
