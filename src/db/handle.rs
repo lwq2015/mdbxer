@@ -90,7 +90,10 @@ impl DbHandle {
     ///
     /// ⚠️ 仅在用户明确确认后调用：恢复会修改库文件。
     pub fn open_recover(path: &Path, mode: OpenMode) -> Result<Self, String> {
-        Self::open_with(path, mode, true)?;
+        // 读写句柄只用来触发恢复，必须在下一次打开前释放：libmdbx 禁止同进程
+        // 对同一环境开两个句柄（MDBX_BUSY），所以这里显式 drop，而不是靠临时值
+        // 在语句末尾自动析构——后者一旦被人改成绑定变量就会让重开失败。
+        drop(Self::open_with(path, mode, true)?);
         Self::open(path, mode)
     }
 

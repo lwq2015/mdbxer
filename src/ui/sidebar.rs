@@ -111,8 +111,14 @@ fn show_tables(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n) {
 
     // 排序下拉 + 过滤表名（同行）
     ui.horizontal(|ui| {
+        // 左栏最窄可拖到 LEFT_PANEL_MIN：这一行两个控件的宽度都必须随可用宽度
+        // 收缩。若给固定宽度或最小宽度，本行的最小宽度会超过面板宽度，egui 会把
+        // 面板 rect 撑宽，但该帧背景已按撑宽前的宽度绘制，于是向右拖窄时左栏右缘
+        // 露出一条窗口底色的黑缝（松手后下一帧背景才补上）。
+        let avail = ui.available_width();
+        let combo_w = (avail * 0.45).clamp(48.0, 80.0);
         let ir = egui::ComboBox::from_id_salt("table_sort")
-            .width(80.0)
+            .width(combo_w)
             .selected_text(sort.label())
             .show_ui(ui, |ui| {
                 for s in TableSort::ALL {
@@ -120,7 +126,7 @@ fn show_tables(ui: &mut egui::Ui, app: &mut MdbxerApp, t: &crate::i18n::I18n) {
                 }
             });
         super::wheel_cycle(ui.ctx(), &ir.response, &TableSort::ALL, &mut sort);
-        let filter_w = ui.available_width().max(80.0);
+        let filter_w = ui.available_width();
         let fresp = ui.add(
             egui::TextEdit::singleline(&mut filter_s)
                 .hint_text(t.filter_hint)

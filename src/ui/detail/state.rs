@@ -179,6 +179,9 @@ pub struct DetailState {
     pub panel_auto_fit: bool,
     /// 上一次由程序自动设定的右栏宽度（用于区分"自己改的"与"用户拖的"）。
     pub panel_fit_w: f32,
+    /// 上次渲染卡片的（表索引, 行索引）：变化说明换了行/换了表，
+    /// 本帧文本与 hex 滚动区应回到顶部（见 `track_row`）。
+    scroll_key: Option<(Option<usize>, usize)>,
 }
 
 impl Default for DetailState {
@@ -198,6 +201,7 @@ impl Default for DetailState {
             proto_err: None,
             panel_auto_fit: true,
             panel_fit_w: 0.0,
+            scroll_key: None,
         }
     }
 }
@@ -210,6 +214,17 @@ impl DetailState {
         self.key.reset_all();
         self.val.reset_all();
         self.dup.reset();
+        self.scroll_key = None;
+    }
+
+    /// 记录本帧渲染的行标识（表索引 + 行索引），返回 true 表示换了行/换了表。
+    /// 文本区与 hex 区的滚动位置按固定 Id 持久化在 egui Memory 里，不主动复位
+    /// 的话会沿用上一行的偏移，所以换行后的第一帧要把它们拉回顶部。
+    pub fn track_row(&mut self, table: Option<usize>, row: usize) -> bool {
+        let key = (table, row);
+        let changed = self.scroll_key != Some(key);
+        self.scroll_key = Some(key);
+        changed
     }
 
     /// 卡片当前的解码格式。

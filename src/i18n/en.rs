@@ -162,7 +162,7 @@ pub(super) const EN: I18n = I18n {
     fav_empty: "(no favorites yet)",
     fav_count_t: "({n} saved)",
 
-    open_ok_t: "Opened ({mode} mode, {n} tables): {path}",
+    open_ok_t: "Opened ({mode}, {n} tables): {path}",
     open_no_tables_t: "Opened, but it contains no data tables: {path}",
     read_fail_t: "Read failed: {e}",
     jump_bad_t: "Invalid jump input: {e}",

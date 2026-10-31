@@ -84,27 +84,31 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>, ca
         // 每行字节数固定为工具栏所选（4/8/16）；面板最小宽度按当前配置所需
         // 行宽钳制（见 detail/mod.rs 的 size_range），整行始终完整可见，
         // 不会横向溢出，也不会有滚动条压住 ASCII 列。
-        egui::ScrollArea::vertical()
+        let mut area = egui::ScrollArea::vertical()
             .id_salt(("detail_hex_scroll", ctx.side.is_key()))
             .auto_shrink([false, true])
-            .max_height(hex_h)
-            .show(ui, |ui| {
-                hexview::hex_view(
-                    ui,
-                    hexview::view_id(ctx.side.is_key()),
-                    ctx.window,
-                    width,
-                    show_addr,
-                    show_line_numbers,
-                    show_hex,
-                    show_ascii,
-                    compact,
-                    ctx.off,
-                    &mut sel_state.sel,
-                    &highlights,
-                    scroll_to,
-                );
-            });
+            .max_height(hex_h);
+        if ctx.reset_scroll {
+            // 换行后回到顶部：滚动位置按固定 Id 持久化，不复位会沿用上一行
+            area = area.vertical_scroll_offset(0.0);
+        }
+        area.show(ui, |ui| {
+            hexview::hex_view(
+                ui,
+                hexview::view_id(ctx.side.is_key()),
+                ctx.window,
+                width,
+                show_addr,
+                show_line_numbers,
+                show_hex,
+                show_ascii,
+                compact,
+                ctx.off,
+                &mut sel_state.sel,
+                &highlights,
+                scroll_to,
+            );
+        });
         sel_state.fp = Some(fp);
     });
 }

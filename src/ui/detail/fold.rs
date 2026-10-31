@@ -45,26 +45,31 @@ pub(super) fn show(
     stored: &Option<(u64, Vec<usize>)>,
     sel: &mut Option<(usize, usize)>,
     max_height: f32,
+    reset_scroll: bool,
 ) -> (u64, Vec<usize>) {
     // 与 TextEdit 路径同一 ScrollArea（id_salt 相同，滚动位置在两种视图间延续）
-    egui::ScrollArea::vertical()
+    let mut area = egui::ScrollArea::vertical()
         .id_salt(("detail_text_scroll", side.is_key()))
         .auto_shrink([false, true])
-        .max_height(max_height)
-        .show(ui, |ui| {
-            FoldView::new(
-                ui,
-                side,
-                text,
-                lines,
-                show_line_numbers,
-                mode,
-                palette,
-                highlights,
-            )
-            .run(ui, stored, scroll_line, sel)
-        })
-        .inner
+        .max_height(max_height);
+    if reset_scroll {
+        // 换行后回到顶部：滚动位置按固定 Id 持久化，不复位会沿用上一行
+        area = area.vertical_scroll_offset(0.0);
+    }
+    area.show(ui, |ui| {
+        FoldView::new(
+            ui,
+            side,
+            text,
+            lines,
+            show_line_numbers,
+            mode,
+            palette,
+            highlights,
+        )
+        .run(ui, stored, scroll_line, sel)
+    })
+    .inner
 }
 
 /// 折叠视图拖拽选区的过程状态（ctx temp，跨帧保存在卡片组件 id 下）。

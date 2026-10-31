@@ -163,7 +163,7 @@ pub(super) const ZH: I18n = I18n {
     fav_empty: "（暂无收藏）",
     fav_count_t: "（收藏 {n} 条）",
 
-    open_ok_t: "已打开（{mode}模式，{n} 个表）：{path}",
+    open_ok_t: "已打开（{mode}，{n} 个表）：{path}",
     open_no_tables_t: "已打开但没有任何数据表：{path}",
     read_fail_t: "读取失败：{e}",
     jump_bad_t: "跳转输入错误：{e}",
@@ -186,7 +186,7 @@ pub(super) const ZH: I18n = I18n {
     total_rows_t: "共 {n} 条",
     range_keys_t: "第 {range} 个 Key",
     range_rows_t: "第 {range} 条",
-    window_size_t: "窗口 {n} 条",
+    window_size_t: "每页 {n} 条",
     no_db_status: "未打开数据库 — 点“文件/目录”按钮，或将文件/目录拖入窗口",
     no_db_center: "请在上方打开数据库，或将文件/目录拖入窗口",
 

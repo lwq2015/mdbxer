@@ -178,6 +178,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 return;
             };
             let key = row.key.clone();
+            // 换行/换表后第一帧：文本区、hex 区与整栏滚动区都回到顶部，
+            // 否则会沿用上一行的滚动偏移（各滚动区按固定 Id 持久化位置）。
+            let reset_scroll = app.detail.track_row(app.selected_table, row_idx);
             let Some(value) = app.current_value() else {
                 return;
             };
@@ -194,6 +197,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
             render_cards(
                 ui, app, &key, &value, dup_sort, key_no, &k_text, &v_text, kb, avail,
+                reset_scroll,
             );
         });
 
@@ -396,14 +400,32 @@ fn render_cards(
     v_text: &str,
     kb: f32,
     avail: f32,
+    reset_scroll: bool,
 ) {
     let t = tr();
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    // x 方向 auto_shrink=false：外层滚动区始终填满右栏宽度，避免拖窄时
+    // 内容宽度滞后一帧、左侧露出面板底色黑条。
+    let mut outer = egui::ScrollArea::vertical().auto_shrink([false, false]);
+    if reset_scroll {
+        // 换行后整栏也回到顶部（外层滚动区同样按固定 Id 记忆位置）
+        outer = outer.vertical_scroll_offset(0.0);
+    }
+    outer.show(ui, |ui| {
         let key_title = match key_no {
             Some(n) => format!("Key #{n}"),
             None => "Key".to_string(),
         };
-        let kh = card::show(ui, app, &key_title, key, Side::Key, key, k_text, kb);
+        let kh = card::show(
+            ui,
+            app,
+            &key_title,
+            key,
+            Side::Key,
+            key,
+            k_text,
+            kb,
+            reset_scroll,
+        );
         ui.add_space(CARD_GAP);
 
         // Key 卡片没用完的预算（估算偏差/内容少）全部实测回填给 Value，
@@ -414,7 +436,17 @@ fn render_cards(
         } else {
             "Value".to_string()
         };
-        card::show(ui, app, &val_title, value, Side::Value, key, v_text, vb);
+        card::show(
+            ui,
+            app,
+            &val_title,
+            value,
+            Side::Value,
+            key,
+            v_text,
+            vb,
+            reset_scroll,
+        );
     });
 }
 

@@ -35,6 +35,8 @@ pub(super) struct CardCtx<'a> {
     pub text_open: bool,
     /// hex 区是否展开
     pub hex_open: bool,
+    /// 本帧是否刚换了行/表：文本与 hex 滚动区需回到顶部
+    pub reset_scroll: bool,
 }
 
 /// 渲染一张卡片，返回其实际高度。
@@ -51,13 +53,18 @@ pub(super) fn show(
     key: &[u8],
     text: &str,
     budget: f32,
+    reset_scroll: bool,
 ) -> f32 {
     let dup_sort = app.cur_table().map(|tbl| tbl.dup_sort).unwrap_or(false);
     let save_base = save_base_name(app, side, dup_sort);
 
     egui::Frame::group(ui.style())
         .show(ui, |ui| {
-            ui.set_width(ui.available_width());
+            // 可拖拽面板内必须用 set_min_width（而非 set_width）：set_width 会同时
+            // 锁定 max_width，拖放过程中 available_width 逐帧变化时，固定的 max 会
+            // 让卡片宽度滞后一帧、露出左侧面板底色（黑条）。set_min_width 只设下限、
+            // 允许卡片随面板变宽/变窄即时贴合。
+            ui.set_min_width(ui.available_width());
             // 卡片内容起始游标：hex 区高度用"预算 − 已用"实测回填，
             // 不靠前文估算，保证卡片始终撑满分到的预算
             let card_top = ui.cursor().min.y;
@@ -94,6 +101,7 @@ pub(super) fn show(
                 fixed,
                 text_open,
                 hex_open,
+                reset_scroll,
             };
             text::show(ui, app, &ctx);
             hex::show(ui, app, &ctx, card_top);

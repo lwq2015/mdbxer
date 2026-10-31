@@ -118,6 +118,7 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
                 &stored,
                 &mut sel,
                 text_h,
+                ctx.reset_scroll,
             ));
             return;
         }
@@ -447,111 +448,115 @@ fn text_edit_body(
     // + 12 ≈ TextEdit frame 上下内边距，保证整数行内容恰好不滚
     let mut text_owned = display_text.to_string();
     let palette = json_palette(ui.visuals().dark_mode);
-    egui::ScrollArea::vertical()
+    let mut area = egui::ScrollArea::vertical()
         .id_salt(("detail_text_scroll", ctx.side.is_key()))
         .auto_shrink([false, true])
-        .max_height(text_h)
-        .show(ui, |ui| {
-            // TextEdit 与命中高亮共用同一 layouter；滚动定位直接读取 TextEdit
-            // 实际生成的 galley，避免重新估算折行。
-            let te = egui::TextEdit::multiline(&mut text_owned)
-                .font(egui::TextStyle::Monospace)
-                .desired_width(f32::INFINITY)
-                .desired_rows(1);
-            // 无条件走自定义 layouter：即使无高亮/无语法，也要让滚动定位拿到
-            // TextEdit 实际生成的 galley。无高亮时其行为与 egui 默认 multiline
-            // 一致（同 wrap、同 row_height、保留尾空白），故可安全无条件使用。
-            let mut layouter = move |ui: &egui::Ui, s: &dyn egui::TextBuffer, wrap: f32| {
-                layout_job(ui, s.as_str(), syntax_kind, highlights, &palette, wrap)
-            };
-            let gutter_width = show_line_numbers
-                .then(|| line_number_gutter_width(ui, display_text, every_display_row));
-            let mut output = if let Some(gutter_width) = gutter_width {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    let gutter_right = ui.cursor().left() + gutter_width - 4.0;
-                    ui.add_space(gutter_width);
-                    let output = te.layouter(&mut layouter).show(ui);
-                    paint_line_numbers(
-                        ui,
-                        &output.galley,
-                        output.galley_pos,
-                        gutter_right,
-                        every_display_row,
-                    );
-                    output
-                })
-                .inner
-            } else {
-                te.layouter(&mut layouter).show(ui)
-            };
-            let line_selection = gutter_width.and_then(|gutter_width| {
-                let gutter_rect = egui::Rect::from_min_max(
-                    egui::pos2(
-                        output.galley_pos.x - gutter_width + 4.0,
-                        output.galley_pos.y,
-                    ),
-                    egui::pos2(
-                        output.galley_pos.x,
-                        output.galley_pos.y + output.galley.size().y,
-                    ),
-                );
-                let response = ui.interact(
-                    gutter_rect,
-                    output.response.id.with("line_number_gutter"),
-                    egui::Sense::click(),
-                );
-                if response.hovered() {
-                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
-                }
-                if !response.clicked_by(egui::PointerButton::Primary) {
-                    return None;
-                }
-                let pointer = response.interact_pointer_pos()?;
-                if every_display_row {
-                    visual_row_char_range(
-                        output.galley.rows.iter().map(|row| {
-                            (
-                                row.pos.y,
-                                row.row.size.y,
-                                row.char_count_including_newline().0,
-                            )
-                        }),
-                        pointer.y - output.galley_pos.y,
-                    )
-                } else {
-                    let char_index = output
-                        .galley
-                        .cursor_from_pos(pointer - output.galley_pos)
-                        .index
-                        .0;
-                    Some(line_char_range(display_text, char_index))
-                }
-            });
-            let te_response = &output.response;
-            if let Some(hit_abs) = scroll_to {
-                scroll_to_hit(
+        .max_height(text_h);
+    if ctx.reset_scroll {
+        // 换行后回到顶部：滚动位置按固定 Id 持久化，不复位会沿用上一行
+        area = area.vertical_scroll_offset(0.0);
+    }
+    area.show(ui, |ui| {
+        // TextEdit 与命中高亮共用同一 layouter；滚动定位直接读取 TextEdit
+        // 实际生成的 galley，避免重新估算折行。
+        let te = egui::TextEdit::multiline(&mut text_owned)
+            .font(egui::TextStyle::Monospace)
+            .desired_width(f32::INFINITY)
+            .desired_rows(1);
+        // 无条件走自定义 layouter：即使无高亮/无语法，也要让滚动定位拿到
+        // TextEdit 实际生成的 galley。无高亮时其行为与 egui 默认 multiline
+        // 一致（同 wrap、同 row_height、保留尾空白），故可安全无条件使用。
+        let mut layouter = move |ui: &egui::Ui, s: &dyn egui::TextBuffer, wrap: f32| {
+            layout_job(ui, s.as_str(), syntax_kind, highlights, &palette, wrap)
+        };
+        let gutter_width = show_line_numbers
+            .then(|| line_number_gutter_width(ui, display_text, every_display_row));
+        let mut output = if let Some(gutter_width) = gutter_width {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let gutter_right = ui.cursor().left() + gutter_width - 4.0;
+                ui.add_space(gutter_width);
+                let output = te.layouter(&mut layouter).show(ui);
+                paint_line_numbers(
                     ui,
-                    output.galley_pos,
                     &output.galley,
-                    highlights.active,
-                    hit_abs,
-                    ctx,
+                    output.galley_pos,
+                    gutter_right,
+                    every_display_row,
                 );
-            }
-            text_edge_auto_scroll(ui, te_response, line_h);
-            if let Some((start, end)) = line_selection {
-                output.response.request_focus();
                 output
-                    .state
-                    .cursor
-                    .set_char_range(Some(egui::text::CCursorRange::two(
-                        egui::text::CCursor::new(start),
-                        egui::text::CCursor::new(end),
-                    )));
-                output.state.store(ui.ctx(), output.response.id);
+            })
+            .inner
+        } else {
+            te.layouter(&mut layouter).show(ui)
+        };
+        let line_selection = gutter_width.and_then(|gutter_width| {
+            let gutter_rect = egui::Rect::from_min_max(
+                egui::pos2(
+                    output.galley_pos.x - gutter_width + 4.0,
+                    output.galley_pos.y,
+                ),
+                egui::pos2(
+                    output.galley_pos.x,
+                    output.galley_pos.y + output.galley.size().y,
+                ),
+            );
+            let response = ui.interact(
+                gutter_rect,
+                output.response.id.with("line_number_gutter"),
+                egui::Sense::click(),
+            );
+            if response.hovered() {
+                ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+            }
+            if !response.clicked_by(egui::PointerButton::Primary) {
+                return None;
+            }
+            let pointer = response.interact_pointer_pos()?;
+            if every_display_row {
+                visual_row_char_range(
+                    output.galley.rows.iter().map(|row| {
+                        (
+                            row.pos.y,
+                            row.row.size.y,
+                            row.char_count_including_newline().0,
+                        )
+                    }),
+                    pointer.y - output.galley_pos.y,
+                )
+            } else {
+                let char_index = output
+                    .galley
+                    .cursor_from_pos(pointer - output.galley_pos)
+                    .index
+                    .0;
+                Some(line_char_range(display_text, char_index))
             }
         });
+        let te_response = &output.response;
+        if let Some(hit_abs) = scroll_to {
+            scroll_to_hit(
+                ui,
+                output.galley_pos,
+                &output.galley,
+                highlights.active,
+                hit_abs,
+                ctx,
+            );
+        }
+        text_edge_auto_scroll(ui, te_response, line_h);
+        if let Some((start, end)) = line_selection {
+            output.response.request_focus();
+            output
+                .state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(start),
+                    egui::text::CCursor::new(end),
+                )));
+            output.state.store(ui.ctx(), output.response.id);
+        }
+    });
 }
 
 fn line_char_range(text: &str, char_index: usize) -> (usize, usize) {
