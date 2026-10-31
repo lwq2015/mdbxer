@@ -22,6 +22,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         .resizable(true)
         .size_range(LEFT_PANEL_MIN..=max_w)
         .show(ui, |ui| {
+            // 列表项和工具条按钮用的是 egui 的「按钮文字色」（深色主题 gray 180、
+            // 浅色主题 gray 60），比正文文字色（深色 140 / 浅色 80）更亮/更暗，
+            // 左栏因此和中部表格、右栏详情的字色不一致。这里把左栏内的按钮文字色
+            // 统成正文色（只作用于本面板的作用域）。
+            let text_color = ui.visuals().text_color();
+            ui.style_mut().visuals.widgets.inactive.fg_stroke.color = text_color;
+
             let Some(_dbh) = &app.db else { return };
 
             // Tab 状态（持久化到 egui Memory）
