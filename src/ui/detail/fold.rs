@@ -5,7 +5,8 @@
 //!
 //! 逐行按语法 token 着色（复用 [`crate::ui::syntax`] 的分词与色盘，命中背景
 //! 与 TextEdit 路径同色同语义），行首 gutter 画折叠三角（▼ 展开 / ▶ 折叠）；
-//! 折叠后隐藏子行，行尾以弱色显示"… N 行"摘要。命中行被折叠遮盖时自动展开
+//! 折叠后隐藏子行，行尾以弱色显示"… N 行"摘要；悬停折叠行（含行首三角）时
+//! 以提示预览被隐藏的整块原文。命中行被折叠遮盖时自动展开
 //! 覆盖它的祖先折叠并滚动居中。
 //!
 //! 正文支持拖拽选择与复制（与 hex 视图同交互）：按下定锚点、拖动更新选区端点
@@ -246,8 +247,16 @@ impl<'a> FoldView<'a> {
                 self.base.color,
             );
 
-            if fl.fold_end.is_some() {
-                self.draw_triangle(ui, i, is_folded, &lv);
+            if let Some(fold_end) = fl.fold_end {
+                let tri = self.draw_triangle(ui, i, is_folded, &lv);
+                if is_folded {
+                    // 悬停预览被折叠的整块原文（含带三角的本行）。三角是独立
+                    // 交互控件、会遮挡行响应，故两处都挂提示；同一时刻只有
+                    // 其中一个 contains_pointer，不会重复弹出。
+                    let block = folded_block_text(self.text, self.lines, i, fold_end);
+                    let _ = lv.resp.on_hover_ui_at_pointer(|ui| show_fold_tip(ui, &block));
+                    let _ = tri.on_hover_ui_at_pointer(|ui| show_fold_tip(ui, &block));
+                }
             }
 
             if scroll_line == Some(i) {
@@ -475,8 +484,14 @@ impl<'a> FoldView<'a> {
         }
     }
 
-    /// 行首折叠三角：▼=展开 ▶=已折叠；点击切换折叠状态。
-    fn draw_triangle(&mut self, ui: &mut egui::Ui, i: usize, is_folded: bool, lv: &LineView) {
+    /// 行首折叠三角：▼=展开 ▶=已折叠；点击切换折叠状态。返回三角本身的交互响应。
+    fn draw_triangle(
+        &mut self,
+        ui: &mut egui::Ui,
+        i: usize,
+        is_folded: bool,
+        lv: &LineView,
+    ) -> egui::Response {
         let c = ui.visuals().weak_text_color();
         let x = lv.rect.left() + 4.0;
         let y = lv.rect.top() + (self.line_h - 8.0) * 0.5;
@@ -511,9 +526,9 @@ impl<'a> FoldView<'a> {
                 self.folded.insert(i);
             }
         }
-        resp.on_hover_cursor(egui::CursorIcon::PointingHand);
         ui.painter()
             .add(egui::Shape::convex_polygon(pts, c, egui::Stroke::NONE));
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
     }
 
     /// 拖到视口上下边缘自动滚动：使选区可以一直延伸到当前不可见的部分
@@ -593,6 +608,37 @@ fn with_alpha(c: egui::Color32, a: u8) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
 }
 
+/// 折叠行悬停预览的原文：带三角的本行起至 `fold_end` 行末（不含换行符），
+/// 超过 50 行时截断并以 `…` 收尾，避免折叠大块时悬停提示过长。
+fn folded_block_text(text: &str, lines: &[FoldLine], i: usize, fold_end: usize) -> String {
+    const FOLD_TIP_MAX_LINES: usize = 50;
+    let Some(first) = lines.get(i) else {
+        return String::new();
+    };
+    let end = lines
+        .get(fold_end)
+        .map_or(first.end, |line| line.end)
+        .min(text.len());
+    let block = &text[first.start.min(end)..end];
+    let mut out = String::new();
+    for (n, line) in block.split('\n').enumerate() {
+        if n == FOLD_TIP_MAX_LINES {
+            out.push_str("\n…");
+            break;
+        }
+        if n > 0 {
+            out.push('\n');
+        }
+        out.push_str(line);
+    }
+    out
+}
+
+/// 折叠行悬停提示内容：等宽、保留换行的原文预览。
+fn show_fold_tip(ui: &mut egui::Ui, text: &str) {
+    ui.add(egui::Label::new(egui::RichText::new(text).monospace()));
+}
+
 /// 第 `n_chars` 个字符的字节偏移（等于行字符数时为行尾）。
 fn char_to_byte(s: &str, n_chars: usize) -> usize {
     s.char_indices().nth(n_chars).map_or(s.len(), |(b, _)| b)
@@ -631,7 +677,58 @@ fn galley_char_offset(galley: &egui::Galley, p: egui::Pos2, line_chars: usize) -
 
 #[cfg(test)]
 mod tests {
-    use super::word_byte_range;
+    use super::{folded_block_text, word_byte_range};
+    use crate::ui::syntax::FoldLine;
+
+    #[test]
+    fn folded_block_text_includes_header_and_hidden_lines() {
+        let text = "a = '''\n  x\n''\nb = 1";
+        let lines = [
+            FoldLine {
+                start: 0,
+                end: 7,
+                fold_end: Some(2),
+            },
+            FoldLine {
+                start: 8,
+                end: 11,
+                fold_end: None,
+            },
+            FoldLine {
+                start: 12,
+                end: 14,
+                fold_end: None,
+            },
+            FoldLine {
+                start: 15,
+                end: 20,
+                fold_end: None,
+            },
+        ];
+        assert_eq!(folded_block_text(text, &lines, 0, 2), "a = '''\n  x\n''");
+    }
+
+    #[test]
+    fn folded_block_text_truncates_long_blocks() {
+        let text: String = (0..60)
+            .map(|n| format!("l{n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut lines = Vec::new();
+        let mut pos = 0;
+        for line in text.split('\n') {
+            lines.push(FoldLine {
+                start: pos,
+                end: pos + line.len(),
+                fold_end: None,
+            });
+            pos += line.len() + 1;
+        }
+        let last = lines.len() - 1;
+        let out = folded_block_text(&text, &lines, 0, last);
+        assert_eq!(out.split('\n').count(), 51);
+        assert_eq!(out.lines().last(), Some("…"));
+    }
 
     #[test]
     fn double_click_word_range_uses_utf8_byte_offsets() {
