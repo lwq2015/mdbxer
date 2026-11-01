@@ -1,4 +1,4 @@
-// Copyright 2026 lwq_yu
+﻿// Copyright 2026 lwq_yu
 // SPDX-License-Identifier: Apache-2.0
 
 //! 生成测试用 MDBX 数据库（目录模式与单文件模式各一份）。
@@ -285,7 +285,40 @@ fn long_json_sample() -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::long_json_sample;
+    use super::{TOML_COMPLEX, TOML_PACKAGE, YAML_COMPLEX, YAML_SCALARS, long_json_sample};
+
+    /// 新增的 YAML/TOML 样本必须能被对应排版解析并规范化重排；否则详情里
+    /// 只会回退成原文，样本就失去测试意义。
+    #[test]
+    fn yaml_toml_fixtures_are_valid() {
+        let yaml = |raw: &str| {
+            serde_yaml::to_string(
+                &serde_yaml::from_str::<serde_yaml::Value>(raw).expect("合法 YAML"),
+            )
+            .expect("YAML 可重排")
+        };
+
+        let complex = yaml(YAML_COMPLEX);
+        assert!(complex.contains("- 80"), "流式序列应展开为块序列：{complex}");
+        assert!(complex.contains("rate_limit: 100"), "流式映射应展开：{complex}");
+
+        let scalars = yaml(YAML_SCALARS);
+        assert!(scalars.contains("matrix:"), "{scalars}");
+        assert!(scalars.contains("2026-01-01"), "数字样字符串/日期不应被吞：{scalars}");
+
+        let toml = |raw: &str| {
+            toml::to_string_pretty(&toml::from_str::<toml::Value>(raw).expect("合法 TOML"))
+                .expect("TOML 可重排")
+        };
+
+        let package = toml(TOML_PACKAGE);
+        assert!(package.contains("[dependencies.serde]"), "{package}");
+        assert!(package.contains("features = [\"derive\"]"), "{package}");
+
+        let complex = toml(TOML_COMPLEX);
+        assert!(complex.contains("max_readers = 126"), "进制整数应归一化：{complex}");
+        assert!(complex.contains("[[workers]]"), "数组表应保留：{complex}");
+    }
 
     #[test]
     fn long_json_sample_has_many_searchable_matches() {
@@ -661,11 +694,23 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
         ),
         // 非法 YAML（缩进含 Tab）：切 Yaml 应回退原文
         (b"yaml_invalid", b"a:\n\t- 1\n".to_vec()),
+        // YAML 常用结构全覆盖：嵌套映射、块/流式序列、对象列表、块标量
+        // （`|` 保留换行、`>` 折叠）、空容器、null、需引号的键值、中文
+        (b"yaml_complex", YAML_COMPLEX.as_bytes().to_vec()),
+        // YAML 标量形态：整数/负数/浮点/科学计数法、布尔、引号与转义、
+        // 数字样字符串、嵌套序列（流式 → 块序列）
+        (b"yaml_scalars", YAML_SCALARS.as_bytes().to_vec()),
         // TOML：切 Toml 排版应规范化重排
         (
             b"toml_config",
             b"title = \"mdbx\"\n\n[owner]\nname = \"lwq\"\n\n[db]\nmax_readers = 126\n".to_vec(),
         ),
+        // TOML 常用布局（Cargo.toml 式）：标准表、点号嵌套表、数组、
+        // 内联表、多行字符串、注释
+        (b"toml_package", TOML_PACKAGE.as_bytes().to_vec()),
+        // TOML 语法覆盖：数组表、内联表/数组、三种日期时间、十六进制/
+        // 八进制/二进制整数、带引号与点号的键、多行字面量
+        (b"toml_complex", TOML_COMPLEX.as_bytes().to_vec()),
         // 非法 TOML：切 Toml 应回退原文
         (b"toml_invalid", b"title =\n".to_vec()),
         // XML：Auto 应识别为 XML（表格显示紧凑原文），详情按 XML 缩进重排；
@@ -834,6 +879,153 @@ const JSON_SAMPLE: &[u8] = br#"{"name":"mdbx","version":1,"tags":["fast","embedd
 /// brotli 样本专用的长 JSON：brotli 无魔数、靠试探解码（≥16 字节门槛），
 /// 短 JSON 经内置字典压缩后可能不足 16 字节导致不识别
 const JSON_SAMPLE_LONG: &[u8] = br#"{"name":"mdbx","version":1,"tags":["fast","embedded","mdbx"],"desc":"The fastest LMDB-compatible embedded key-value database","nested":{"debug":false,"retries":3,"hosts":["a.example.com","b.example.com","c.example.com"]}}"#;
+
+/// YAML 常用结构：嵌套映射、块/流式序列、对象列表、块标量（`|` 保留换行、
+/// `>` 折叠）、空容器、null、需引号的键值、中文。切 Yaml 排版后应规范化
+/// 重排（流式 `[80, 443]` / `{...}` 展开为块式，注释丢失）。
+const YAML_COMPLEX: &str = r#"# 常用 YAML 结构（规范化重排后注释会丢失）
+app:
+  name: mdbx-viewer
+  version: "1.0.4"        # 数字样字符串：保持引号
+  debug: false
+  retry: 3
+  ratio: 1.5
+  empty_map: {}
+  empty_list: []
+  missing: null
+server:
+  host: 0.0.0.0
+  port: 8080
+  ports: [80, 443]        # 流式序列 → 块序列
+  features: {cache: true, rate_limit: 100}
+  tags:
+    - http
+    - https
+  description: |
+    多行字面量保留换行
+    第二行
+  banner: >
+    折叠文本合并为一行
+  quote_colon: "含冒号: 的值"
+  quote_hash: "含 # 号的值"
+  'dotted.key': true
+  unicode: 你好，YAML
+workers:
+  - name: alpha
+    count: 1
+    enabled: true
+  - name: beta
+    count: 2
+    tags: [x, y]
+"#;
+
+/// YAML 标量形态：整数/负数/浮点/科学计数法、布尔、引号与转义、数字样
+/// 字符串、嵌套序列；`~`/`null` 归一化为 null。
+const YAML_SCALARS: &str = r#"ints:
+  zero: 0
+  pos: 42
+  neg: -7
+  big: 9000000000000
+floats:
+  simple: 3.14159
+  exp: 1.5e-3
+  neg: -2.5
+bools:
+  t: true
+  f: false
+nulls:
+  tilde: ~
+  word: null
+strings:
+  empty: ""
+  plain: plain text
+  single: 'it''s'
+  double: "tab\there\nnext"
+  number_like: "0123"
+  yes_word: "yes"
+  date_like: "2026-01-01"
+  chinese: 中文与标点！？
+matrix:
+  - [1, 2, 3]
+  - [a, b, c]
+nested:
+  level1:
+    level2:
+      - deep: true
+        items: [one, two]
+"#;
+
+/// TOML 常用布局（Cargo.toml 式）：标准表、点号嵌套表、数组、内联表、
+/// 多行字符串、注释。
+const TOML_PACKAGE: &str = r#"# Cargo.toml 式布局（规范化重排后注释会丢失）
+[package]
+name = "mdbxer"
+version = "1.0.4"
+edition = "2021"
+description = """多行基本字符串
+    保留换行与缩进"""
+keywords = ["mdbx", "viewer", "egui"]
+authors = ["lwq_yu"]
+
+[features]
+default = ["gui"]
+gui = ["dep:eframe"]
+
+[dependencies]
+eframe = "0.36"
+egui = "0.36"
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+debug = false
+"#;
+
+/// TOML 语法覆盖：数组表 `[[...]]`、内联表/数组、三种日期时间、
+/// 十六进制/八进制/二进制整数（重排为十进制）、带引号与点号的键、
+/// 多行字面量字符串、中文。
+const TOML_COMPLEX: &str = r#"# 语法覆盖（规范化重排后注释会丢失）
+title = "mdbx 测试"
+retries = 3
+threshold = 0.75
+enabled = true
+
+[database]
+host = "127.0.0.1"
+port = 8080
+
+[database.limits]
+max_readers = 0x7E      # 十六进制 → 126
+page_size = 0o4000      # 八进制 → 2048
+flags = 0b1100          # 二进制 → 12
+
+[logging]
+level = "debug"
+format = '''多行字面量
+不做转义: \n 原样'''
+offset_datetime = 2026-01-01T08:30:00+08:00
+local_date = 2026-01-01
+local_time = 08:30:00
+
+[paths]
+"a.b" = "/var/log"
+root = { name = "/data", writable = false }
+
+[[workers]]
+name = "alpha"
+enabled = true
+tags = ["http", "worker"]
+
+[[workers]]
+name = "beta"
+enabled = false
+tags = ["storage"]
+"#;
 
 /// rmpv 字符串值简写
 fn s(v: &str) -> rmpv::Value {
