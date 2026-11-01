@@ -192,8 +192,9 @@ pub(crate) fn view_id(is_key: bool) -> egui::Id {
 /// 最小宽度决定最大类型（1 字节 → 到 u8/i8，2 字节 → 到 u16/i16，4 字节 → 到
 /// u32/i32/f32，8 字节 → 到 u64/i64/f64）；更窄的类型把选区按该宽度逐块切分，
 /// 每块一个值（如 3 字节的 u16 得到 2 个值），末块不足宽度时零扩展补全并标注
-/// 补零。多字节类型按 `endian` 解释并在标签后标注字节序；每行最多 8 个值，
-/// 值间用分号分隔（千位分隔符本身用逗号，混用会难以分辨）。
+/// 补零。多字节类型按 `endian` 解释并在标签后标注字节序；值间用分号分隔
+/// （千位分隔符本身用逗号，混用会难以分辨），多字节类型每行最多 8 个值，
+/// 单字节类型最多 16 个值，超出以 `…` 省略。
 /// 标识与时间只在长度精确匹配时解释（16 字节 → uuid/ipv6，6 字节 → mac，
 /// 4 字节 → ipv4/time，8 字节 → time）。末尾附 ASCII（非可打印字节显示为 `.`）
 /// 与 UTF-8 文本解释，只取选区前 64 字节，超出以 `…` 截断。
@@ -205,8 +206,10 @@ fn type_interpretations(bytes: &[u8], endian: crate::fmt::Endian) -> Vec<(String
         return rows;
     }
     let sfx = endian.suffix();
-    // 单行最多展示的数值个数，超出部分以 `…` 省略
+    // 每行最多展示的数值个数，超出部分以 `…` 省略；
+    // 单字节类型值短，可多放一些（正好覆盖一行 16 字节）
     const MAX_VALUES: usize = 8;
+    const MAX_BYTES: usize = 16;
     let note = crate::i18n::tr().padded;
 
     // 能容纳整个选区的最大类型宽度（超过 8 字节按 8 字节封顶），
@@ -221,7 +224,7 @@ fn type_interpretations(bytes: &[u8], endian: crate::fmt::Endian) -> Vec<(String
         ($label:literal, $ty:ty) => {{
             let mut vals: Vec<String> = Vec::new();
             for (k, b) in bytes.iter().enumerate() {
-                if k == MAX_VALUES {
+                if k == MAX_BYTES {
                     vals.push("…".to_string());
                     break;
                 }
@@ -950,6 +953,26 @@ mod tests {
         assert!(rows.contains(&("u8".to_string(), "255".to_string())));
         assert!(rows.contains(&("i8".to_string(), "-1".to_string())));
         assert!(!rows.iter().any(|(l, _)| l.starts_with("u16")));
+    }
+
+    #[test]
+    fn type_interpretations_byte_rows_show_up_to_16_values() {
+        let u8_row = |rows: &[(String, String)]| -> String {
+            rows.iter()
+                .find(|(l, _)| l == "u8")
+                .map(|(_, v)| v.clone())
+                .unwrap()
+        };
+        // 16 字节：u8 全给 16 个值，不省略
+        let sixteen = type_interpretations(&[1u8; 16], Endian::Little);
+        assert_eq!(u8_row(&sixteen).split("; ").count(), 16);
+        assert!(!u8_row(&sixteen).contains('…'));
+
+        // 21 字节：u8 只给前 16 个，末尾以省略号收尾
+        let long = type_interpretations(&[1u8; 21], Endian::Little);
+        let row = u8_row(&long);
+        assert_eq!(row.split("; ").count(), 17);
+        assert!(row.ends_with('…'));
     }
 
     #[test]
