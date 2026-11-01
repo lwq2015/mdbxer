@@ -70,6 +70,7 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>, ca
         let show_hex = app.detail.show_hex;
         let show_ascii = app.detail.show_ascii;
         let compact = app.detail.hex_compact;
+        let endian = app.endian;
 
         let sel_card = match ctx.side {
             Side::Key => &mut app.detail.key,
@@ -104,6 +105,7 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>, ca
                 show_ascii,
                 compact,
                 ctx.off,
+                endian,
                 &mut sel_state.sel,
                 &highlights,
                 scroll_to,

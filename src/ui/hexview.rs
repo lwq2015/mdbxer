@@ -6,7 +6,8 @@
 //! 自绘实现（非 TextEdit），支持：
 //! - 悬停整行高亮（跨 地址/HEX/ASCII 三列）；
 //! - 悬停单个字节时 HEX 与 ASCII 两侧联动高亮；
-//! - 鼠标拖拽按字节选择，HEX 与 ASCII 选区联动、可跨多行；
+//! - 鼠标拖拽按字节选择，HEX 与 ASCII 选区联动、可跨多行；单击单个字节即选中该字节；
+//! - 悬停在选区内字节上时，用 tooltip 逐行列出各类型按当前字节序的解释（类型 + 值）；
 //! - Ctrl+C 同时复制所选字节的十六进制与 ASCII 原文（按显示行对齐），Esc 清除选区。
 //!
 //! 大段数据（可能数千行）只绘制与命中测试与裁剪区相交的行。
@@ -185,10 +186,192 @@ pub(crate) fn view_id(is_key: bool) -> egui::Id {
     egui::Id::new(("mdbxer_hex_view", is_key))
 }
 
+/// 选区字节按各数值类型的解释结果（`(标签, 值)`，供悬停 tooltip 逐行展示）。
+///
+/// 整数/浮点按类型宽度分块解释（与 VS 的字节解释一致）：能容纳整个选区的
+/// 最小宽度决定最大类型（1 字节 → 到 u8/i8，2 字节 → 到 u16/i16，4 字节 → 到
+/// u32/i32/f32，8 字节 → 到 u64/i64/f64）；更窄的类型把选区按该宽度逐块切分，
+/// 每块一个值（如 3 字节的 u16 得到 2 个值），末块不足宽度时零扩展补全并标注
+/// 补零。多字节类型按 `endian` 解释并在标签后标注字节序；每行最多 8 个值，
+/// 值间用分号分隔（千位分隔符本身用逗号，混用会难以分辨）。
+/// 标识与时间只在长度精确匹配时解释（16 字节 → uuid/ipv6，6 字节 → mac，
+/// 4 字节 → ipv4/time，8 字节 → time）。末尾附 ASCII（非可打印字节显示为 `.`）
+/// 与 UTF-8 文本解释，只取选区前 64 字节，超出以 `…` 截断。
+fn type_interpretations(bytes: &[u8], endian: crate::fmt::Endian) -> Vec<(String, String)> {
+    use crate::fmt::{Endian, with_sep};
+
+    let mut rows: Vec<(String, String)> = Vec::new();
+    if bytes.is_empty() {
+        return rows;
+    }
+    let sfx = endian.suffix();
+    // 单行最多展示的数值个数，超出部分以 `…` 省略
+    const MAX_VALUES: usize = 8;
+    let note = crate::i18n::tr().padded;
+
+    // 能容纳整个选区的最大类型宽度（超过 8 字节按 8 字节封顶），
+    // 更窄的类型把选区按各自宽度分块，给出多个值
+    let width = [1usize, 2, 4, 8]
+        .into_iter()
+        .find(|&w| w >= bytes.len().min(8))
+        .unwrap_or(8);
+
+    // 单字节类型：每字节一个值，无字节序后缀
+    macro_rules! byte_row {
+        ($label:literal, $ty:ty) => {{
+            let mut vals: Vec<String> = Vec::new();
+            for (k, b) in bytes.iter().enumerate() {
+                if k == MAX_VALUES {
+                    vals.push("…".to_string());
+                    break;
+                }
+                vals.push(with_sep((*b as $ty).to_string()));
+            }
+            rows.push(($label.to_string(), vals.join("; ")));
+        }};
+    }
+    byte_row!("u8", u8);
+    byte_row!("i8", i8);
+
+    // 多字节整数：按宽度切块，末块不足时零扩展（小端补尾部、大端补头部）
+    macro_rules! int_row {
+        ($label:literal, $ty:ty) => {{
+            let n = std::mem::size_of::<$ty>();
+            if width >= n {
+                let mut vals: Vec<String> = Vec::new();
+                for (k, chunk) in bytes.chunks(n).enumerate() {
+                    if k == MAX_VALUES {
+                        vals.push("…".to_string());
+                        break;
+                    }
+                    let mut arr = [0u8; std::mem::size_of::<$ty>()];
+                    match endian {
+                        Endian::Little => arr[..chunk.len()].copy_from_slice(chunk),
+                        Endian::Big => arr[n - chunk.len()..].copy_from_slice(chunk),
+                    }
+                    let v = match endian {
+                        Endian::Little => <$ty>::from_le_bytes(arr),
+                        Endian::Big => <$ty>::from_be_bytes(arr),
+                    };
+                    let mut s = with_sep(v.to_string());
+                    if chunk.len() < n {
+                        s.push_str(note);
+                    }
+                    vals.push(s);
+                }
+                rows.push((format!("{} {sfx}", $label), vals.join("; ")));
+            }
+        }};
+    }
+    int_row!("u16", u16);
+    int_row!("i16", i16);
+    int_row!("u32", u32);
+    int_row!("i32", i32);
+    int_row!("u64", u64);
+    int_row!("i64", i64);
+
+    // 浮点：与整数同样按宽度切块
+    macro_rules! float_row {
+        ($label:literal, $ty:ty) => {{
+            let n = std::mem::size_of::<$ty>();
+            if width >= n {
+                let mut vals: Vec<String> = Vec::new();
+                for (k, chunk) in bytes.chunks(n).enumerate() {
+                    if k == MAX_VALUES {
+                        vals.push("…".to_string());
+                        break;
+                    }
+                    let mut arr = [0u8; std::mem::size_of::<$ty>()];
+                    match endian {
+                        Endian::Little => arr[..chunk.len()].copy_from_slice(chunk),
+                        Endian::Big => arr[n - chunk.len()..].copy_from_slice(chunk),
+                    }
+                    let v = match endian {
+                        Endian::Little => <$ty>::from_le_bytes(arr),
+                        Endian::Big => <$ty>::from_be_bytes(arr),
+                    };
+                    // 与解码显示一致：极小值 Display 会展开成几百位，改用科学计数法
+                    let s = format!("{v}");
+                    let mut s = if s.len() > 24 { format!("{v:e}") } else { s };
+                    s = with_sep(s);
+                    if chunk.len() < n {
+                        s.push_str(note);
+                    }
+                    vals.push(s);
+                }
+                rows.push((format!("{} {sfx}", $label), vals.join("; ")));
+            }
+        }};
+    }
+    float_row!("f32", f32);
+    float_row!("f64", f64);
+
+    // 标识与时间：长度必须与类型要求一致，直接复用解码层同一套格式化
+    // （uuid/mac/ip 无有效长度时只回退 hex，这里靠长度过滤掉）
+    let ident = |mode: crate::fmt::DecodeMode| {
+        crate::fmt::decode(
+            bytes,
+            mode,
+            endian,
+            usize::MAX,
+            &crate::fmt::HintFlags::default(),
+        )
+    };
+    match bytes.len() {
+        16 => {
+            rows.push(("uuid".to_string(), ident(crate::fmt::DecodeMode::Uuid)));
+            rows.push(("ip".to_string(), ident(crate::fmt::DecodeMode::Ip)));
+        }
+        6 => rows.push(("mac".to_string(), ident(crate::fmt::DecodeMode::Mac))),
+        4 => {
+            rows.push(("ip".to_string(), ident(crate::fmt::DecodeMode::Ip)));
+            rows.push(("time".to_string(), ident(crate::fmt::DecodeMode::Time)));
+        }
+        8 => rows.push(("time".to_string(), ident(crate::fmt::DecodeMode::Time))),
+        _ => {}
+    }
+
+    // 文本解释：可打印 ASCII 原样、其余显示为 '.'（与 ASCII 列口径一致）
+    const TEXT_CAP: usize = 64;
+    let shown = &bytes[..bytes.len().min(TEXT_CAP)];
+    let tail = if bytes.len() > shown.len() { "…" } else { "" };
+    let ascii: String = shown
+        .iter()
+        .map(|&b| {
+            if (0x20..=0x7E).contains(&b) {
+                b as char
+            } else {
+                '.'
+            }
+        })
+        .collect();
+    rows.push(("ASCII".to_string(), format!("{ascii}{tail}")));
+    rows.push((
+        "utf8".to_string(),
+        format!("{}{tail}", String::from_utf8_lossy(shown)),
+    ));
+    rows
+}
+
+/// 悬停选区时的类型解释提示：逐行「类型 = 值」。
+fn show_type_tooltip(ui: &mut egui::Ui, bytes: &[u8], endian: crate::fmt::Endian) {
+    egui::Grid::new(ui.id().with("hex_sel_types"))
+        .num_columns(2)
+        .spacing([12.0, 2.0])
+        .show(ui, |ui| {
+            for (label, value) in type_interpretations(bytes, endian) {
+                ui.add(egui::Label::new(egui::RichText::new(label).monospace()));
+                ui.add(egui::Label::new(egui::RichText::new(value).monospace()));
+                ui.end_row();
+            }
+        });
+}
+
 /// 交互式 hex 视图。
 ///
 /// - `id`：组件唯一 id（Key/Value 卡片各一）；
 /// - `base_offset`：本段在原始字节中的起始偏移（地址列用）；
+/// - `endian`：多字节类型解释所用的字节序（与全局设置一致）；
 /// - `sel`：当前选区（字节全局序号，端点顺序无关）；内容切换由调用方负责清空。
 /// - `highlights`：内容搜索匹配区间及当前命中（字节全局序号 start, len）；
 ///   当前命中使用更醒目的颜色；与选区重叠时让位于选区。
@@ -204,6 +387,7 @@ pub(crate) fn hex_view(
     show_ascii: bool,
     compact: bool,
     base_offset: usize,
+    endian: crate::fmt::Endian,
     sel: &mut Option<(usize, usize)>,
     highlights: &SearchHighlights,
     scroll_to: Option<usize>,
@@ -394,16 +578,23 @@ pub(crate) fn hex_view(
         }
     }
     if resp.drag_stopped() {
-        // 单击（没拖动）不保留选区，等同放置光标
-        if let Some(Drag { moved: false, .. }) =
-            ui.ctx().data(|d| d.get_temp::<Option<Drag>>(id)).flatten()
+        // 未移动即松开（含按住稍久才松手，egui 会判成拖拽）也视为单击该字节，
+        // 建立只含该字节的选区，保证 1 字节同样能选中/看类型解释；
+        // 普通快速单击不产生拖拽记录，走下面的 clicked 分支
+        if let Some(Drag {
+            anchor,
+            moved: false,
+        }) = ui.ctx().data(|d| d.get_temp::<Option<Drag>>(id)).flatten()
         {
-            *sel = None;
+            *sel = Some((anchor, anchor));
+            resp.request_focus();
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::new("mdbxer_sel_owner"), Some(id)));
         }
         ui.ctx().data_mut(|d| d.remove_temp::<Option<Drag>>(id));
     }
-    let line_number_clicked = resp.clicked_by(egui::PointerButton::Primary)
-        && resp.interact_pointer_pos().is_some_and(line_number_at);
+    let clicked = resp.clicked_by(egui::PointerButton::Primary);
+    let line_number_clicked = clicked && resp.interact_pointer_pos().is_some_and(line_number_at);
     if line_number_clicked
         && let Some(pointer) = resp.interact_pointer_pos()
         && !bytes.is_empty()
@@ -415,8 +606,19 @@ pub(crate) fn hex_view(
             ui.ctx()
                 .data_mut(|d| d.insert_temp(egui::Id::new("mdbxer_sel_owner"), Some(id)));
         }
-    }
-    if resp.clicked_by(egui::PointerButton::Primary) && !line_number_clicked && sel.is_some() {
+    } else if clicked
+        && !bytes.is_empty()
+        && let Some((r, i)) = resp.interact_pointer_pos().and_then(hit_at)
+    {
+        // 单击单个字节：建立只含该字节的选区（悬停其上即可看类型解释），
+        // 也便于只复制这一个字节
+        let g = r * n + i;
+        *sel = Some((g, g));
+        resp.request_focus();
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::new("mdbxer_sel_owner"), Some(id)));
+    } else if clicked && sel.is_some() {
+        // 单击地址列/空隙/空白处：清除选区
         *sel = None;
     }
     // 右键：有选区时复制并取消选择（右键 = 复制 + 取消所选）；
@@ -647,11 +849,29 @@ pub(crate) fn hex_view(
     ui.ctx().data_mut(|d| d.insert_temp(id, cache));
 
     // egui 在按下/拖拽期间只把"被拖拽控件"标记为 hovered（interaction.rs），指针移出后
-    // 提示仍会跟随指针显示、盖住其他面板区域；仅悬停且未拖拽时才显示本提示。
+    // 提示仍会跟随指针显示、盖住其他面板区域；仅悬停且未拖拽时才显示提示。
     // 必须用 at_pointer 变体：本控件 allocate 的是全部内容的高度（数千像素），
     // 默认锚定控件矩形的提示会被钳制到窗口底部、横向跑到左下方。
+    //
+    // 指针落在选区内的字节上时显示类型解释（各数值类型按当前字节序 + 文本），
+    // 其余位置显示整控件的操作提示。
+    let sel_tip = sel_norm.and_then(|(lo, hi)| {
+        let (r, i) = hover?;
+        let g = r * n + i;
+        if bytes.is_empty() || g < lo || g > hi {
+            return None;
+        }
+        let lo = lo.min(bytes.len() - 1);
+        let hi = hi.min(bytes.len() - 1);
+        Some(&bytes[lo..=hi])
+    });
     let resp = if resp.hovered() && !resp.dragged() {
-        resp.on_hover_text_at_pointer(crate::i18n::tr().hex_hint)
+        match sel_tip {
+            Some(sel_bytes) => {
+                resp.on_hover_ui_at_pointer(|ui| show_type_tooltip(ui, sel_bytes, endian))
+            }
+            None => resp.on_hover_text_at_pointer(crate::i18n::tr().hex_hint),
+        }
     } else {
         resp
     };
@@ -660,8 +880,8 @@ pub(crate) fn hex_view(
 
 #[cfg(test)]
 mod tests {
-    use super::{Geom, edge_scroll_speed_fraction, line_byte_range};
-    use crate::fmt::hex_section_chars;
+    use super::{Geom, edge_scroll_speed_fraction, line_byte_range, type_interpretations};
+    use crate::fmt::{Endian, hex_section_chars};
 
     fn geom(width: usize, compact: bool, show_ascii: bool) -> Geom {
         let cw = 10.0;
@@ -705,6 +925,128 @@ mod tests {
         assert_eq!(line_byte_range(2, 16, 40), Some((32, 39)));
         assert_eq!(line_byte_range(3, 16, 40), None);
         assert_eq!(line_byte_range(0, 0, 4), None);
+    }
+
+    #[test]
+    fn type_interpretations_chunk_narrower_types() {
+        // 两字节选区：u8/i8 每字节一个值，更宽类型不显示
+        let le = type_interpretations(&[1, 2], Endian::Little);
+        let be = type_interpretations(&[1, 2], Endian::Big);
+        assert!(le.contains(&("u8".to_string(), "1; 2".to_string())));
+        assert!(le.contains(&("u16 LE".to_string(), "513".to_string())));
+        assert!(be.contains(&("u16 BE".to_string(), "258".to_string())));
+        assert!(!le.iter().any(|(l, _)| l.starts_with("u32")));
+        assert!(!le.iter().any(|(l, _)| l.starts_with("f32")));
+
+        // 文本解释：非可打印字节显示为 '.'（与 ASCII 列口径一致）
+        assert!(le.contains(&("ASCII".to_string(), "..".to_string())));
+        assert!(le.contains(&("utf8".to_string(), "\u{1}\u{2}".to_string())));
+    }
+
+    #[test]
+    fn type_interpretations_single_byte_shows_u8_only() {
+        // 单字节选区：u8/i8 有值，u16 及以上跳过
+        let rows = type_interpretations(&[0xFF], Endian::Little);
+        assert!(rows.contains(&("u8".to_string(), "255".to_string())));
+        assert!(rows.contains(&("i8".to_string(), "-1".to_string())));
+        assert!(!rows.iter().any(|(l, _)| l.starts_with("u16")));
+    }
+
+    #[test]
+    fn type_interpretations_four_and_eight_bytes() {
+        // 4 字节：u8 四个值、u16 两个值，u32/i32 与 f32 各一个，8 字节类型跳过
+        let le = type_interpretations(&[0x00, 0x00, 0x80, 0x3F], Endian::Little);
+        assert!(le.contains(&("u8".to_string(), "0; 0; 128; 63".to_string())));
+        // 第二块 0x3F80 = 16256（千位分隔开关影响具体文本，只看前缀）
+        assert!(
+            le.iter()
+                .any(|(l, v)| l == "u16 LE" && v.starts_with("0; 16"))
+        );
+        assert!(le.contains(&("f32 LE".to_string(), "1".to_string())));
+        assert!(le.iter().any(|(l, _)| l == "u32 LE"));
+        assert!(!le.iter().any(|(l, _)| l.starts_with("u64")));
+
+        // 8 字节：u16 四个值、u32 两个值，u64/i64 与 f64 各一个
+        let eight = type_interpretations(&[0u8; 8], Endian::Little);
+        assert!(eight.contains(&("u16 LE".to_string(), "0; 0; 0; 0".to_string())));
+        assert!(eight.contains(&("u32 LE".to_string(), "0; 0".to_string())));
+        assert!(eight.iter().any(|(l, _)| l == "u64 LE"));
+        assert!(eight.iter().any(|(l, _)| l == "f64 LE"));
+
+        // 可打印文本：ASCII 与 UTF-8 原样输出
+        let text = type_interpretations(b"AB", Endian::Little);
+        assert!(text.contains(&("ASCII".to_string(), "AB".to_string())));
+        assert!(text.contains(&("utf8".to_string(), "AB".to_string())));
+    }
+
+    #[test]
+    fn type_interpretations_include_identifiers_and_time() {
+        // 4 字节：IPv4 与 Unix 秒
+        let four = type_interpretations(&[1, 2, 3, 4], Endian::Little);
+        assert!(four.contains(&("ip".to_string(), "1.2.3.4".to_string())));
+        assert!(four.iter().any(|(l, _)| l == "time"));
+
+        // 6 字节：MAC
+        let six = type_interpretations(&[0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E], Endian::Little);
+        assert!(six.contains(&("mac".to_string(), "00:1A:2B:3C:4D:5E".to_string())));
+
+        // 16 字节：UUID 与 IPv6
+        let sixteen = type_interpretations(&[0u8; 16], Endian::Little);
+        assert!(sixteen.contains(&(
+            "uuid".to_string(),
+            "00000000-0000-0000-0000-000000000000".to_string()
+        )));
+        assert!(sixteen.contains(&("ip".to_string(), "::".to_string())));
+
+        // 8 字节：时间（Unix 秒/毫秒或 FILETIME）
+        let eight = type_interpretations(&[0u8; 8], Endian::Little);
+        assert!(eight.iter().any(|(l, _)| l == "time"));
+
+        // 3 字节：u8 三个值、u16 两块（末块补零）、更宽类型只按 4 字节补零解释，
+        // 标识类仍需精确长度（不出现）
+        let three = type_interpretations(&[1, 2, 3], Endian::Little);
+        let note = crate::i18n::tr().padded;
+        assert!(three.contains(&("u8".to_string(), "1; 2; 3".to_string())));
+        assert!(
+            three
+                .iter()
+                .any(|(l, v)| l == "u16 LE" && v.starts_with("513; 3") && v.ends_with(note))
+        );
+        assert!(three.iter().any(|(l, _)| l == "u32 LE"));
+        assert!(!three.iter().any(|(l, _)| l.starts_with("u64")));
+        assert!(
+            !three
+                .iter()
+                .any(|(l, _)| matches!(l.as_str(), "ip" | "mac" | "time"))
+        );
+    }
+
+    #[test]
+    fn type_interpretations_pad_short_selection_to_type_width() {
+        let note = crate::i18n::tr().padded;
+
+        // 3 字节 → 补零成 4 字节（小端补尾部、大端补头部）
+        let le = type_interpretations(&[0, 0, 0], Endian::Little);
+        let be = type_interpretations(&[0, 0, 0], Endian::Big);
+        assert!(
+            le.iter()
+                .any(|(l, v)| l == "u32 LE" && v.starts_with('0') && v.contains(note))
+        );
+        assert!(
+            be.iter()
+                .any(|(l, v)| l == "u32 BE" && v.starts_with('0') && v.contains(note))
+        );
+
+        // 5 字节 → 补零成 8 字节
+        let five = type_interpretations(&[0u8; 5], Endian::Little);
+        assert!(
+            five.iter()
+                .any(|(l, v)| l == "u64 LE" && v.starts_with('0') && v.contains(note))
+        );
+
+        // 选区恰好等于类型宽度时不标注补零
+        let full = type_interpretations(&[0u8; 4], Endian::Little);
+        assert!(!full.iter().any(|(_, v)| v.contains(note)));
     }
 
     #[test]
