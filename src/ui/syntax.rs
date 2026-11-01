@@ -772,74 +772,256 @@ fn starts_with_closer(line: &[u8], indent: usize) -> bool {
     rest.starts_with(b"}") || rest.starts_with(b"]") || rest.starts_with(b"</")
 }
 
-/// 按缩进计算每行的折叠区间，对 pretty JSON/XML/YAML/TOML 通用：
-/// 某行之后存在更深缩进的块即可折叠，块尾为第一个缩进 ≤ 本行的行之前；
-/// 若该行与本行同缩进且以闭合标记开头，则连闭合行一起隐藏。
-/// 紧凑单行文本没有任何可折叠行。
-pub(crate) fn fold_lines(s: &str) -> Vec<FoldLine> {
-    let bytes = s.as_bytes();
-    let mut starts: Vec<usize> = Vec::new();
-    let mut ends: Vec<usize> = Vec::new();
-    let mut indents: Vec<usize> = Vec::new();
-    let mut start = 0usize;
-    for (i, b) in bytes.iter().enumerate() {
-        if *b == b'\n' {
-            let mut end = i;
-            if end > start && bytes[end - 1] == b'\r' {
-                end -= 1; // 行尾 \r（CRLF 文本）不计入行内容
+/// 文本行表：按 `\n` 切分并记录每行的字节区间与缩进；以 `\n` 结尾的文本
+/// 不含末尾幻影空行。
+struct Lines<'a> {
+    s: &'a str,
+    starts: Vec<usize>,
+    ends: Vec<usize>,
+    indents: Vec<usize>,
+}
+
+impl<'a> Lines<'a> {
+    fn new(s: &'a str) -> Self {
+        let bytes = s.as_bytes();
+        let mut starts: Vec<usize> = Vec::new();
+        let mut ends: Vec<usize> = Vec::new();
+        let mut indents: Vec<usize> = Vec::new();
+        let mut start = 0usize;
+        for (i, b) in bytes.iter().enumerate() {
+            if *b == b'\n' {
+                let mut end = i;
+                if end > start && bytes[end - 1] == b'\r' {
+                    end -= 1; // 行尾 \r（CRLF 文本）不计入行内容
+                }
+                starts.push(start);
+                ends.push(end);
+                indents.push(indent_of(&bytes[start..end]));
+                start = i + 1;
             }
-            starts.push(start);
-            ends.push(end);
-            indents.push(indent_of(&bytes[start..end]));
-            start = i + 1;
         }
-    }
-    starts.push(start);
-    ends.push({
+        starts.push(start);
         let mut end = bytes.len();
         if end > start && bytes[end - 1] == b'\r' {
             end -= 1;
         }
-        end
-    });
-    indents.push(indent_of(&bytes[start..]));
-    // 以 \n 结尾的文本：丢弃末尾幻影空行，避免闭合行多出"只藏一个空行"的折叠块，
-    // 也避免折叠视图底部渲染一条多余的空行
-    if s.ends_with('\n') {
-        starts.pop();
-        ends.pop();
-        indents.pop();
+        ends.push(end);
+        indents.push(indent_of(&bytes[start..]));
+        // 以 \n 结尾的文本：丢弃末尾幻影空行，避免闭合行多出"只藏一个空行"的折叠块，
+        // 也避免折叠视图底部渲染一条多余的空行
+        if s.ends_with('\n') {
+            starts.pop();
+            ends.pop();
+            indents.pop();
+        }
+        Self {
+            s,
+            starts,
+            ends,
+            indents,
+        }
     }
 
-    let n = starts.len();
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        // 第一个缩进 ≤ 本行的后续行 k：更深缩进块为 i+1..k-1（连续，
-        // pretty 输出的块不会中途回到浅缩进再深入）
+    fn len(&self) -> usize {
+        self.starts.len()
+    }
+
+    fn text(&self, i: usize) -> &'a str {
+        &self.s[self.starts[i]..self.ends[i]]
+    }
+
+    fn trimmed(&self, i: usize) -> &'a str {
+        self.text(i).trim_start()
+    }
+
+    fn is_blank(&self, i: usize) -> bool {
+        self.indents[i] == usize::MAX
+    }
+
+    /// 是否 YAML 序列项行（`-` 或 `- ` 开头）。
+    fn is_seq_item(&self, i: usize) -> bool {
+        let t = self.trimmed(i);
+        t == "-" || t.starts_with("- ")
+    }
+
+    /// `[from, to)` 内最后一个非空行。
+    fn last_non_blank(&self, from: usize, to: usize) -> Option<usize> {
+        (from..to.min(self.len())).rev().find(|&j| !self.is_blank(j))
+    }
+
+    /// 缩进块：本行之后连续更深缩进的行（空行视作无限深，不打断块）；
+    /// 块尾为第一个缩进 ≤ 本行的行之前。块后同缩进的闭合行（`}` `]` `</...`）
+    /// 一并算入，折叠后不残留孤儿闭合行。只含空行的块不可折叠。
+    fn block_end(&self, i: usize) -> Option<usize> {
+        let n = self.len();
+        let d = self.indents[i];
         let mut k = i + 1;
-        while k < n && indents[k] > indents[i] {
+        while k < n && self.indents[k] > d {
             k += 1;
         }
-        let fold_end = if k > i + 1 {
-            // 块非空；块后同缩进行是闭合标记（}/]/</tag>）则连它一起隐藏
-            if k < n
-                && indents[k] == indents[i]
-                && starts_with_closer(&bytes[starts[k]..ends[k]], indents[i])
-            {
-                Some(k)
-            } else {
-                Some(k - 1)
-            }
-        } else {
-            None
-        };
-        out.push(FoldLine {
-            start: starts[i],
-            end: ends[i],
-            fold_end,
-        });
+        let last = self.last_non_blank(i + 1, k)?;
+        if k < n && self.indents[k] == d && starts_with_closer(self.text(k).as_bytes(), d) {
+            return Some(k);
+        }
+        Some(last)
     }
-    out
+}
+
+/// 按排版模式选择折叠规则：YAML/TOML 有自己的结构（无缩进序列、节头、
+/// 跨行字符串/数组），其余（pretty JSON/XML/纯缩进文本）走通用缩进规则。
+pub(crate) fn fold_lines_for(mode: DecodeMode, s: &str) -> Vec<FoldLine> {
+    match mode {
+        DecodeMode::Yaml => yaml_fold_lines(s),
+        DecodeMode::Toml => toml_fold_lines(s),
+        _ => fold_lines(s),
+    }
+}
+
+/// 按缩进计算每行的折叠区间（通用规则）。
+/// 紧凑单行文本没有任何可折叠行。
+pub(crate) fn fold_lines(s: &str) -> Vec<FoldLine> {
+    let l = Lines::new(s);
+    (0..l.len())
+        .map(|i| FoldLine {
+            start: l.starts[i],
+            end: l.ends[i],
+            fold_end: l.block_end(i),
+        })
+        .collect()
+}
+
+/// YAML 折叠：缩进块 + 无缩进块序列。
+///
+/// serde_yaml 输出把键的序列值写在键之后、`- ` 项与本键同缩进（indentless
+/// sequence），纯缩进规则会把这类列表判成"无块"，ports/tags/workers 等
+/// 因此无法折叠。
+fn yaml_fold_lines(s: &str) -> Vec<FoldLine> {
+    let l = Lines::new(s);
+    (0..l.len())
+        .map(|i| FoldLine {
+            start: l.starts[i],
+            end: l.ends[i],
+            fold_end: l.block_end(i).or_else(|| indentless_seq_end(&l, i)),
+        })
+        .collect()
+}
+
+/// `key:` 后紧跟同缩进的序列项时，这一整组序列项属于该键的块。
+fn indentless_seq_end(l: &Lines<'_>, i: usize) -> Option<usize> {
+    let d = l.indents[i];
+    if d == usize::MAX || !l.trimmed(i).ends_with(':') {
+        return None;
+    }
+    if i + 1 >= l.len() || l.indents[i + 1] != d || !l.is_seq_item(i + 1) {
+        return None;
+    }
+    let mut k = i + 1;
+    while k < l.len() {
+        let ind = l.indents[k];
+        // 更深的子块、同缩进的后续序列项都属本块；同缩进的其它键结束本块
+        if ind > d || (ind == d && l.is_seq_item(k)) {
+            k += 1;
+        } else {
+            break;
+        }
+    }
+    l.last_non_blank(i + 1, k)
+}
+
+/// TOML 折叠：节头、跨行字符串、跨行数组。
+///
+/// pretty 输出的表键与节头同缩进（通常都是 0），纯缩进规则完全折不动节；
+/// 这里按结构切：`[table]`/`[[array]]` 折到下个节头之前，`'''`/`"""` 折到
+/// 闭合行，`[` 折到括号闭合行。
+fn toml_fold_lines(s: &str) -> Vec<FoldLine> {
+    let l = Lines::new(s);
+    let n = l.len();
+    // 多行字符串：开行 → 闭行；内容行与闭行不再参与其它折叠判断
+    let mut str_close: Vec<Option<usize>> = vec![None; n];
+    let mut in_str = vec![false; n];
+    let mut open: Option<(&'static str, usize)> = None;
+    for (i, flag) in in_str.iter_mut().enumerate() {
+        if let Some((delim, opener)) = open {
+            *flag = true;
+            if l.text(i).contains(delim) {
+                str_close[opener] = Some(i);
+                open = None;
+            }
+            continue;
+        }
+        let line = l.text(i);
+        for delim in ["'''", "\"\"\""] {
+            if line.matches(delim).count() % 2 == 1 {
+                open = Some((delim, i));
+                break;
+            }
+        }
+    }
+
+    (0..n)
+        .map(|i| FoldLine {
+            start: l.starts[i],
+            end: l.ends[i],
+            fold_end: if let Some(close) = str_close[i] {
+                Some(close)
+            } else if in_str[i] {
+                None
+            } else if is_table_header(&l, i) {
+                table_end(&l, i, &in_str)
+            } else {
+                array_end(&l, i).or_else(|| l.block_end(i))
+            },
+        })
+        .collect()
+}
+
+/// 行首的节头 `[table]` / `[[array]]`（值的数组 `[` 不在行首）。
+fn is_table_header(l: &Lines<'_>, i: usize) -> bool {
+    let t = l.trimmed(i);
+    l.indents[i] == 0 && t.starts_with('[') && t.ends_with(']')
+}
+
+/// 节内容：折到下一个节头之前最后一个非空行。
+fn table_end(l: &Lines<'_>, i: usize, in_str: &[bool]) -> Option<usize> {
+    let mut j = i + 1;
+    while j < l.len() {
+        if !in_str[j] && is_table_header(l, j) {
+            break;
+        }
+        j += 1;
+    }
+    l.last_non_blank(i + 1, j)
+}
+
+/// 跨行数组：括号净深度回到 0 的那一行（含闭合的 `]` 行）。
+fn array_end(l: &Lines<'_>, i: usize) -> Option<usize> {
+    let mut depth = bracket_delta(l.text(i));
+    if depth <= 0 {
+        return None;
+    }
+    for j in i + 1..l.len() {
+        depth += bracket_delta(l.text(j));
+        if depth <= 0 {
+            return Some(j);
+        }
+    }
+    None
+}
+
+/// 行内未被引号包裹的 `[`/`]` 净增量（单行字符串里的括号不算）。
+fn bracket_delta(line: &str) -> i32 {
+    let mut depth = 0;
+    let mut quote: Option<char> = None;
+    for c in line.chars() {
+        match (quote, c) {
+            (None, c) if c == '"' || c == '\'' => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            (None, '[') => depth += 1,
+            (None, ']') => depth -= 1,
+            _ => {}
+        }
+    }
+    depth
 }
 
 /// 折叠视图逐行着色：把整段文本的 token（绝对字节区间）裁剪到行区间
@@ -1463,11 +1645,20 @@ mod tests {
 
     // ── 折叠视图 ──────────────────────────────────────────────────
 
-    use super::fold_lines;
+    use super::{fold_lines, fold_lines_for};
 
     /// 汇总断言用的 (行文本, fold_end) 列表。
     fn fold_pairs(s: &str) -> Vec<(&str, Option<usize>)> {
         fold_lines(s)
+            .into_iter()
+            .zip(s.split('\n'))
+            .map(|(fl, line)| (line, fl.fold_end))
+            .collect()
+    }
+
+    /// 按排版模式汇总 (行文本, fold_end)，用于 YAML/TOML 的结构化折叠断言。
+    fn fold_pairs_for(mode: crate::fmt::DecodeMode, s: &str) -> Vec<(&str, Option<usize>)> {
+        fold_lines_for(mode, s)
             .into_iter()
             .zip(s.split('\n'))
             .map(|(fl, line)| (line, fl.fold_end))
@@ -1557,5 +1748,40 @@ mod tests {
         let pairs = fold_pairs(s);
         assert_eq!(pairs[0], ("a:", Some(2)));
         assert_eq!(pairs[1], ("  b:", Some(2)));
+    }
+
+    #[test]
+    fn fold_lines_yaml_indentless_sequence() {
+        // serde_yaml 输出把序列项写在键之后、与本键同缩进：仍属该键的块
+        let s = "ports:\n- 80\n- 443\nnext: 1\n";
+        let pairs = fold_pairs_for(crate::fmt::DecodeMode::Yaml, s);
+        assert_eq!(pairs[0], ("ports:", Some(2)));
+        assert_eq!(pairs[3], ("next: 1", None));
+
+        // 序列项内部：嵌套键与同缩进的子序列都可折叠
+        let s = "workers:\n- name: a\n  tags:\n  - x\n- name: b\n";
+        let pairs = fold_pairs_for(crate::fmt::DecodeMode::Yaml, s);
+        assert_eq!(pairs[0], ("workers:", Some(4)));
+        assert_eq!(pairs[2], ("  tags:", Some(3)));
+    }
+
+    #[test]
+    fn fold_lines_toml_section_header_folds_keys() {
+        // 节头折到下个节头之前，节间空行不计入块（否则只剩一个空行可藏）
+        let s = "[db]\nhost = \"x\"\nport = 1\n\n[log]\nlevel = \"d\"\n";
+        let pairs = fold_pairs_for(crate::fmt::DecodeMode::Toml, s);
+        assert_eq!(pairs[0], ("[db]", Some(2)));
+        assert_eq!(pairs[3], ("", None));
+        assert_eq!(pairs[4], ("[log]", Some(5)));
+    }
+
+    #[test]
+    fn fold_lines_toml_multiline_string_and_array() {
+        // 多行字符串折到闭合行；跨行数组折到 `]` 行
+        let s = "name = '''\nline1\nline2'''\nitems = [\n  \"a\",\n  \"b\",\n]\n";
+        let pairs = fold_pairs_for(crate::fmt::DecodeMode::Toml, s);
+        assert_eq!(pairs[0], ("name = '''", Some(2)));
+        assert_eq!(pairs[1], ("line1", None));
+        assert_eq!(pairs[3], ("items = [", Some(6)));
     }
 }

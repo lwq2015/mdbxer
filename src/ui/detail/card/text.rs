@@ -13,7 +13,7 @@ use crate::ui::MdbxerApp;
 use crate::ui::detail::state::Side;
 use crate::ui::detail::text_fp;
 use crate::ui::syntax::{
-    FoldLine, SearchHighlights, append_colored, fold_lines, json_palette, syntax_tokens,
+    FoldLine, SearchHighlights, append_colored, fold_lines_for, json_palette, syntax_tokens,
 };
 
 /// 渲染文本区（含折叠头、猜测行、内容滚动）。
@@ -375,7 +375,7 @@ fn byte_range_in_byte_text(
 /// 单行紧凑 JSON、纯文本、无块的多行文本不折叠，仍走 TextEdit 原路径。
 fn fold_line_list(syntax: Option<DecodeMode>, text: &str) -> Vec<FoldLine> {
     match syntax {
-        Some(_) if text.contains('\n') => fold_lines(text),
+        Some(mode) if text.contains('\n') => fold_lines_for(mode, text),
         _ => Vec::new(),
     }
 }
