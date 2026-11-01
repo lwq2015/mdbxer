@@ -1,7 +1,167 @@
 // Copyright 2026 lwq_yu
 // SPDX-License-Identifier: Apache-2.0
 
-use super::I18n;
+use super::{HelpGroup, I18n};
+
+/// Help page: feature overview (grouped list).
+const HELP_GROUPS: &[HelpGroup] = &[
+    HelpGroup {
+        title: "Opening & browsing",
+        items: &[
+            (
+                "Open a database",
+                "“File” / “Folder” buttons in the top bar or Ctrl+O; you can also drop a path onto the window",
+            ),
+            (
+                "History",
+                "Top-bar dropdown lists recently opened databases; each entry can be removed",
+            ),
+            (
+                "Table list",
+                "Left panel sorts by name/row count, supports keyword filtering; main and multi-value tables are marked",
+            ),
+            (
+                "Paging",
+                "↑↓ move row by row, PgUp/PgDn change page, first/last buttons; page size is adjustable",
+            ),
+            (
+                "Reload & reveal",
+                "↻ re-enumerates tables and counts; 📂 reveals the database in the file manager",
+            ),
+        ],
+    },
+    HelpGroup {
+        title: "Data table",
+        items: &[
+            (
+                "Key/Value layout",
+                "Guess automatically or pick a decode format (text/number/bytes/time/structured)",
+            ),
+            (
+                "Type column",
+                "Guessed from the content; click the header to sort within the page (click again for order/revert)",
+            ),
+            (
+                "Context menu",
+                "Copy Key/Value/Hex, search by value, filter by key prefix, filter by type, save raw value",
+            ),
+            (
+                "Multi-select",
+                "Ctrl+click toggles, Shift+click extends by display order, Ctrl+A selects the page; copy or export the selection",
+            ),
+            (
+                "Type filter",
+                "Shows the union of several types; clear it with × in the toolbar or the menu item",
+            ),
+        ],
+    },
+    HelpGroup {
+        title: "Search",
+        items: &[
+            ("Key", "Jump to a key or filter by byte prefix"),
+            (
+                "Value",
+                "Filter the loaded page, or scan the whole table and jump to the first match",
+            ),
+            (
+                "Search options",
+                "Aa = case sensitive, .* = regex; hex(...)/binary(...)/dec(...) match raw bytes",
+            ),
+            (
+                "Find next",
+                "F3 continues the last search forward, Shift+F3 backward",
+            ),
+            (
+                "Cross-table search",
+                "🌐 scans every table in the database; results can be jumped to and exported",
+            ),
+            (
+                "History",
+                "🕘 lists the last 20 search terms of the current table; click one to reuse it",
+            ),
+        ],
+    },
+    HelpGroup {
+        title: "Detail panel",
+        items: &[
+            (
+                "Auto layout",
+                "JSON/BSON/MSGPACK/CBOR/XML/YAML/TOML with syntax highlighting, folding and hover previews",
+            ),
+            (
+                "Hex view",
+                "Inspect raw bytes, copy a selection, and search in hexadecimal",
+            ),
+            (
+                "Multi-value",
+                "Browse every value stored under the same key of a multi-value table",
+            ),
+            (
+                "Large fields",
+                "Very long values are split into segments instead of being decoded at once",
+            ),
+            (
+                "Image preview",
+                "PNG/JPEG/GIF/WebP/ICO are recognised by magic bytes and can be shown in a window",
+            ),
+        ],
+    },
+    HelpGroup {
+        title: "Statistics & export",
+        items: &[
+            (
+                "Table stats",
+                "B+ tree depth, branch/leaf/overflow pages, page size and table flags",
+            ),
+            (
+                "Environment",
+                "Geometry and map parameters, transactions and readers, main table",
+            ),
+            (
+                "Export",
+                "CSV / JSON / JSONL, for the whole table or just the current page (with filters and sorting)",
+            ),
+            (
+                "Background export",
+                "Reads in batches and writes to file, so the UI stays responsive",
+            ),
+        ],
+    },
+    HelpGroup {
+        title: "Settings & UI",
+        items: &[
+            (
+                "Advanced settings",
+                "Endianness, cell length, thousands separator, compact HEX, cell annotations, log level",
+            ),
+            (
+                "Saved state",
+                "Window position/size, table column widths and fold state are saved on exit",
+            ),
+            ("Language", "中文 / English / Русский, applied immediately"),
+            (
+                "Theme & pin",
+                "Dark/light theme; 📌 keeps the window always on top",
+            ),
+        ],
+    },
+    HelpGroup {
+        title: "Shortcuts",
+        items: &[
+            ("Ctrl+O / Ctrl+F", "Open a database / focus the search box"),
+            (
+                "Ctrl+C / Ctrl+A",
+                "Copy the selected rows (tab-separated) / select the current page",
+            ),
+            ("F3 / Shift+F3", "Find next / previous in the last search"),
+            ("PgUp / PgDn", "Previous / next page"),
+            (
+                "Esc",
+                "Clear one layer at a time: multi-select → search filters → input draft",
+            ),
+        ],
+    },
+];
 
 /// English.
 pub(super) const EN: I18n = I18n {
@@ -83,10 +243,20 @@ pub(super) const EN: I18n = I18n {
     copy: "Copy",
     copied_row: "Row copied",
     copied_selection: "Selected content copied",
+    menu_copy_key: "Copy key",
+    menu_copy_value: "Copy value",
+    menu_copy_value_hex: "Copy value (hex)",
+    menu_search_value: "Search this value",
+    menu_filter_key: "Filter by this key",
+    menu_save_value: "Save raw value",
+    copied_key: "Key copied",
+    copied_value: "Value copied",
     save_as: "Save as…",
     save_tip: "Save content to a file: raw bytes, visible text, or the guessed format",
     save_raw: "Raw binary (.bin)",
     save_text: "Visible text (.txt)",
+    image_preview: "Image preview",
+    image_preview_tip: "Decode and preview as an image (PNG / JPEG / GIF / WebP / ICO)",
     seg_prev_tip: "Previous segment (64 KiB)",
     seg_next_tip: "Next segment (64 KiB)",
     seg_input_hint: "offset/0x..",
@@ -139,15 +309,39 @@ pub(super) const EN: I18n = I18n {
     full_search_toggle: "Full",
     full_search_tip_off: "Switch to full-table search: V scans the whole table and locates the first match",
     full_search_tip_on: "Switch to page filter: V filters the currently loaded rows only",
+    search_case_tip: "Case sensitive: value text search distinguishes upper/lower case (Aa)",
+    search_regex_tip: "Regex: value text search uses a regular expression (.*)\nCombined with Aa, Aa controls case folding; hex(...) byte formats still match raw bytes",
     search_empty: "Enter a search term first",
     filter_active: "filtered",
     filter_clear_tip: "Clear search filters (key prefix + value text), show the whole table",
     key_search_bad_t: "Invalid search input: {e}",
+    menu_filter_type_add_t: "Filter by type: {t}",
+    menu_filter_type_del_t: "Remove this type filter: {t}",
+    menu_filter_type_clear: "Clear type filter (show all types)",
+    type_filter_on_t: "type filter: {n}",
+    type_filter_clear_tip: "Clear the type filter and show all types again",
 
-    export_tip: "Export the current table as CSV/JSON (background thread; UI stays responsive)",
+    export_tip: "Export the current table as CSV/JSON/JSONL (background thread; UI stays responsive)",
+    export_scope_all_btn: "All",
+    export_scope_page_btn: "Pg",
+    export_scope_tip_off: "Export scope: whole table; click to export only the current page (with page filters and sorting)",
+    export_scope_tip_on: "Export scope: current page only; click to export the whole table",
+    gsearch_title: "Cross-table search",
+    gsearch_tip: "Search values across all tables in the database (scanned in batches; results in a floating window)",
+    gsearch_start: "Search",
+    gsearch_export: "Export hits",
+    gsearch_scanning_t: "Scanning {table}: {n} records scanned, {m} hits…",
+    gsearch_done_t: "Done: {n} records scanned, {m} hits",
+    gsearch_truncated: "More than 500 hits; only the first 500 are kept",
+    gsearch_exported_t: "Exported {n} hits",
     export_started: "Export started…",
     export_progress_t: "Exporting: {n} records written…",
     export_done_t: "Export finished: {n} records saved to {path}",
+    multi_selected_t: "{n} rows selected",
+    multi_copy_tip: "Copy Key and Value of the selected rows (tab-separated, one row per line)",
+    multi_export_tip: "Save the selected rows in the current export format",
+    multi_clear_tip: "Clear the multi-selection (same as Esc)",
+    copied_rows_t: "Copied {n} rows",
 
     theme_to_light: "Switch to light theme",
     theme_to_dark: "Switch to dark theme",
@@ -316,4 +510,15 @@ pub(super) const EN: I18n = I18n {
     k_branch: "Branch pages",
     k_leaf: "Leaf pages",
     k_overflow: "Overflow pages",
+
+    tab_help: "Help",
+    help_title: "Feature overview",
+    help_intro: "MDBXer is a read-only viewer for libmdbx databases. The main features, grouped by task.",
+    help_groups: HELP_GROUPS,
+
+    hash_copy_tip: "Click to copy this hash (computed from the raw bytes)",
+    hash_copied_t: "Copied {alg}",
+    hash_label: "Hashes",
+    hash_tip: "Checksums shown at the bottom of the detail cards (over the raw Key/Value bytes)",
+    hash_none: "None",
 };

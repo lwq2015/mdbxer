@@ -185,12 +185,26 @@ pub struct I18n {
     pub copy: &'static str,
     pub copied_row: &'static str,
     pub copied_selection: &'static str,
+    /// 表格行右键菜单：复制 Key / 复制 Value / 复制 Value 的 Hex / 以值搜索
+    /// / 以 Key 前缀过滤 / 另存原始 Value
+    pub menu_copy_key: &'static str,
+    pub menu_copy_value: &'static str,
+    pub menu_copy_value_hex: &'static str,
+    pub menu_search_value: &'static str,
+    pub menu_filter_key: &'static str,
+    pub menu_save_value: &'static str,
+    /// 复制单个字段后的状态栏提示
+    pub copied_key: &'static str,
+    pub copied_value: &'static str,
     pub save_as: &'static str,
     pub save_tip: &'static str,
     /// 另存菜单：原始二进制项
     pub save_raw: &'static str,
     /// 另存菜单：可见文本项
     pub save_text: &'static str,
+    /// 图片预览按钮与弹窗标题
+    pub image_preview: &'static str,
+    pub image_preview_tip: &'static str,
     pub seg_prev_tip: &'static str,
     pub seg_next_tip: &'static str,
     pub seg_input_hint: &'static str,
@@ -258,19 +272,60 @@ pub struct I18n {
     /// "全表"复选框 hover 提示（按当前状态分：提示将切换到哪个模式）
     pub full_search_tip_off: &'static str,
     pub full_search_tip_on: &'static str,
+    /// "Aa" 大小写敏感开关 hover 提示
+    pub search_case_tip: &'static str,
+    /// ".*" 正则模式开关 hover 提示
+    pub search_regex_tip: &'static str,
     pub search_empty: &'static str,
     pub filter_active: &'static str,
     pub filter_clear_tip: &'static str,
     /// {e}
     pub key_search_bad_t: &'static str,
+    /// 右键菜单：按该行类型过滤（{t} = 类型标签；再次点击同一类型即移除，
+    /// 不同行上重复点击可累加多种类型）
+    pub menu_filter_type_add_t: &'static str,
+    pub menu_filter_type_del_t: &'static str,
+    /// 右键菜单：清除类型过滤（恢复显示全部类型）
+    pub menu_filter_type_clear: &'static str,
+    /// 工具条类型过滤指示（{n} 种类型）
+    pub type_filter_on_t: &'static str,
+    pub type_filter_clear_tip: &'static str,
 
     // ── 导出 ──
     pub export_tip: &'static str,
+    /// 导出范围按钮：全表状态下的标签
+    pub export_scope_all_btn: &'static str,
+    /// 导出范围按钮：仅当前页状态下的标签
+    pub export_scope_page_btn: &'static str,
+    /// 导出范围提示（按当前状态分：提示点击后切到哪个范围）
+    pub export_scope_tip_off: &'static str,
+    pub export_scope_tip_on: &'static str,
+    // ── 跨表搜索 ──
+    pub gsearch_title: &'static str,
+    /// 工具条按钮 hover 提示
+    pub gsearch_tip: &'static str,
+    pub gsearch_start: &'static str,
+    pub gsearch_export: &'static str,
+    /// {table} {n} {m}
+    pub gsearch_scanning_t: &'static str,
+    /// {n} {m}
+    pub gsearch_done_t: &'static str,
+    pub gsearch_truncated: &'static str,
+    /// {n}
+    pub gsearch_exported_t: &'static str,
     pub export_started: &'static str,
     /// {n}
     pub export_progress_t: &'static str,
     /// {n} {path}
     pub export_done_t: &'static str,
+    // ── 表格多选 ──
+    /// {n}：多选操作条上的已选行数
+    pub multi_selected_t: &'static str,
+    pub multi_copy_tip: &'static str,
+    pub multi_export_tip: &'static str,
+    pub multi_clear_tip: &'static str,
+    /// {n}：批量复制成功状态
+    pub copied_rows_t: &'static str,
 
     // ── 主题 / 收藏 ──
     /// 深色主题下：切换到浅色
@@ -487,6 +542,33 @@ pub struct I18n {
     pub k_branch: &'static str,
     pub k_leaf: &'static str,
     pub k_overflow: &'static str,
+
+    // ── 帮助页 ──
+    /// 中央页签名
+    pub tab_help: &'static str,
+    pub help_title: &'static str,
+    pub help_intro: &'static str,
+    /// 功能速览分组（每条 = 功能名 + 一句话说明）
+    pub help_groups: &'static [HelpGroup],
+
+    // ── 校验和（详情卡片底部 / 高级配置开关） ──
+    pub hash_copy_tip: &'static str,
+    /// {alg}
+    pub hash_copied_t: &'static str,
+    /// 高级配置里该行的标签
+    pub hash_label: &'static str,
+    pub hash_tip: &'static str,
+    /// 下拉里的"不显示"项
+    pub hash_none: &'static str,
+}
+
+/// 帮助页的一组功能条目。
+#[derive(Clone, Copy)]
+pub struct HelpGroup {
+    /// 分组标题
+    pub title: &'static str,
+    /// (功能名, 一句话说明)
+    pub items: &'static [(&'static str, &'static str)],
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -719,6 +801,61 @@ impl I18n {
     pub fn export_done(&self, n: usize, path: &str) -> String {
         fill(self.export_done_t, &[("n", &n.to_string()), ("path", path)])
     }
+
+    /// 跨表搜索进行中状态。
+    pub fn gsearch_scanning(&self, table: &str, n: usize, m: usize) -> String {
+        fill(
+            self.gsearch_scanning_t,
+            &[
+                ("table", table),
+                ("n", &n.to_string()),
+                ("m", &m.to_string()),
+            ],
+        )
+    }
+
+    /// 跨表搜索完成状态（扫描 n 条，命中 m 条）。
+    pub fn gsearch_done(&self, n: usize, m: usize) -> String {
+        fill(
+            self.gsearch_done_t,
+            &[("n", &n.to_string()), ("m", &m.to_string())],
+        )
+    }
+
+    /// 命中项导出成功状态。
+    pub fn gsearch_exported(&self, n: usize) -> String {
+        fill(self.gsearch_exported_t, &[("n", &n.to_string())])
+    }
+
+    /// 多选状态：已选 n 行。
+    pub fn multi_selected(&self, n: usize) -> String {
+        fill(self.multi_selected_t, &[("n", &n.to_string())])
+    }
+
+    /// 批量复制成功状态（n 行）。
+    pub fn copied_rows(&self, n: usize) -> String {
+        fill(self.copied_rows_t, &[("n", &n.to_string())])
+    }
+
+    /// 右键菜单：按该行类型加入过滤。
+    pub fn menu_filter_type_add(&self, ty: &str) -> String {
+        fill(self.menu_filter_type_add_t, &[("t", ty)])
+    }
+
+    /// 右键菜单：把该类型移出过滤。
+    pub fn menu_filter_type_del(&self, ty: &str) -> String {
+        fill(self.menu_filter_type_del_t, &[("t", ty)])
+    }
+
+    /// 工具条类型过滤指示（n 种类型）。
+    pub fn type_filter_on(&self, n: usize) -> String {
+        fill(self.type_filter_on_t, &[("n", &n.to_string())])
+    }
+
+    /// 复制校验和后的状态（alg 为 MD5/SHA-1/SHA-256）。
+    pub fn hash_copied(&self, alg: &str) -> String {
+        fill(self.hash_copied_t, &[("alg", alg)])
+    }
 }
 
 mod en;
@@ -845,6 +982,12 @@ mod tests {
             assert!(!table.full_search_toggle.is_empty());
             assert!(!table.full_search_tip_off.is_empty());
             assert!(!table.full_search_tip_on.is_empty());
+            assert!(!table.search_case_tip.is_empty());
+            assert!(!table.search_regex_tip.is_empty());
+            assert!(!table.export_scope_all_btn.is_empty());
+            assert!(!table.export_scope_page_btn.is_empty());
+            assert!(!table.export_scope_tip_off.is_empty());
+            assert!(!table.export_scope_tip_on.is_empty());
             assert!(!table.key_mode_tip_off.is_empty());
             assert!(!table.key_mode_tip_on.is_empty());
             assert!(!table.filter_active.is_empty());

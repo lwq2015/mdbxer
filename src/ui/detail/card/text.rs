@@ -13,7 +13,7 @@ use crate::ui::MdbxerApp;
 use crate::ui::detail::state::Side;
 use crate::ui::detail::text_fp;
 use crate::ui::syntax::{
-    FoldLine, SearchHighlights, append_colored, fold_lines_for, json_palette, syntax_tokens,
+    FoldLine, SearchHighlights, append_colored, fold_lines_for, json_palette, syntax_tokens_cached,
 };
 
 /// 渲染文本区（含折叠头、猜测行、内容滚动）。
@@ -39,7 +39,7 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
         text_open: ctx.text_open,
         hex_open: ctx.hex_open,
     };
-    let every_display_row = layout::number_text_display_rows(app, ctx.side, ctx.bytes);
+    let every_display_row = layout::number_text_display_rows(ui.ctx(), app, ctx.side, ctx.bytes);
     let (text_h, _) = layout::card_content_heights(
         ui,
         app,
@@ -49,7 +49,7 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
         every_display_row,
     );
 
-    let (guess_text, binary_guess) = guess_text(app, ctx);
+    let (guess_text, binary_guess) = guess_text(ui.ctx(), app, ctx);
     let scroll_to = scroll_target(app, ctx);
     let highlights = hit_ranges(
         app,
@@ -152,10 +152,10 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
 }
 
 /// 文本区标题右侧的猜测/字节数信息。
-fn guess_text(app: &MdbxerApp, ctx: &CardCtx<'_>) -> (String, bool) {
+fn guess_text(ui_ctx: &egui::Context, app: &MdbxerApp, ctx: &CardCtx<'_>) -> (String, bool) {
     let t = tr();
     if ctx.mode == DecodeMode::Auto {
-        let (label, _) = fmt::guess(ctx.bytes, app.endian, &app.hint_value);
+        let (label, _) = super::super::guess_cached(ui_ctx, ctx.bytes, app.endian, &app.hint_value);
         let binary = label == t.guess_binary;
         // 附加解读只保留文件魔数（强信号、短标注）：地址/FILETIME 对
         // 任意字节几乎总命中，放猜测行是噪音且撑宽窗口
@@ -724,7 +724,7 @@ fn layout_job(
     };
     let mut job = egui::text::LayoutJob::default();
     let tokens = syntax
-        .map(|mode| syntax_tokens(mode, s))
+        .map(|mode| syntax_tokens_cached(ui.ctx(), mode, s))
         .unwrap_or_default();
     append_colored(&mut job, s, &tokens, base, palette, highlights);
     job.wrap.max_width = wrap;

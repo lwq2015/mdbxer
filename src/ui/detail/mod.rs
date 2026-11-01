@@ -196,7 +196,16 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             let (kb, avail) = card_budget(ui, app, &key, &value, &k_text, &v_text, dup_sort);
 
             render_cards(
-                ui, app, &key, &value, dup_sort, key_no, &k_text, &v_text, kb, avail,
+                ui,
+                app,
+                &key,
+                &value,
+                dup_sort,
+                key_no,
+                &k_text,
+                &v_text,
+                kb,
+                avail,
                 reset_scroll,
             );
         });
@@ -451,9 +460,42 @@ fn render_cards(
 }
 
 /// 显示文本内容指纹：折叠状态随文本变化自动失效用（换值/换段/换模式）。
-fn text_fp(s: &str) -> u64 {
+/// 分词缓存与折叠状态都以此作为缓存键。
+pub(crate) fn text_fp(s: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     s.hash(&mut h);
     h.finish()
+}
+
+/// 字节内容指纹：猜测缓存用。
+fn bytes_fp(b: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    b.hash(&mut h);
+    h.finish()
+}
+
+/// 猜测结果缓存：详情卡片每帧多处调用 `fmt::guess`（猜测行、布局预算、
+/// 文本工具提示），大字段重复猜测代价明显。按 (字节指纹, 字节序, 附注)
+/// 复用上一次结果，任一条件变化即失效。
+pub(crate) fn guess_cached(
+    ctx: &egui::Context,
+    bytes: &[u8],
+    endian: fmt::Endian,
+    hints: &fmt::HintFlags,
+) -> (String, String) {
+    type Key = (u64, fmt::Endian, fmt::HintFlags, (String, String));
+    let id = egui::Id::new("mdbxer_guess_cache");
+    let fp = bytes_fp(bytes);
+    if let Some(v) = ctx.data(|d| {
+        d.get_temp::<Key>(id)
+            .filter(|(f, e, h, _)| *f == fp && *e == endian && *h == *hints)
+            .map(|(_, _, _, v)| v)
+    }) {
+        return v;
+    }
+    let v = fmt::guess(bytes, endian, hints);
+    ctx.data_mut(|d| d.insert_temp(id, (fp, endian, *hints, v.clone())));
+    v
 }

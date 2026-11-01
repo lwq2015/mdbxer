@@ -130,6 +130,28 @@ pub(crate) fn syntax_tokens(mode: DecodeMode, s: &str) -> Vec<JsonTok> {
     }
 }
 
+/// 每帧分词结果缓存：同一文本在折叠视图、TextEdit layouter 与高亮定位中会被
+/// 多次分词，大文本每帧重复扫描代价明显。按 (格式, 文本指纹) 缓存上次结果，
+/// 文本或格式变化时自然失效。
+pub(crate) fn syntax_tokens_cached(
+    ctx: &egui::Context,
+    mode: DecodeMode,
+    s: &str,
+) -> std::sync::Arc<Vec<JsonTok>> {
+    let id = egui::Id::new("mdbxer_syntax_tokens_cache");
+    let fp = super::detail::text_fp(s);
+    if let Some(toks) = ctx.data(|d| {
+        d.get_temp::<(DecodeMode, u64, std::sync::Arc<Vec<JsonTok>>)>(id)
+            .filter(|(m, f, _)| *m == mode && *f == fp)
+            .map(|(_, _, t)| t)
+    }) {
+        return toks;
+    }
+    let toks = std::sync::Arc::new(syntax_tokens(mode, s));
+    ctx.data_mut(|d| d.insert_temp(id, (mode, fp, toks.clone())));
+    toks
+}
+
 /// 对 pretty JSON 文本做轻量词法切分。
 /// 不做语义校验（合法性已由调用方用 serde_json 判定），只按字符扫描。
 fn json_tokens(s: &str) -> Vec<JsonTok> {
@@ -846,7 +868,9 @@ impl<'a> Lines<'a> {
 
     /// `[from, to)` 内最后一个非空行。
     fn last_non_blank(&self, from: usize, to: usize) -> Option<usize> {
-        (from..to.min(self.len())).rev().find(|&j| !self.is_blank(j))
+        (from..to.min(self.len()))
+            .rev()
+            .find(|&j| !self.is_blank(j))
     }
 
     /// 缩进块：本行之后连续更深缩进的行（空行视作无限深，不打断块）；

@@ -268,6 +268,24 @@ fn display_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
                 }
                 ui.end_row();
 
+                // 详情卡片底部校验和：单选（不选则不显示该行）
+                ui.label(t.hash_label).on_hover_text(t.hash_tip);
+                let mut alg = app.hash_alg;
+                egui::ComboBox::from_id_salt("hash_alg")
+                    .width(90.0)
+                    .selected_text(alg.map(|a| a.name()).unwrap_or(t.hash_none))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut alg, None, t.hash_none);
+                        for a in crate::hash::HashAlg::ALL {
+                            ui.selectable_value(&mut alg, Some(a), a.name());
+                        }
+                    });
+                if alg != app.hash_alg {
+                    app.hash_alg = alg;
+                    app.save_ui_prefs();
+                }
+                ui.end_row();
+
                 // 文本行号：真实文本换行；HEX 格式按显示行
                 ui.label(t.text_line_numbers_label);
                 if ui

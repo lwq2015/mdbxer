@@ -1,4 +1,4 @@
-﻿// Copyright 2026 lwq_yu
+// Copyright 2026 lwq_yu
 // SPDX-License-Identifier: Apache-2.0
 
 //! 生成测试用 MDBX 数据库（目录模式与单文件模式各一份）。
@@ -285,7 +285,9 @@ fn long_json_sample() -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{TOML_COMPLEX, TOML_PACKAGE, YAML_COMPLEX, YAML_SCALARS, long_json_sample};
+    use super::{
+        TOML_COMPLEX, TOML_PACKAGE, YAML_COMPLEX, YAML_SCALARS, image_samples, long_json_sample,
+    };
 
     /// 新增的 YAML/TOML 样本必须能被对应排版解析并规范化重排；否则详情里
     /// 只会回退成原文，样本就失去测试意义。
@@ -299,12 +301,21 @@ mod tests {
         };
 
         let complex = yaml(YAML_COMPLEX);
-        assert!(complex.contains("- 80"), "流式序列应展开为块序列：{complex}");
-        assert!(complex.contains("rate_limit: 100"), "流式映射应展开：{complex}");
+        assert!(
+            complex.contains("- 80"),
+            "流式序列应展开为块序列：{complex}"
+        );
+        assert!(
+            complex.contains("rate_limit: 100"),
+            "流式映射应展开：{complex}"
+        );
 
         let scalars = yaml(YAML_SCALARS);
         assert!(scalars.contains("matrix:"), "{scalars}");
-        assert!(scalars.contains("2026-01-01"), "数字样字符串/日期不应被吞：{scalars}");
+        assert!(
+            scalars.contains("2026-01-01"),
+            "数字样字符串/日期不应被吞：{scalars}"
+        );
 
         let toml = |raw: &str| {
             toml::to_string_pretty(&toml::from_str::<toml::Value>(raw).expect("合法 TOML"))
@@ -316,8 +327,33 @@ mod tests {
         assert!(package.contains("features = [\"derive\"]"), "{package}");
 
         let complex = toml(TOML_COMPLEX);
-        assert!(complex.contains("max_readers = 126"), "进制整数应归一化：{complex}");
+        assert!(
+            complex.contains("max_readers = 126"),
+            "进制整数应归一化：{complex}"
+        );
         assert!(complex.contains("[[workers]]"), "数组表应保留：{complex}");
+    }
+
+    /// 图片样本必须被魔数识别为声明格式且可解码，否则详情卡片的 🖼 按钮
+    /// 只会弹出解码失败。
+    #[test]
+    fn image_samples_are_decodable() {
+        for (key, bytes, format) in image_samples() {
+            let name = String::from_utf8_lossy(key);
+            assert_eq!(
+                image::guess_format(&bytes).ok(),
+                Some(format),
+                "{name} 魔数不符"
+            );
+            let img = image::load_from_memory(&bytes).unwrap_or_else(|e| panic!("{name}：{e}"));
+            assert!(img.width() > 0 && img.height() > 0, "{name} 尺寸异常");
+        }
+        // 大图必须超过预览缩略阈值，才能覆盖"先缩略再上传纹理"的分支
+        let large = image_samples()
+            .into_iter()
+            .find(|(k, ..)| *k == b"img_png_1600x900")
+            .expect("大图样本存在");
+        assert!(image::load_from_memory(&large.1).unwrap().width() > 1024);
     }
 
     #[test]
@@ -791,7 +827,9 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
             ],
         ),
     ];
-    let entries: Vec<(&[u8], Vec<u8>)> = entries.into_iter().chain(nums).collect();
+    // 图片样本：五种可解码的真实图片，详情卡片标题出现 🖼 预览按钮
+    let mut entries: Vec<(&[u8], Vec<u8>)> = entries.into_iter().chain(nums).collect();
+    entries.extend(image_samples().into_iter().map(|(k, v, _)| (k, v)));
     for (k, v) in entries {
         txn.put(&t, k, &v, WriteFlags::default())?;
     }
@@ -1098,6 +1136,79 @@ fn brotli(data: &[u8]) -> Vec<u8> {
     let mut e = brotli::CompressorWriter::new(Vec::new(), 4096, 5, 22);
     e.write_all(data).unwrap();
     e.into_inner()
+}
+
+/// 图片样本：(Key, 编码后的字节, 期望格式)。
+/// 每种格式都是完整可解码的图片，用于测试详情卡片的 🖼 预览弹窗；
+/// 含一张超过预览缩略阈值（1024）的大图，覆盖缩小分支。
+fn image_samples() -> Vec<(&'static [u8], Vec<u8>, image::ImageFormat)> {
+    use image::ImageFormat;
+    let rgba = |w, h| image::DynamicImage::ImageRgba8(test_rgba_image(w, h));
+    // JPEG 不支持 alpha，先转 RGB8
+    let rgb = |w, h| {
+        let rgba = image::DynamicImage::ImageRgba8(test_rgba_image(w, h));
+        image::DynamicImage::ImageRgb8(rgba.to_rgb8())
+    };
+    vec![
+        (
+            b"img_png_64x64",
+            encode_image(rgba(64, 64), ImageFormat::Png),
+            ImageFormat::Png,
+        ),
+        // 1600×900：超过 MAX_SIDE(1024)，验证预览先缩略再上传纹理
+        (
+            b"img_png_1600x900",
+            encode_image(rgba(1600, 900), ImageFormat::Png),
+            ImageFormat::Png,
+        ),
+        (
+            b"img_jpeg_200x120",
+            encode_image(rgb(200, 120), ImageFormat::Jpeg),
+            ImageFormat::Jpeg,
+        ),
+        (
+            b"img_gif_40x40",
+            encode_image(rgba(40, 40), ImageFormat::Gif),
+            ImageFormat::Gif,
+        ),
+        (
+            b"img_webp_80x60",
+            encode_image(rgba(80, 60), ImageFormat::WebP),
+            ImageFormat::WebP,
+        ),
+        // ICO 内嵌 PNG（RGBA），32×32 是图标常用尺寸
+        (
+            b"img_ico_32x32",
+            encode_image(rgba(32, 32), ImageFormat::Ico),
+            ImageFormat::Ico,
+        ),
+    ]
+}
+
+/// 图片样本的像素内容：横向红、纵向绿、对角蓝的渐变，
+/// 左上角一块纯红方块（确认预览既未上下翻转也未左右镜像）。
+fn test_rgba_image(w: u32, h: u32) -> image::RgbaImage {
+    image::RgbaImage::from_fn(w, h, |x, y| {
+        if x < w / 6 && y < h / 6 {
+            image::Rgba([255, 0, 0, 255])
+        } else {
+            let fx = x as f32 / (w.max(2) - 1) as f32;
+            let fy = y as f32 / (h.max(2) - 1) as f32;
+            image::Rgba([
+                (fx * 255.0) as u8,
+                (fy * 255.0) as u8,
+                ((1.0 - fx) * 255.0) as u8,
+                255,
+            ])
+        }
+    })
+}
+
+/// 按指定格式编码图片样本（JPEG 默认质量；WebP 为无损；ICO 内嵌 PNG）。
+fn encode_image(img: image::DynamicImage, format: image::ImageFormat) -> Vec<u8> {
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, format).expect("图片样本编码失败");
+    out.into_inner()
 }
 
 /// 生成完整的 1×1 透明 PNG（RGBA），另存后可正常打开

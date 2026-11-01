@@ -65,6 +65,13 @@ pub struct CardState {
     pub fold_sel: Option<(u64, Option<(usize, usize)>)>,
     /// hex 视图选区
     pub hex: HexSel,
+    /// 校验和缓存：((表索引, 行索引, 多值序号, 字节长度), 算法, 十六进制)。
+    /// 键不符或算法改变时重算，避免大字段每帧重哈希。
+    pub hash_cache: Option<(
+        (Option<usize>, usize, usize, usize),
+        crate::hash::HashAlg,
+        String,
+    )>,
 }
 
 impl Default for CardState {
@@ -81,6 +88,7 @@ impl Default for CardState {
             fold: None,
             fold_sel: None,
             hex: HexSel::default(),
+            hash_cache: None,
         }
     }
 }
@@ -103,6 +111,7 @@ impl CardState {
     pub fn reset_all(&mut self) {
         self.mode = DecodeMode::Auto;
         self.blob_input.clear();
+        self.hash_cache = None;
         self.reset_transient();
     }
 }
@@ -225,6 +234,14 @@ impl DetailState {
         let changed = self.scroll_key != Some(key);
         self.scroll_key = Some(key);
         changed
+    }
+
+    /// 按卡片角色取状态（可变）。
+    pub fn card_mut(&mut self, side: Side) -> &mut CardState {
+        match side {
+            Side::Key => &mut self.key,
+            Side::Value => &mut self.val,
+        }
     }
 
     /// 卡片当前的解码格式。

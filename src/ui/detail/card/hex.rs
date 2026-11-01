@@ -10,13 +10,22 @@ use crate::ui::detail::state::Side;
 use crate::ui::hexview;
 use crate::ui::syntax::SearchHighlights;
 
-/// 渲染 hex 区（可折叠）。`card_top` 为卡片内容起始游标，用于实测回填高度。
-pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>, card_top: f32) {
+/// 渲染 hex 区（可折叠）。
+/// `card_top` 为卡片内容起始游标，用于实测回填高度；
+/// `reserve` 为卡片底部校验行已占用的高度（0 = 不显示校验行）。
+pub(super) fn show(
+    ui: &mut egui::Ui,
+    app: &mut MdbxerApp,
+    ctx: &CardCtx<'_>,
+    card_top: f32,
+    reserve: f32,
+) {
     let t = tr();
     let line_h = ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())));
     // hex 区高度实测回填：吃掉卡片预算减去已用高度（44 ≈ hex 标题行
     // + 分组 frame 下内边距 + 尾部间距），卡片始终撑满、右栏底部不留空白。
-    let hex_h = (ctx.budget - (ui.cursor().min.y - card_top) - 44.0).max(line_h * 2.0);
+    // 底部校验行的高度也已预留，避免卡片超出预算把右栏撑出滚动条。
+    let hex_h = (ctx.budget - (ui.cursor().min.y - card_top) - 44.0 - reserve).max(line_h * 2.0);
 
     // 用 CollapsingState + 全局 Id（与 card_section_open 预算估算同一组），
     // 折叠状态变化时高度分配下一帧即自适应。

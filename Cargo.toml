@@ -5,10 +5,12 @@ edition = "2024"
 license = "Apache-2.0"
 
 [dependencies]
-eframe = "0.36.2"
+# persistence：退出/自动保存时把窗口几何与 egui 记忆（含表格列宽）落到 ui-state.ron
+eframe = { version = "0.36.2", features = ["persistence"] }
 egui = "0.36.2"
-egui_extras = "0.36.2"
-image = { version = "0.25", default-features = false, features = ["png"] }
+# serde：表格列宽走 egui 的持久化存储（配合 eframe persistence 跨会话保留）
+egui_extras = { version = "0.36.2", features = ["serde"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "ico"] }
 libmdbx = { git = "https://github.com/vorot93/libmdbx-rs.git", branch = "master" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 serde = { version = "1", features = ["derive"] }
@@ -31,6 +33,12 @@ serde_yaml = "0.9"
 toml = "0.8"
 roxmltree = "0.20"
 snap = "1"
+# 值搜索的正则模式（.* 开关）
+regex = "1"
+# 详情卡片的校验和（MD5 / SHA-1 / SHA-256）
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
 # 仅运行时解压（brotli 无魔数，试探解码兜底）
 brotli-decompressor = "4"
 

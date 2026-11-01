@@ -3,7 +3,7 @@
 
 //! 中间 "数据" 页签：工具条 + 表格。
 
-use super::{MdbxerApp, SortCol};
+use super::{MdbxerApp, RowMenuAction, SortCol};
 use crate::fmt::{DecodeMode, Endian, HintFlags};
 use crate::i18n::tr;
 use egui_extras::{Column, TableBuilder};
@@ -351,6 +351,32 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 app.apply_value_search();
             }
         }
+        // 大小写敏感开关（Aa）：只影响 Value 文本搜索；切换后若已有页内
+        // 过滤则立即按新规则重算，无需再按 V。
+        let case_btn = ui
+            .selectable_label(app.search_case, "Aa")
+            .on_hover_text(t.search_case_tip);
+        if case_btn.clicked() {
+            app.search_case = !app.search_case;
+            if app.value_filter.is_some() {
+                app.apply_value_search();
+            }
+        }
+        // 正则模式开关（.*）：同样只影响 Value 文本搜索（与 Aa 组合时 Aa
+        // 控制是否忽略大小写）；非法表达式在搜索时以错误消息提示。
+        let regex_btn = ui
+            .selectable_label(app.search_regex, ".*")
+            .on_hover_text(t.search_regex_tip);
+        if regex_btn.clicked() {
+            app.search_regex = !app.search_regex;
+            if app.value_filter.is_some() {
+                app.apply_value_search();
+            }
+        }
+        // 跨表搜索：用搜索框当前内容扫描全库所有表，结果在浮动窗口列出
+        if ui.button("🌐").on_hover_text(t.gsearch_tip).clicked() {
+            super::gsearch::start(app);
+        }
         // 过滤状态指示 + 清除
         if app.key_filter.is_some() || app.value_filter.is_some() {
             ui.label(egui::RichText::new(t.filter_active).color(ui.visuals().warn_fg_color));
@@ -359,15 +385,52 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 app.clear_value_search();
             }
         }
+        // 类型过滤指示（列出全部类型）+ 恢复
+        if let Some((n, joined)) = app
+            .type_filter
+            .as_ref()
+            .map(|types| (types.len(), types.join(", ")))
+        {
+            ui.label(egui::RichText::new(t.type_filter_on(n)).color(ui.visuals().warn_fg_color));
+            ui.label(egui::RichText::new(joined).weak().small());
+            if ui
+                .button("×")
+                .on_hover_text(t.type_filter_clear_tip)
+                .clicked()
+            {
+                app.clear_type_filter();
+            }
+        }
     });
 
     ui.separator();
+
+    // ── 多选操作条（仅多选时出现） ────────────────────────────────
+    if app.sel_count() > 1 {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(t.multi_selected(app.sel_count()))
+                    .color(ui.visuals().strong_text_color()),
+            );
+            if ui.button(t.copy).on_hover_text(t.multi_copy_tip).clicked() {
+                app.copy_selected_rows(ui.ctx());
+            }
+            if ui.button("⬇").on_hover_text(t.multi_export_tip).clicked() {
+                app.export_selected_rows();
+            }
+            if ui.button("×").on_hover_text(t.multi_clear_tip).clicked() {
+                app.collapse_sel();
+            }
+        });
+    }
 
     // ── 表格 ────────────────────────────────────────────────────
     let text_height = egui::TextStyle::Body.resolve(ui.style()).size + 4.0;
     let order = app.display_order();
     let total_rows = order.len();
     let selected = app.selected_row;
+    // 点击时的修饰键决定选择语义（普通=单选、Ctrl=切换、Shift=区间）
+    let mods = ui.input(|i| i.modifiers);
     // 消费一次性滚动请求（键盘 ↑↓ / F3 命中 / 翻页回顶登记的显示行号）。
     // align=None：只在目标行不可见时滚到刚好可见，可见时不打断手动滚动。
     let scroll_to = app.pending_scroll.take().filter(|&di| di < total_rows);
@@ -387,7 +450,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
 
     // 列头被点击的列：0=# 1=Key 2=类型 3=Value
     let mut col_clicked: Option<u8> = None;
-    let mut clicked_row = None;
+    // 左键点击：(行下标, 显示行号)；右键点击：行下标
+    let mut clicked_row: Option<(usize, usize)> = None;
+    let mut menu_row: Option<usize> = None;
+    let mut row_menu: Option<(usize, RowMenuAction)> = None;
 
     // 选中行用浅色底 + 默认文字色（不再反白），
     // 截断 tooltip 等继承颜色的场景就不会再出现白字白底；scope 内生效不外泄
@@ -441,7 +507,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                     let i = order[di];
                     let row = &app.rows[i];
                     let view = &app.views[i];
-                    let is_sel = selected == Some(i);
+                    // 单选与多选共用同一高亮：sel 至少含当前行
+                    let is_sel = selected == Some(i) || app.sel.contains(&i);
                     row_ui.set_selected(is_sel);
                     // 文字保持默认色：选中行底色已改浅色，无需反白
                     // 单元格 Label 一律不带 click sense：hit-test 中可交互的 Label 会
@@ -542,10 +609,51 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             app.hint_value,
                         );
                     });
-                    if row_ui.response().clicked() {
-                        clicked_row = Some(i);
+                    // 类型过滤菜单项状态（每帧只做几次字符串比较，不分配）
+                    let type_filtered = app
+                        .type_filter
+                        .as_ref()
+                        .is_some_and(|s| s.iter().any(|t| *t == view.type_label));
+                    let has_type_filter = app.type_filter.is_some();
+                    let resp = row_ui.response();
+                    if resp.clicked() {
+                        clicked_row = Some((i, di));
                         app.row_copy_pending = true;
                     }
+                    // 右键菜单：复制 / 搜索 / 过滤 / 另存。动作只记录，表格闭包
+                    // 结束后统一执行，避免与行数据的不可变借用冲突。
+                    if resp.secondary_clicked() {
+                        menu_row = Some(i);
+                    }
+                    resp.context_menu(|ui| {
+                        let t = tr();
+                        let mut item = |ui: &mut egui::Ui, label: &str, action: RowMenuAction| {
+                            if ui.button(label).clicked() {
+                                row_menu = Some((i, action));
+                                ui.close();
+                            }
+                        };
+                        item(ui, t.menu_copy_key, RowMenuAction::CopyKey);
+                        item(ui, t.menu_copy_value, RowMenuAction::CopyValue);
+                        item(ui, t.menu_copy_value_hex, RowMenuAction::CopyValueHex);
+                        ui.separator();
+                        item(ui, t.menu_search_value, RowMenuAction::SearchValue);
+                        item(ui, t.menu_filter_key, RowMenuAction::FilterByKey);
+                        ui.separator();
+                        // 按类型过滤：同一类型再点一次即移除；在不同行上重复操作
+                        // 可累加多种类型（多选并集）
+                        let label = if type_filtered {
+                            t.menu_filter_type_del(&view.type_label)
+                        } else {
+                            t.menu_filter_type_add(&view.type_label)
+                        };
+                        item(ui, &label, RowMenuAction::FilterByType);
+                        if has_type_filter {
+                            item(ui, t.menu_filter_type_clear, RowMenuAction::ClearTypeFilter);
+                        }
+                        ui.separator();
+                        item(ui, t.menu_save_value, RowMenuAction::SaveValue);
+                    });
                 });
             });
     });
@@ -573,7 +681,20 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
         }
         None => {}
     }
-    if let Some(i) = clicked_row {
+    if let Some((i, di)) = clicked_row {
+        if mods.shift {
+            app.select_span(di, &order);
+        } else if mods.command {
+            app.toggle_sel(i, di);
+        } else {
+            app.select_single(i, di);
+        }
+    }
+    // 右键：收起多选，只对当前行操作
+    if let Some(i) = menu_row {
         app.select_row(i);
+    }
+    if let Some((i, action)) = row_menu {
+        app.run_row_menu(ui.ctx(), i, action);
     }
 }

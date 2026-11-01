@@ -125,15 +125,22 @@ pub struct UiPrefs {
     /// 左栏表列表排序（name_asc/name_desc/count_asc/count_desc）
     #[serde(default)]
     pub table_sort: Option<String>,
-    /// 导出格式（csv/json）
+    /// 导出格式（csv/json/jsonl）
     #[serde(default)]
     pub export_format: Option<String>,
+    /// 导出范围（whole = 全表；page = 仅当前页）
+    #[serde(default)]
+    pub export_scope: Option<String>,
     /// 已载入的 .proto 文件路径列表（Protobuf 动态解码）
     #[serde(default)]
     pub proto_files: Option<Vec<String>>,
     /// Protobuf 当前 message 类型全名
     #[serde(default)]
     pub proto_msg: Option<String>,
+    /// 详情卡片底部显示的校验和（单选）：md5 / sha1 / sha256 / none；
+    /// 缺省（None）表示沿用默认 md5。
+    #[serde(default)]
+    pub hash_alg: Option<String>,
 }
 
 /// 一个库的独立记录。
@@ -313,6 +320,12 @@ pub fn save_log_level(l: crate::logging::Level) {
     write_config(|c| c.log_level = Some(l.as_str().to_string()));
 }
 
+/// eframe 界面状态文件路径（窗口几何 + egui 记忆，含表格列宽），
+/// 与 config.json 放在同一目录；不可用时返回 None（eframe 退回自身默认目录）。
+pub(crate) fn ui_state_path() -> Option<PathBuf> {
+    config_path().and_then(|p| p.parent().map(|d| d.join("ui-state.ron")))
+}
+
 /// 读取 UI 偏好。
 pub fn load_ui_prefs() -> UiPrefs {
     read_config().ui
@@ -490,8 +503,10 @@ mod tests {
             always_on_top: Some(true),
             table_sort: Some("count_desc".to_string()),
             export_format: Some("json".to_string()),
+            export_scope: Some("page".to_string()),
             proto_files: Some(vec!["a.proto".to_string()]),
             proto_msg: Some("pkg.Msg".to_string()),
+            hash_alg: Some("sha256".to_string()),
         };
 
         let s = serde_json::to_string(&p).unwrap();
@@ -520,6 +535,7 @@ mod tests {
         assert_eq!(back.always_on_top, Some(true));
         assert_eq!(back.table_sort.as_deref(), Some("count_desc"));
         assert_eq!(back.export_format.as_deref(), Some("json"));
+        assert_eq!(back.export_scope.as_deref(), Some("page"));
         assert_eq!(
             back.proto_files.as_deref(),
             Some(["a.proto".to_string()].as_slice())

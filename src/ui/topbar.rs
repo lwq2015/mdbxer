@@ -180,6 +180,31 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                 app.save_ui_prefs();
             }
 
+            // 导出范围切换：全表 / 仅当前页（含页内过滤与排序结果）
+            let page_scope = app.export_scope == crate::export::ExportScope::CurrentPage;
+            let scope_resp = ui
+                .selectable_label(
+                    page_scope,
+                    if page_scope {
+                        t.export_scope_page_btn
+                    } else {
+                        t.export_scope_all_btn
+                    },
+                )
+                .on_hover_text(if page_scope {
+                    t.export_scope_tip_on
+                } else {
+                    t.export_scope_tip_off
+                });
+            if scope_resp.clicked() {
+                app.export_scope = if page_scope {
+                    crate::export::ExportScope::WholeTable
+                } else {
+                    crate::export::ExportScope::CurrentPage
+                };
+                app.save_ui_prefs();
+            }
+
             // 导出按钮 + 格式下拉（从左栏迁移过来，更紧凑、不占左栏空间）
             let mut ef = app.export_format;
             let ef_resp = egui::ComboBox::from_id_salt("export_format")
@@ -211,20 +236,25 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
             ui.separator();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // 窗口置顶开关：最右侧（语言之右），选中态高亮，状态持久化
-                let pin_tip = if app.always_on_top { t.pin_off } else { t.pin_on };
+                let pin_tip = if app.always_on_top {
+                    t.pin_off
+                } else {
+                    t.pin_on
+                };
                 if ui
                     .add(egui::Button::new("📌").selected(app.always_on_top))
                     .on_hover_text(pin_tip)
                     .clicked()
                 {
                     app.always_on_top = !app.always_on_top;
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-                        if app.always_on_top {
-                            egui::WindowLevel::AlwaysOnTop
-                        } else {
-                            egui::WindowLevel::Normal
-                        },
-                    ));
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::WindowLevel(
+                            if app.always_on_top {
+                                egui::WindowLevel::AlwaysOnTop
+                            } else {
+                                egui::WindowLevel::Normal
+                            },
+                        ));
                     app.save_ui_prefs();
                 }
 

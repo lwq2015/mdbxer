@@ -6,6 +6,8 @@
 mod about;
 mod dataview;
 mod detail;
+mod gsearch;
+mod help;
 mod hexview;
 mod settings;
 mod sidebar;
@@ -223,6 +225,8 @@ pub enum CenterTab {
     EnvInfo,
     /// 高级配置（单元格附注/显示参数等不常用开关）
     Settings,
+    /// 帮助（功能速览列表）
+    Help,
     /// 关于（版本/环境/链接/致谢/免责）
     About,
 }
@@ -236,6 +240,7 @@ impl CenterTab {
             CenterTab::TableStat => t.tab_stat,
             CenterTab::EnvInfo => t.tab_env,
             CenterTab::Settings => t.tab_settings,
+            CenterTab::Help => t.tab_help,
             CenterTab::About => t.tab_about,
         }
     }
@@ -332,35 +337,52 @@ impl TableSort {
     }
 }
 
-/// Value 搜索词：普通输入匹配当前显示文本，显式字节格式匹配原始 Value 字节。
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Value 搜索词：普通输入匹配当前显示文本，显式字节格式匹配原始 Value 字节，
+/// 正则模式下按正则匹配显示文本。
+#[derive(Clone, Debug)]
 pub enum ValueSearchQuery {
+    /// 不区分大小写的文本（已归一化为小写）
     Text(String),
+    /// 区分大小写的文本（保留原始输入）
+    TextExact(String),
+    /// 正则表达式（大小写敏感性在编译时由 Aa 开关决定）
+    Regex(Box<regex::Regex>),
     Bytes(Vec<u8>),
 }
 
 impl ValueSearchQuery {
-    fn parse(input: &str) -> Result<Self, String> {
+    pub(crate) fn parse(input: &str, case_sensitive: bool, regex: bool) -> Result<Self, String> {
         let input = input.trim();
         if is_explicit_bytes_input(input) {
             parse_bytes_input(input).map(Self::Bytes)
+        } else if regex {
+            regex::RegexBuilder::new(input)
+                .case_insensitive(!case_sensitive)
+                .build()
+                .map(Box::new)
+                .map(Self::Regex)
+                .map_err(|e| e.to_string())
+        } else if case_sensitive {
+            Ok(Self::TextExact(input.to_string()))
         } else {
             Ok(Self::Text(input.to_lowercase()))
         }
     }
 
-    fn matches_bytes(&self, bytes: &[u8]) -> bool {
+    pub(crate) fn matches_bytes(&self, bytes: &[u8]) -> bool {
         match self {
             Self::Bytes(needle) => {
                 !needle.is_empty() && bytes.windows(needle.len()).any(|window| window == needle)
             }
-            Self::Text(_) => false,
+            _ => false,
         }
     }
 
-    fn matches_text(&self, text: &str) -> bool {
+    pub(crate) fn matches_text(&self, text: &str) -> bool {
         match self {
             Self::Text(needle) => text.to_lowercase().contains(needle),
+            Self::TextExact(needle) => text.contains(needle.as_str()),
+            Self::Regex(re) => re.is_match(text),
             Self::Bytes(_) => false,
         }
     }
@@ -376,6 +398,41 @@ fn is_explicit_bytes_input(input: &str) -> bool {
                 .get(..prefix.len())
                 .is_some_and(|actual| actual.eq_ignore_ascii_case(prefix))
         })
+}
+
+/// 表格行右键菜单的一次性动作：表格闭包内只记录，渲染结束后统一执行，
+/// 避免与行数据的不可变借用冲突。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RowMenuAction {
+    /// 复制 Key（完整解码文本）
+    CopyKey,
+    /// 复制 Value（完整解码文本）
+    CopyValue,
+    /// 复制 Value 原始字节的十六进制
+    CopyValueHex,
+    /// 把该 Value 的文本填回搜索框并全表搜索
+    SearchValue,
+    /// 按该 Key 的原始字节前缀过滤（等价于 Key 前缀过滤模式）
+    FilterByKey,
+    /// 把该行的类型加入/移出类型过滤（可累加多种类型，即多选）
+    FilterByType,
+    /// 清除类型过滤（恢复显示全部类型）
+    ClearTypeFilter,
+    /// 另存该 Value 的原始字节
+    SaveValue,
+}
+
+/// 字节 → 大写十六进制（字节间空格分隔），右键菜单复制 Value 用。
+fn hex_pairs(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len().saturating_mul(3));
+    for (n, b) in bytes.iter().enumerate() {
+        if n > 0 {
+            out.push(' ');
+        }
+        let _ = write!(out, "{b:02X}");
+    }
+    out
 }
 
 /// 全表 Value 搜索的运行状态。
@@ -470,6 +527,11 @@ pub struct MdbxerApp {
     pub at_end: bool,
     /// 选中的行在 self.rows 中的下标
     pub selected_row: Option<usize>,
+    /// 多选的行集合（self.rows 下标）：单选时也只含 1 个元素；
+    /// Ctrl+点击切换、Shift+点击按显示顺序扩选，Esc 收起为当前行
+    pub sel: std::collections::BTreeSet<usize>,
+    /// 范围选择的锚点（显示行号，Shift+点击从此扩选）
+    sel_anchor: Option<usize>,
     /// 一次性滚动请求：中央表格本帧应把该显示行号滚入可视区（None = 无请求）。
     /// `select_row` 移动选中行时登记，dataview 渲染时消费（take），避免每帧强制滚动。
     pub pending_scroll: Option<usize>,
@@ -483,6 +545,15 @@ pub struct MdbxerApp {
     pub key_filter_mode: bool,
     /// 当前生效的 Value 页内过滤（None = 未过滤）
     pub value_filter: Option<ValueSearchQuery>,
+    /// 当前生效的类型过滤（类型列标签集合，可多选并集；None = 不过滤）。
+    /// 标签是本地化文本，语言切换后自动失效（见 display_order）。
+    pub type_filter: Option<Vec<String>>,
+    /// 设置类型过滤时的界面语言
+    type_filter_lang: crate::i18n::Lang,
+    /// Value 文本搜索是否区分大小写（Aa 开关，会话内有效）
+    pub search_case: bool,
+    /// Value 文本搜索是否按正则表达式解释（.* 开关，会话内有效）
+    pub search_regex: bool,
     /// Key 列解码格式（默认自动；编码固定的表可手动指定）
     pub key_mode: DecodeMode,
     /// Value 列解码格式（默认自动：Value 逐行猜测）
@@ -495,6 +566,8 @@ pub struct MdbxerApp {
     pub hint_key: crate::fmt::HintFlags,
     /// 单元格附注开关（Value 列）
     pub hint_value: crate::fmt::HintFlags,
+    /// 详情卡片底部显示的校验和（None = 不显示；在「高级配置」里单选）
+    pub hash_alg: Option<crate::hash::HashAlg>,
     /// 当前页显示缓存（与 rows 一一对应），由 display_order 按需重建
     pub views: Vec<RowView>,
     /// 缓存生成时的解码参数 (key_mode, val_mode, endian, cell_max, hints_key, hints_value, 千位分隔, 语言)；None = 需重建
@@ -536,9 +609,15 @@ pub struct MdbxerApp {
     pub export_path: String,
     /// 导出格式选择
     pub export_format: crate::export::ExportFormat,
+    /// 导出范围（全表 / 仅当前页）
+    pub export_scope: crate::export::ExportScope,
+    /// 当前页导出预先收集的原始 KV（仅 CurrentPage 范围使用）
+    export_rows: Option<Vec<(Vec<u8>, Vec<u8>)>>,
     // ── 全表 Value 搜索 ──
     /// 全表 Value 搜索状态（Some = 搜索进行中）
     value_search: Option<ValueSearchState>,
+    /// 跨表 Value 搜索：扫描状态与命中列表（Some = 结果窗口打开）
+    pub gsearch: Option<gsearch::State>,
     /// Ctrl+F 请求聚焦搜索框（下一帧渲染到搜索框时消费，避免直接
     /// request_focus 未知 ID 导致 accesskit panic）
     focus_search: bool,
@@ -647,6 +726,11 @@ impl MdbxerApp {
                     .find(|f| f.ext() == s)
             })
             .unwrap_or_default();
+        let export_scope = if prefs.export_scope.as_deref() == Some("page") {
+            crate::export::ExportScope::CurrentPage
+        } else {
+            crate::export::ExportScope::WholeTable
+        };
 
         Self {
             open_mode: OpenMode::Auto,
@@ -671,6 +755,8 @@ impl MdbxerApp {
             at_start: true,
             at_end: true,
             selected_row: None,
+            sel: std::collections::BTreeSet::new(),
+            sel_anchor: None,
             pending_scroll: None,
 
             search_input: String::new(),
@@ -678,6 +764,10 @@ impl MdbxerApp {
             key_filter: None,
             key_filter_mode: false,
             value_filter: None,
+            type_filter: None,
+            type_filter_lang: crate::i18n::lang(),
+            search_case: false,
+            search_regex: false,
 
             key_mode,
             val_mode,
@@ -685,6 +775,13 @@ impl MdbxerApp {
             cell_max,
             hint_key: prefs.hint_key,
             hint_value: prefs.hint_value,
+            hash_alg: match prefs.hash_alg.as_deref() {
+                None => Some(crate::hash::HashAlg::Md5),
+                Some("none") => None,
+                Some(code) => {
+                    crate::hash::HashAlg::from_code(code).or(Some(crate::hash::HashAlg::Md5))
+                }
+            },
 
             views: Vec::new(),
             views_key: None,
@@ -703,8 +800,11 @@ impl MdbxerApp {
             export_count: 0,
             export_path: String::new(),
             export_format,
+            export_scope,
+            export_rows: None,
 
             value_search: None,
+            gsearch: None,
             focus_search: false,
             search_box_id: None,
             row_copy_pending: false,
@@ -741,6 +841,14 @@ impl MdbxerApp {
                 filter.matches_bytes(&self.rows[i].value)
                     || filter.matches_text(&self.views[i].val_text)
             });
+        }
+
+        // 类型过滤：多种类型取并集；类型标签随界面语言变化，切换语言后失效。
+        if self.type_filter_lang != crate::i18n::lang() {
+            self.type_filter = None;
+        }
+        if let Some(types) = &self.type_filter {
+            order.retain(|&i| types.iter().any(|t| *t == self.views[i].type_label));
         }
 
         let Some((col, asc)) = self.col_sort else {
@@ -1104,18 +1212,23 @@ impl MdbxerApp {
         self.export_anchor = None;
 
         self.value_search = None;
+        self.gsearch = None;
+        self.export_rows = None;
         self.db = None;
         self.opened_path = None;
         self.rows.clear();
         self.base_index = None;
         self.selected_table = None;
         self.selected_row = None;
+        self.sel.clear();
+        self.sel_anchor = None;
         self.pending_scroll = None;
         self.stat_cache = None;
         self.env_cache = None;
         self.search_input.clear();
         self.key_filter = None;
         self.value_filter = None;
+        self.type_filter = None;
         self.fav_tables.clear();
         self.fav_keys.clear();
         self.detail.clear();
@@ -1257,11 +1370,16 @@ impl MdbxerApp {
         self.clear_transient_status();
         // rows 可能换了新数据（即使长度相同），强制重建 views 缓存
         self.views_key = None;
+        // 换页/换表后旧的多选下标全部失效，只保留新页首行
+        self.sel.clear();
+        self.sel_anchor = None;
         if self.rows.is_empty() {
             self.selected_row = None;
             self.detail.clear();
         } else {
             self.selected_row = Some(0);
+            self.sel.insert(0);
+            self.sel_anchor = Some(0);
             // 翻页/换表后选中首行：让表格滚回顶部显示新页开头
             self.pending_scroll = Some(0);
             self.load_dups();
@@ -1275,6 +1393,7 @@ impl MdbxerApp {
         self.search_input.clear();
         self.key_filter = None;
         self.value_filter = None;
+        self.type_filter = None;
         self.value_search = None;
         self.clear_transient_status();
         self.load_first_page();
@@ -1461,7 +1580,7 @@ impl MdbxerApp {
         self.value_filter = if input.is_empty() {
             None
         } else {
-            match ValueSearchQuery::parse(&input) {
+            match ValueSearchQuery::parse(&input, self.search_case, self.search_regex) {
                 Ok(query) => {
                     self.add_search_term(&input);
                     Some(query)
@@ -1581,7 +1700,7 @@ impl MdbxerApp {
             // 复制选中行，除非搜索框刚被聚焦（此时让 egui 处理框内
             // 选中文本复制）。点击表格行会重新武装行复制。
             if self.row_copy_pending || ctx.memory(|m| m.focused().is_none()) {
-                self.copy_selected_row(ctx);
+                self.copy_selected_rows(ctx);
             }
             self.row_copy_pending = false;
         }
@@ -1596,6 +1715,7 @@ impl MdbxerApp {
                 egui::Key::Escape,
                 egui::Key::PageUp,
                 egui::Key::PageDown,
+                egui::Key::A,
             ] {
                 if i.key_pressed(k) {
                     key = Some(k);
@@ -1628,22 +1748,33 @@ impl MdbxerApp {
                 let backward = ctx.input(|i| i.modifiers.shift);
                 self.continue_search(!backward);
             }
+            egui::Key::A if ctrl => {
+                // Ctrl+A：全选当前页；焦点在输入框时让输入框自行处理
+                if ctx.memory(|m| m.focused().is_none()) {
+                    self.select_all();
+                }
+            }
             egui::Key::Escape => {
-                // 按"有什么清什么"复位，避免无内容时的副作用：
-                // clear_key_search 会 load_first_page，没有生效过滤时
-                // 按 Esc 会把浏览位置白白跳回首页、还吞掉输入框草稿。
-                // hex 字节选区由 hexview 在聚焦时自行清除，与此并行不互斥。
-                if self.key_filter.is_some() {
-                    self.clear_key_search();
-                } else if !self.search_input.trim().is_empty() {
-                    // 只有草稿、过滤未生效：仅清空输入，不跳页
-                    self.search_input.clear();
-                }
-                if self.value_filter.is_some() {
-                    self.clear_value_search();
-                }
-                if self.value_search.is_some() {
-                    self.cancel_value_search();
+                // 多选优先收起：一次 Esc 只退一层，不连带清掉搜索过滤
+                if self.sel.len() > 1 {
+                    self.collapse_sel();
+                } else {
+                    // 按"有什么清什么"复位，避免无内容时的副作用：
+                    // clear_key_search 会 load_first_page，没有生效过滤时
+                    // 按 Esc 会把浏览位置白白跳回首页、还吞掉输入框草稿。
+                    // hex 字节选区由 hexview 在聚焦时自行清除，与此并行不互斥。
+                    if self.key_filter.is_some() {
+                        self.clear_key_search();
+                    } else if !self.search_input.trim().is_empty() {
+                        // 只有草稿、过滤未生效：仅清空输入，不跳页
+                        self.search_input.clear();
+                    }
+                    if self.value_filter.is_some() {
+                        self.clear_value_search();
+                    }
+                    if self.value_search.is_some() {
+                        self.cancel_value_search();
+                    }
                 }
             }
             egui::Key::PageUp if !ctrl => {
@@ -1656,23 +1787,193 @@ impl MdbxerApp {
         }
     }
 
-    /// 复制选中行的 Key 和 Value 到剪贴板（Tab 分隔）。
+    /// 复制所选行到剪贴板（Tab 分隔，每行一条；按当前显示顺序）。
     /// 用完整解码（65536 字符上限），不受表格单元格截断影响。
-    fn copy_selected_row(&mut self, ctx: &egui::Context) {
-        let Some(i) = self.selected_row else { return };
-        let Some(row) = self.rows.get(i) else { return };
-        let key_text =
-            crate::fmt::decode_key(&row.key, self.key_mode, self.endian, 65536, &self.hint_key);
-        let val_text = crate::fmt::decode(
-            &row.value,
-            self.val_mode,
-            self.endian,
-            65536,
-            &self.hint_value,
-        );
-        let text = format!("{}\t{}", key_text, val_text);
+    fn copy_selected_rows(&mut self, ctx: &egui::Context) {
+        let order = self.display_order();
+        let picked: Vec<usize> = order.into_iter().filter(|i| self.sel.contains(i)).collect();
+        if picked.is_empty() {
+            return;
+        }
+        let mut text = String::new();
+        let mut n = 0usize;
+        for i in picked {
+            let Some(row) = self.rows.get(i) else {
+                continue;
+            };
+            let key_text =
+                crate::fmt::decode_key(&row.key, self.key_mode, self.endian, 65536, &self.hint_key);
+            let val_text = crate::fmt::decode(
+                &row.value,
+                self.val_mode,
+                self.endian,
+                65536,
+                &self.hint_value,
+            );
+            if n > 0 {
+                text.push('\n');
+            }
+            text.push_str(&key_text);
+            text.push('\t');
+            text.push_str(&val_text);
+            n += 1;
+        }
+        let t = crate::i18n::tr();
         ctx.copy_text(text);
-        self.status = Status::info(crate::i18n::tr().copied_row.to_string());
+        self.status = Status::info(if n > 1 {
+            t.copied_rows(n)
+        } else {
+            t.copied_row.to_string()
+        });
+    }
+
+    /// 把所选行按当前导出格式另存为文件（内存编码，不经后台导出线程）。
+    pub fn export_selected_rows(&mut self) {
+        let order = self.display_order();
+        let picked: Vec<(Vec<u8>, Vec<u8>)> = order
+            .into_iter()
+            .filter(|i| self.sel.contains(i))
+            .filter_map(|i| self.rows.get(i))
+            .map(|r| (r.key.clone(), r.value.clone()))
+            .collect();
+        if picked.is_empty() {
+            return;
+        }
+        let dup_sort = self.cur_table().map(|t| t.dup_sort).unwrap_or(false);
+        let job = crate::export::ExportJob {
+            dup_sort,
+            // 全表范围：多值表按 Key 分组输出（所选行可能含同 Key 的多个值）
+            scope: crate::export::ExportScope::WholeTable,
+            key_mode: self.key_mode,
+            val_mode: self.val_mode,
+            endian: self.endian,
+            hint_key: self.hint_key,
+            hint_value: self.hint_value,
+            out_path: std::path::PathBuf::new(),
+            format: self.export_format,
+        };
+        let text = crate::export::encode_rows(&job, &picked);
+        let ext = self.export_format.ext();
+        self.save_bytes(&format!("selected.{ext}"), text.as_bytes(), ext);
+    }
+
+    /// 右键"按类型过滤"：把该类型加入过滤；已在集合中则移出。
+    /// 在不同行上重复操作即可累加多种类型（并集）。
+    fn toggle_type_filter(&mut self, label: String) {
+        let mut set = self.type_filter.take().unwrap_or_default();
+        match set.iter().position(|t| *t == label) {
+            Some(pos) => {
+                set.remove(pos);
+            }
+            None => set.push(label),
+        }
+        self.type_filter = if set.is_empty() { None } else { Some(set) };
+        self.type_filter_lang = crate::i18n::lang();
+        self.refocus_visible();
+    }
+
+    /// 清除类型过滤（恢复显示全部类型）。
+    pub fn clear_type_filter(&mut self) {
+        if self.type_filter.take().is_none() {
+            return;
+        }
+        self.refocus_visible();
+    }
+
+    /// 过滤条件变化后：当前行仍可见就保持不变，否则收敛到第一个可见行
+    /// （一行都不剩时清空选中与详情）。
+    fn refocus_visible(&mut self) {
+        let order = self.display_order();
+        self.sel.clear();
+        self.sel_anchor = None;
+        if let Some(cur) = self.selected_row {
+            if let Some(di) = order.iter().position(|&x| x == cur) {
+                self.sel.insert(cur);
+                self.sel_anchor = Some(di);
+                return;
+            }
+        }
+        if let Some(&first) = order.first() {
+            self.select_row(first);
+        } else {
+            self.selected_row = None;
+            self.detail.clear();
+        }
+    }
+
+    /// 执行表格行右键菜单动作：先选中该行，再按动作复制 / 搜索 / 过滤 / 另存。
+    pub fn run_row_menu(&mut self, ctx: &egui::Context, index: usize, action: RowMenuAction) {
+        let t = crate::i18n::tr();
+        let Some(row) = self.rows.get(index) else {
+            return;
+        };
+        let key = row.key.clone();
+        let value = row.value.clone();
+        self.select_row(index);
+        match action {
+            RowMenuAction::CopyKey => {
+                let text =
+                    crate::fmt::decode_key(&key, self.key_mode, self.endian, 65536, &self.hint_key);
+                ctx.copy_text(text);
+                self.status = Status::info(t.copied_key.to_string());
+            }
+            RowMenuAction::CopyValue => {
+                let text =
+                    crate::fmt::decode(&value, self.val_mode, self.endian, 65536, &self.hint_value);
+                ctx.copy_text(text);
+                self.status = Status::info(t.copied_value.to_string());
+            }
+            RowMenuAction::CopyValueHex => {
+                ctx.copy_text(hex_pairs(&value));
+                self.status = Status::info(t.copied_value.to_string());
+            }
+            RowMenuAction::SearchValue => {
+                let text =
+                    crate::fmt::decode(&value, self.val_mode, self.endian, 65536, &self.hint_value);
+                // 搜索词取首个非空行：多行值整段作 needle 几乎无法命中
+                let needle: String = text
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                    .unwrap_or_default()
+                    .chars()
+                    .take(200)
+                    .collect();
+                if needle.is_empty() {
+                    self.status = Status::warn(t.search_empty.to_string());
+                } else {
+                    self.search_input = needle;
+                    self.start_full_value_search();
+                }
+            }
+            RowMenuAction::FilterByKey => {
+                self.key_filter = Some(key);
+                self.key_filter_mode = true;
+                self.last_search = SearchContext::MainKey;
+                self.load_first_page();
+            }
+            RowMenuAction::FilterByType => {
+                if let Some(label) = self.views.get(index).map(|v| v.type_label.clone()) {
+                    self.toggle_type_filter(label);
+                }
+            }
+            RowMenuAction::ClearTypeFilter => self.clear_type_filter(),
+            RowMenuAction::SaveValue => {
+                let key_text =
+                    crate::fmt::decode_key(&key, self.key_mode, self.endian, 65536, &self.hint_key);
+                let base: String = key_text
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                    .take(32)
+                    .collect();
+                let base = if base.is_empty() {
+                    format!("row{}", index + 1)
+                } else {
+                    base
+                };
+                self.save_bytes(&format!("{base}.bin"), &value, "bin");
+            }
+        }
     }
 
     /// 开始全表 Value 搜索：逐批扫描全表，找到第一个 Value 显示文本包含
@@ -1683,7 +1984,7 @@ impl MdbxerApp {
             self.status = Status::warn(crate::i18n::tr().search_empty.to_string());
             return;
         }
-        let needle = match ValueSearchQuery::parse(&input) {
+        let needle = match ValueSearchQuery::parse(&input, self.search_case, self.search_regex) {
             Ok(query) => query,
             Err(e) => {
                 self.status = Status::error(crate::i18n::tr().key_search_bad(&e));
@@ -1715,7 +2016,7 @@ impl MdbxerApp {
             self.status = Status::warn(crate::i18n::tr().search_empty.to_string());
             return;
         }
-        let needle = match ValueSearchQuery::parse(&input) {
+        let needle = match ValueSearchQuery::parse(&input, self.search_case, self.search_regex) {
             Ok(query) => query,
             Err(e) => {
                 self.status = Status::error(crate::i18n::tr().key_search_bad(&e));
@@ -1829,7 +2130,8 @@ impl MdbxerApp {
             // 文本搜索仍可用 Auto 命中
             let matched = match &needle {
                 ValueSearchQuery::Bytes(_) => needle.matches_bytes(v),
-                ValueSearchQuery::Text(_) => {
+                // Text / TextExact：同时按 Auto 解码与当前排版解码匹配
+                _ => {
                     let auto_text = crate::fmt::decode(
                         v,
                         crate::fmt::DecodeMode::Auto,
@@ -1928,10 +2230,85 @@ impl MdbxerApp {
             return;
         }
         self.selected_row = Some(index);
+        // 单行导航（键盘 ↑↓ / F3 / 跳转 / 右键菜单）收起多选，只保留当前行
+        self.sel.clear();
+        self.sel.insert(index);
         // 登记一次性滚动请求：键盘移动、F3 命中或点击后把该行滚入可视区
-        self.pending_scroll = self.display_order().iter().position(|&x| x == index);
+        self.sel_anchor = self.display_order().iter().position(|&x| x == index);
+        self.pending_scroll = self.sel_anchor;
         self.clear_transient_status();
         self.load_dups();
+    }
+
+    /// 普通左键点击：收起多选，只选中该行（`display_idx` 为其显示行号）。
+    pub fn select_single(&mut self, index: usize, display_idx: usize) {
+        self.select_row(index);
+        self.sel.clear();
+        self.sel.insert(index);
+        self.sel_anchor = Some(display_idx);
+    }
+
+    /// Ctrl+左键点击：切换该行的选中状态；详情跟随最后点击的行。
+    pub fn toggle_sel(&mut self, index: usize, display_idx: usize) {
+        if !self.sel.remove(&index) {
+            self.sel.insert(index);
+        }
+        self.sel_anchor = Some(display_idx);
+        if self.selected_row != Some(index) && self.sel.contains(&index) {
+            self.selected_row = Some(index);
+            self.clear_transient_status();
+            self.load_dups();
+        }
+    }
+
+    /// Shift+左键点击：把锚点到该行的连续显示区间并入多选（锚点不动）。
+    pub fn select_span(&mut self, to_di: usize, order: &[usize]) {
+        let anchor = self.sel_anchor.unwrap_or(to_di);
+        let (lo, hi) = if anchor <= to_di {
+            (anchor, to_di)
+        } else {
+            (to_di, anchor)
+        };
+        for di in lo..=hi {
+            if let Some(&i) = order.get(di) {
+                self.sel.insert(i);
+            }
+        }
+        if let Some(&i) = order.get(to_di) {
+            self.selected_row = Some(i);
+            self.clear_transient_status();
+            self.load_dups();
+        }
+    }
+
+    /// 收起多选，只保留当前行（Esc / 多选操作条的清除按钮）。
+    pub fn collapse_sel(&mut self) {
+        self.sel.clear();
+        self.sel_anchor = None;
+        if let Some(i) = self.selected_row {
+            self.sel.insert(i);
+            self.sel_anchor = self.display_order().iter().position(|&x| x == i);
+        }
+    }
+
+    /// 当前页全选（Ctrl+A，按当前显示顺序包含所有可见行）。
+    pub fn select_all(&mut self) {
+        let order = self.display_order();
+        if order.is_empty() {
+            return;
+        }
+        self.sel = order.iter().copied().collect();
+        self.sel_anchor = Some(0);
+        if !self.selected_row.is_some_and(|i| self.sel.contains(&i)) {
+            self.selected_row = Some(order[0]);
+            self.clear_transient_status();
+            self.load_dups();
+        }
+    }
+
+    /// 当前选中的行数（含单选时的那一行）。
+    pub fn sel_count(&self) -> usize {
+        self.sel.len()
     }
 
     /// 切换上下文（换行/换表/翻页）时，把与旧上下文绑定的一次性消息
@@ -1948,6 +2325,11 @@ impl MdbxerApp {
                 }
             }
         }
+    }
+
+    /// 是否有校验和要显示（卡片底部是否保留"校验"行）。
+    pub fn hash_row_on(&self) -> bool {
+        self.hash_alg.is_some()
     }
 
     /// 当前应显示的 value：多值表取当前 dup，否则取选中行的 value。
@@ -2012,11 +2394,13 @@ impl MdbxerApp {
             return;
         }
         let t = crate::i18n::tr();
-        let Some(table) = self.cur_table() else {
-            return;
+        let (dup_sort, name) = {
+            let Some(table) = self.cur_table() else {
+                return;
+            };
+            (table.dup_sort, table.display())
         };
 
-        let name = table.display();
         let ext = self.export_format.ext();
         let Some(out) = rfd::FileDialog::new()
             .set_file_name(format!(
@@ -2030,7 +2414,8 @@ impl MdbxerApp {
         };
 
         let job = crate::export::ExportJob {
-            dup_sort: table.dup_sort,
+            dup_sort,
+            scope: self.export_scope,
             key_mode: self.key_mode,
             val_mode: self.val_mode,
             endian: self.endian,
@@ -2038,6 +2423,21 @@ impl MdbxerApp {
             hint_value: self.hint_value,
             out_path: out.clone(),
             format: self.export_format,
+        };
+
+        // 当前页导出：把表格当前显示的原始 KV 一次性收好，worker 首批取走后
+        // 即结束；全表导出继续按游标分批遍历。
+        self.export_rows = if self.export_scope == crate::export::ExportScope::CurrentPage {
+            let order = self.display_order();
+            Some(
+                order
+                    .into_iter()
+                    .filter_map(|i| self.rows.get(i))
+                    .map(|row| (row.key.clone(), row.value.clone()))
+                    .collect(),
+            )
+        } else {
+            None
         };
 
         let (batch_tx, event_rx) = crate::export::start(job);
@@ -2051,7 +2451,14 @@ impl MdbxerApp {
     }
 
     /// 从当前表读取导出用的下一批原始 KV（多值表逐值展开）。
-    fn read_export_batch(&self) -> Result<db::RawBatch, String> {
+    fn read_export_batch(&mut self) -> Result<db::RawBatch, String> {
+        // 当前页范围：预先收集的整页记录一次性交出，之后导出即结束
+        if self.export_scope == crate::export::ExportScope::CurrentPage {
+            return Ok(db::RawBatch {
+                rows: self.export_rows.take().unwrap_or_default(),
+                has_more: false,
+            });
+        }
         let dbh = self.db.as_ref().ok_or("db closed")?;
         let table = self.cur_table().ok_or("no table")?;
         db::fetch_raw_batch(
@@ -2128,6 +2535,7 @@ impl MdbxerApp {
         if finished {
             self.export_batch_tx = None;
             self.export_anchor = None;
+            self.export_rows = None;
         } else {
             self.export_ev_rx = Some(rx);
             // 导出仍在运行，请求下一帧重绘以持续轮询
@@ -2159,6 +2567,11 @@ impl MdbxerApp {
             cell_max: Some(self.cell_max),
             hint_key: self.hint_key,
             hint_value: self.hint_value,
+            hash_alg: Some(
+                self.hash_alg
+                    .map(|a| a.code().to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+            ),
 
             show_addr: Some(self.detail.show_addr),
             show_hex: Some(self.detail.show_hex),
@@ -2175,6 +2588,13 @@ impl MdbxerApp {
 
             table_sort: Some(self.table_sort.as_str().to_string()),
             export_format: Some(self.export_format.ext().to_string()),
+            export_scope: Some(
+                match self.export_scope {
+                    crate::export::ExportScope::WholeTable => "whole",
+                    crate::export::ExportScope::CurrentPage => "page",
+                }
+                .to_string(),
+            ),
 
             // Protobuf 状态是全局的（类型池单例），保存时原样写回，避免覆盖丢失
             proto_files: Some(crate::proto::files()),
@@ -2310,6 +2730,21 @@ impl MdbxerApp {
         };
         self.select_table(idx);
         self.search_input = format!("hex({})", fk.key_hex);
+        self.key_filter_mode = false;
+        self.apply_key_search();
+    }
+
+    /// 跨表搜索命中项跳转：切到目标表，再用 Key 十六进制精确跳转定位。
+    pub fn jump_to_hit(&mut self, table_idx: usize, key: &[u8]) {
+        if self
+            .db
+            .as_ref()
+            .is_none_or(|dbh| table_idx >= dbh.tables.len())
+        {
+            return;
+        }
+        self.select_table(table_idx);
+        self.search_input = format!("hex({})", key_hex(key));
         self.key_filter_mode = false;
         self.apply_key_search();
     }
@@ -2592,7 +3027,7 @@ mod byte_input_tests {
     fn value_search_uses_raw_bytes_for_binary_and_decimal_queries() {
         let bytes = [0x41, 0x00, 0xFF, 0x42];
         for input in ["binary(00000000 11111111)", "dec(0 255)"] {
-            let query = ValueSearchQuery::parse(input).unwrap();
+            let query = ValueSearchQuery::parse(input, false, false).unwrap();
             assert!(query.matches_bytes(&bytes), "{input}");
             assert!(!query.matches_text("0 255"));
         }
@@ -2600,15 +3035,39 @@ mod byte_input_tests {
 
     #[test]
     fn value_search_keeps_plain_text_case_insensitive() {
-        let query = ValueSearchQuery::parse("MiXeD").unwrap();
+        let query = ValueSearchQuery::parse("MiXeD", false, false).unwrap();
         assert!(query.matches_text("a mixed value"));
         assert!(!query.matches_bytes(b"mixed"));
     }
 
     #[test]
+    fn value_search_case_sensitive_option_keeps_case() {
+        let query = ValueSearchQuery::parse("MiXeD", true, false).unwrap();
+        assert!(query.matches_text("a MiXeD value"));
+        assert!(!query.matches_text("a mixed value"));
+    }
+
+    #[test]
+    fn value_search_regex_matches_text_and_respects_case() {
+        let query = ValueSearchQuery::parse("^a\\d+$", false, true).unwrap();
+        assert!(query.matches_text("A1"));
+        assert!(!query.matches_text("a1b"));
+        assert!(!query.matches_bytes(b"a1"));
+
+        let exact = ValueSearchQuery::parse("^a\\d+$", true, true).unwrap();
+        assert!(!exact.matches_text("A1"));
+        assert!(exact.matches_text("a1"));
+    }
+
+    #[test]
+    fn value_search_rejects_bad_regex() {
+        assert!(ValueSearchQuery::parse("a(", false, true).is_err());
+    }
+
+    #[test]
     fn value_search_rejects_malformed_explicit_byte_queries() {
-        assert!(ValueSearchQuery::parse("binary(101)").is_err());
-        assert!(ValueSearchQuery::parse("dec(256)").is_err());
+        assert!(ValueSearchQuery::parse("binary(101)", false, false).is_err());
+        assert!(ValueSearchQuery::parse("dec(256)", false, false).is_err());
     }
 }
 
@@ -2701,6 +3160,7 @@ impl eframe::App for MdbxerApp {
         self.update_title(ctx);
         self.poll_export(ctx);
         self.poll_value_search();
+        gsearch::poll(self, ctx);
         self.handle_shortcuts(ctx);
         // 只读打开失败 → 恢复确认对话框（用户授权后才写库）
         self.show_recover_modal(ctx);
@@ -2729,13 +3189,18 @@ impl eframe::App for MdbxerApp {
                 ui.selectable_value(&mut tab, CenterTab::TableStat, CenterTab::TableStat.label());
                 ui.selectable_value(&mut tab, CenterTab::EnvInfo, CenterTab::EnvInfo.label());
                 ui.selectable_value(&mut tab, CenterTab::Settings, CenterTab::Settings.label());
+                ui.selectable_value(&mut tab, CenterTab::Help, CenterTab::Help.label());
                 ui.selectable_value(&mut tab, CenterTab::About, CenterTab::About.label());
             });
             if tab != self.tab {
                 self.tab = tab;
             }
             ui.separator();
-            // "关于"与"高级配置"是全局页，无库也可查看
+            // "关于"/"高级配置"/"帮助"是全局页，无库也可查看
+            if self.tab == CenterTab::Help {
+                help::show(ui);
+                return;
+            }
             if self.tab == CenterTab::About {
                 let date = self.build_date.clone();
                 about::show(ui, &date);
@@ -2759,9 +3224,12 @@ impl eframe::App for MdbxerApp {
                 CenterTab::TableStat => statsview::show_table_stat(ui, self),
                 CenterTab::EnvInfo => statsview::show_env_info(ui, self),
                 CenterTab::Settings => settings::show(ui, self),
-                CenterTab::About => unreachable!(),
+                CenterTab::Help | CenterTab::About => unreachable!(),
             }
         });
+
+        // 跨表搜索结果窗口（浮动，覆盖在中央区域之上）
+        gsearch::show(ui, self);
 
         // ↑/↓ 移动选中行（输入框聚焦时不抢键盘；按显示顺序移动）
         if !ui.ctx().egui_wants_keyboard_input() && !self.rows.is_empty() {

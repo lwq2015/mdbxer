@@ -17,7 +17,9 @@ use super::state::Side;
 use super::text_fp;
 use crate::fmt::DecodeMode;
 use crate::i18n::tr;
-use crate::ui::syntax::{FoldLine, JsonTok, SearchHighlights, append_line_colored, syntax_tokens};
+use crate::ui::syntax::{
+    FoldLine, JsonTok, SearchHighlights, append_line_colored, syntax_tokens_cached,
+};
 
 /// 行首折叠三角区域宽度。
 const TRIANGLE_GUTTER: f32 = 18.0;
@@ -103,7 +105,7 @@ struct FoldView<'a> {
     /// 是否在每个逻辑文本行前绘制行号。
     show_line_numbers: bool,
     /// 文本中的语法 token，用于逐行生成着色排版。
-    toks: Vec<JsonTok>,
+    toks: std::sync::Arc<Vec<JsonTok>>,
     /// 各语法 token 对应的主题颜色。
     palette: &'a [egui::Color32; 6],
     /// 搜索命中的显示文本字符区间。
@@ -169,7 +171,7 @@ impl<'a> FoldView<'a> {
             text,
             lines,
             show_line_numbers,
-            toks: syntax_tokens(mode, text),
+            toks: syntax_tokens_cached(ui.ctx(), mode, text),
             palette,
             highlights,
             base,
@@ -253,9 +255,15 @@ impl<'a> FoldView<'a> {
                     // 悬停预览被折叠的整块原文（含带三角的本行）。三角是独立
                     // 交互控件、会遮挡行响应，故两处都挂提示；同一时刻只有
                     // 其中一个 contains_pointer，不会重复弹出。
-                    let block = folded_block_text(self.text, self.lines, i, fold_end);
-                    let _ = lv.resp.on_hover_ui_at_pointer(|ui| show_fold_tip(ui, &block));
-                    let _ = tri.on_hover_ui_at_pointer(|ui| show_fold_tip(ui, &block));
+                    // 预览文本只在真正悬停时才构建，避免每帧为每处折叠都拼一遍。
+                    let text = self.text;
+                    let lines = self.lines;
+                    let _ = lv.resp.on_hover_ui_at_pointer(|ui| {
+                        show_fold_tip(ui, &folded_block_text(text, lines, i, fold_end))
+                    });
+                    let _ = tri.on_hover_ui_at_pointer(|ui| {
+                        show_fold_tip(ui, &folded_block_text(text, lines, i, fold_end))
+                    });
                 }
             }
 

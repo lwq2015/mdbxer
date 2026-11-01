@@ -14,6 +14,7 @@ mod config;
 mod db;
 mod export;
 mod fmt;
+mod hash;
 mod history;
 mod i18n;
 mod logging;
@@ -46,8 +47,13 @@ fn main() -> eframe::Result<()> {
     if config::load_ui_prefs().always_on_top.unwrap_or(false) {
         viewport = viewport.with_always_on_top();
     }
+    // 界面状态（窗口几何 + egui 记忆/表格列宽）落在与 config.json 同目录的 ui-state.ron。
+    // 文件已存在时说明本次能从里面恢复窗口位置，首帧就不要再居中覆盖它。
+    let ui_state = config::ui_state_path();
+    let restored_geometry = ui_state.as_ref().is_some_and(|p| p.is_file());
     let options = eframe::NativeOptions {
         viewport,
+        persistence_path: ui_state,
         ..Default::default()
     };
 
@@ -62,6 +68,7 @@ fn main() -> eframe::Result<()> {
             load_cjk_fonts(&cc.egui_ctx);
 
             let mut app = ui::MdbxerApp::new(app_title);
+            app.centered = restored_geometry;
             // 支持命令行传入路径直接打开（也便于拖文件到 exe）；
             // 无参数时自动重开上次查看的库（每库记忆 LRU 第一条）
             if let Some(p) = std::env::args().nth(1) {

@@ -57,7 +57,9 @@ pub(super) fn card_natural_height(
     // 行高与 Hex 视图一致（不加 extra_text_line_spacing）：
     // 保证文本区预估高度与实际渲染（fold_view_body / TextEdit）完全吻合。
     let line_h = ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Monospace.resolve(ui.style())));
-    let fixed = card_fixed_overhead(total, dup_nav);
+    // 自然高度估算时校验行按一行小字 + 分隔线估个固定值（实测值在渲染时回填）
+    let hash_h = if app.hash_row_on() { HASH_ROW_EST } else { 0.0 };
+    let fixed = card_fixed_overhead(total, dup_nav, hash_h);
     let (text_open, hex_open) = card_section_open(ui.ctx(), side);
     let budget = HeightBudget {
         line_h,
@@ -65,21 +67,31 @@ pub(super) fn card_natural_height(
         text_open,
         hex_open,
     };
-    let number_text_display_rows = number_text_display_rows(app, side, window);
+    let number_text_display_rows = number_text_display_rows(ui.ctx(), app, side, window);
     let (text_h, hex_h) =
         card_content_heights(ui, app, window, text, &budget, number_text_display_rows);
     fixed + text_h + hex_h
 }
 
-pub(super) fn number_text_display_rows(app: &MdbxerApp, side: Side, bytes: &[u8]) -> bool {
+pub(super) fn number_text_display_rows(
+    ctx: &egui::Context,
+    app: &MdbxerApp,
+    side: Side,
+    bytes: &[u8],
+) -> bool {
     let mode = app.detail.mode_of(side);
     mode == fmt::DecodeMode::Hex
         || (mode == fmt::DecodeMode::Auto
-            && fmt::guess(bytes, app.endian, &app.hint_value).0 == crate::i18n::tr().guess_binary)
+            && super::guess_cached(ctx, bytes, app.endian, &app.hint_value).0
+                == crate::i18n::tr().guess_binary)
 }
 
-/// 卡片固定开销：标题行 + 两个折叠标题行 + 可选的分段/搜索/多值导航行 + 间距。
-pub(super) fn card_fixed_overhead(total: usize, dup_nav: bool) -> f32 {
+/// 校验行高度估算（自然高度用；实际渲染时用预排版实测值）。
+const HASH_ROW_EST: f32 = 32.0;
+
+/// 卡片固定开销：标题行 + 两个折叠标题行 + 可选的分段/搜索/多值导航行
+/// + 底部校验行 + 间距。`hash_h` 为校验行占位高度（0 = 不显示）。
+pub(super) fn card_fixed_overhead(total: usize, dup_nav: bool, hash_h: f32) -> f32 {
     let mut h = 26.0 + 24.0 * 2.0 + 20.0; // 标题 + 文本头 + hex 头 + 间距
     if total > fmt::PAGE_BYTES {
         h += 28.0; // 分段导航行
@@ -90,7 +102,7 @@ pub(super) fn card_fixed_overhead(total: usize, dup_nav: bool) -> f32 {
     if dup_nav {
         h += 56.0; // 多值导航两行
     }
-    h
+    h + hash_h
 }
 
 /// 文本/hex 内容区高度分配参数。
@@ -243,24 +255,33 @@ mod tests {
 
     #[test]
     fn fixed_overhead_base_has_no_extra_rows() {
-        assert_eq!(card_fixed_overhead(100, false), 94.0);
+        assert_eq!(card_fixed_overhead(100, false, 0.0), 94.0);
     }
 
     #[test]
     fn fixed_overhead_adds_segment_row_only() {
         // 超过一个段：+28（段导航）；同时内容 >512 仍带搜索行
         assert_eq!(
-            card_fixed_overhead(fmt::PAGE_BYTES + 1, false),
+            card_fixed_overhead(fmt::PAGE_BYTES + 1, false, 0.0),
             94.0 + 28.0 + 28.0
         );
         // 恰好一个段：没有段导航，但仍 >512 有搜索行
-        assert_eq!(card_fixed_overhead(fmt::PAGE_BYTES, false), 94.0 + 28.0);
+        assert_eq!(
+            card_fixed_overhead(fmt::PAGE_BYTES, false, 0.0),
+            94.0 + 28.0
+        );
     }
 
     #[test]
     fn fixed_overhead_adds_search_and_dup_rows() {
         // >512：搜索行 +28；多值：导航两行 +56
-        assert_eq!(card_fixed_overhead(513, false), 94.0 + 28.0);
-        assert_eq!(card_fixed_overhead(513, true), 94.0 + 28.0 + 56.0);
+        assert_eq!(card_fixed_overhead(513, false, 0.0), 94.0 + 28.0);
+        assert_eq!(card_fixed_overhead(513, true, 0.0), 94.0 + 28.0 + 56.0);
+    }
+
+    #[test]
+    fn fixed_overhead_adds_hash_row_when_enabled() {
+        // 校验行按实测高度整体计入固定开销
+        assert_eq!(card_fixed_overhead(100, false, 32.0), 94.0 + 32.0);
     }
 }

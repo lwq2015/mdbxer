@@ -1,7 +1,7 @@
 // Copyright 2026 lwq_yu
 // SPDX-License-Identifier: Apache-2.0
 
-//! 表数据导出：后台线程流式写出 CSV / JSON。
+//! 表数据导出：后台线程流式写出 CSV / JSON / JSONL。
 //!
 //! libmdbx 在同一进程内不允许二次打开同一环境（MDBX_BUSY），因此导出线程
 //! 不能自行 open 环境。采用双通道流水线：
@@ -9,6 +9,9 @@
 //!   逐值展开），经 `ExportBatch` 通道发给 worker；
 //! - worker 线程只负责文件 IO 与 CSV/JSON 编码，`recv` 阻塞等批，不耗 CPU。
 //! 用户中途关库时 UI 端 drop 发送端，worker 自然结束。
+//!
+//! 导出范围（`ExportScope`）只影响 UI 线程供给哪些记录：全表按游标分批
+//! 遍历；当前页直接把表格当前显示的原始 KV 一次性交给 worker。
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -17,24 +20,38 @@ use std::sync::mpsc;
 
 use crate::fmt::{DecodeMode, Endian, decode};
 
+/// 导出范围。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ExportScope {
+    /// 整张表（按当前遍历方向全表读取）
+    #[default]
+    WholeTable,
+    /// 仅表格当前页（含页内过滤与列排序后的显示结果）
+    CurrentPage,
+}
+
 /// 导出文件格式。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ExportFormat {
     /// CSV：表头 `key,value`；多值表每值一行
     #[default]
     Csv,
-    /// JSON：普通表 `[{"key","value"}]`；多值表 `[{"key","values":[...]}]`
+    /// JSON：普通表 `[{"key","value"}]`；全表导出多值表时按 Key 分组
+    /// `[{"key","values":[...]}]`
     Json,
+    /// JSONL：每行一个 `{"key","value"}` 记录，多值表也按值逐行展开
+    Jsonl,
 }
 
 impl ExportFormat {
-    pub const ALL: [ExportFormat; 2] = [ExportFormat::Csv, ExportFormat::Json];
+    pub const ALL: [ExportFormat; 3] = [ExportFormat::Csv, ExportFormat::Json, ExportFormat::Jsonl];
 
     /// 文件扩展名（保存对话框默认文件名用）。
     pub fn ext(self) -> &'static str {
         match self {
             ExportFormat::Csv => "csv",
             ExportFormat::Json => "json",
+            ExportFormat::Jsonl => "jsonl",
         }
     }
 
@@ -43,14 +60,17 @@ impl ExportFormat {
         match self {
             ExportFormat::Csv => "CSV",
             ExportFormat::Json => "JSON",
+            ExportFormat::Jsonl => "JSONL",
         }
     }
 }
 
 /// 一次导出任务的全部参数（不碰数据库，全部 Send）。
 pub struct ExportJob {
-    /// 该表是否多值表（决定 JSON 是否按 Key 分组）
+    /// 该表是否多值表（决定全表 JSON 是否按 Key 分组）
     pub dup_sort: bool,
+    /// 导出范围（决定 JSON 是否按 Key 分组：当前页导出一律逐条）
+    pub scope: ExportScope,
     pub key_mode: DecodeMode,
     pub val_mode: DecodeMode,
     pub endian: Endian,
@@ -107,11 +127,7 @@ fn run(
 ) -> Result<usize, String> {
     let file = File::create(&job.out_path).map_err(|e| e.to_string())?;
     let mut w = BufWriter::new(file);
-    if job.format == ExportFormat::Csv {
-        writeln!(w, "key,value").map_err(|e| e.to_string())?;
-    } else {
-        writeln!(w, "[").map_err(|e| e.to_string())?;
-    }
+    write_header(&mut w, job.format)?;
 
     let dec = |b: &[u8], mode: DecodeMode, hints: &crate::fmt::HintFlags| {
         decode(b, mode, job.endian, usize::MAX, hints)
@@ -131,7 +147,7 @@ fn run(
                     &mut w,
                     job,
                     &dec,
-                    rows,
+                    &rows,
                     &mut json_started,
                     &mut json_cur_key,
                 )?;
@@ -145,17 +161,60 @@ fn run(
         }
     }
 
-    if job.format == ExportFormat::Json {
-        if json_cur_key.is_some() {
-            // 收尾最后一个多值分组
-            writeln!(w, "]}}").map_err(|e| e.to_string())?;
-        } else if json_started {
-            writeln!(w).map_err(|e| e.to_string())?;
-        }
-        writeln!(w, "]").map_err(|e| e.to_string())?;
-    }
+    write_footer(&mut w, job.format, json_started, &json_cur_key)?;
     w.flush().map_err(|e| e.to_string())?;
     Ok(n)
+}
+
+/// 文件头：CSV 表头 / JSON 数组起点；JSONL 无头。
+fn write_header(w: &mut impl Write, format: ExportFormat) -> Result<(), String> {
+    match format {
+        ExportFormat::Csv => writeln!(w, "key,value").map_err(|e| e.to_string()),
+        ExportFormat::Json => writeln!(w, "[").map_err(|e| e.to_string()),
+        // JSONL 无头无尾，逐行记录
+        ExportFormat::Jsonl => Ok(()),
+    }
+}
+
+/// 文件尾：只有 JSON 需要闭合数组（必要时先闭合最后一个多值分组）。
+fn write_footer(
+    w: &mut impl Write,
+    format: ExportFormat,
+    json_started: bool,
+    json_cur_key: &Option<Vec<u8>>,
+) -> Result<(), String> {
+    if format != ExportFormat::Json {
+        return Ok(());
+    }
+    if json_cur_key.is_some() {
+        // 收尾最后一个多值分组
+        writeln!(w, "]}}").map_err(|e| e.to_string())?;
+    } else if json_started {
+        writeln!(w).map_err(|e| e.to_string())?;
+    }
+    writeln!(w, "]").map_err(|e| e.to_string())
+}
+
+/// 把内存中的原始 KV 编码成完整文件内容（含头尾），
+/// 供"导出所选行"这类一次性小批量场景使用（不经后台线程）。
+pub fn encode_rows(job: &ExportJob, rows: &[(Vec<u8>, Vec<u8>)]) -> String {
+    let dec = |b: &[u8], mode: DecodeMode, hints: &crate::fmt::HintFlags| {
+        decode(b, mode, job.endian, usize::MAX, hints)
+    };
+    let mut buf: Vec<u8> = Vec::new();
+    let mut json_started = false;
+    let mut json_cur_key: Option<Vec<u8>> = None;
+    let _ = write_header(&mut buf, job.format);
+    let _ = write_rows(
+        &mut buf,
+        job,
+        &dec,
+        rows,
+        &mut json_started,
+        &mut json_cur_key,
+    );
+    let _ = write_footer(&mut buf, job.format, json_started, &json_cur_key);
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 /// 写出一批记录（CSV 逐行；JSON 普通表单条 / 多值表按 Key 连续分组，状态跨批延续）。
@@ -165,49 +224,63 @@ fn write_rows(
     w: &mut impl Write,
     job: &ExportJob,
     dec: &impl Fn(&[u8], DecodeMode, &crate::fmt::HintFlags) -> String,
-    rows: Vec<(Vec<u8>, Vec<u8>)>,
+    rows: &[(Vec<u8>, Vec<u8>)],
     json_started: &mut bool,
     json_cur_key: &mut Option<Vec<u8>>,
 ) -> Result<usize, String> {
     let mut n = 0usize;
+    // 只有全表导出多值表时才按 Key 连续分组；当前页导出按显示顺序逐条写出
+    let grouped = job.dup_sort && job.scope == ExportScope::WholeTable;
     for (k, v) in rows {
-        let key_text = dec(&k, job.key_mode, &job.hint_key);
-        let val_text = dec(&v, job.val_mode, &job.hint_value);
-        if job.format == ExportFormat::Csv {
-            writeln!(w, "{},{}", csv_field(&key_text), csv_field(&val_text))
-                .map_err(|e| e.to_string())?;
-        } else {
-            // JSON
-            if job.dup_sort {
-                // 多值表：{"key": k, "values": [v, ...]}，同 Key 连续分组（按原始字节判等）
-                if json_cur_key.as_deref() != Some(k.as_slice()) {
-                    if json_cur_key.is_some() {
-                        writeln!(w, "]}},").map_err(|e| e.to_string())?;
-                    }
-                    *json_started = true;
-                    write!(
-                        w,
-                        "  {{\"key\": {}, \"values\": [{}",
-                        json_str(&key_text),
-                        json_str(&val_text)
-                    )
+        let key_text = dec(k, job.key_mode, &job.hint_key);
+        let val_text = dec(v, job.val_mode, &job.hint_value);
+        match job.format {
+            ExportFormat::Csv => {
+                writeln!(w, "{},{}", csv_field(&key_text), csv_field(&val_text))
                     .map_err(|e| e.to_string())?;
-                    *json_cur_key = Some(k);
-                } else {
-                    write!(w, ", {}", json_str(&val_text)).map_err(|e| e.to_string())?;
-                }
-            } else {
-                if *json_started {
-                    writeln!(w, ",").map_err(|e| e.to_string())?;
-                }
-                *json_started = true;
-                write!(
+            }
+            // JSONL：每条记录一行，多值表也逐值展开
+            ExportFormat::Jsonl => {
+                writeln!(
                     w,
-                    "  {{\"key\": {}, \"value\": {}}}",
+                    "{{\"key\": {}, \"value\": {}}}",
                     json_str(&key_text),
                     json_str(&val_text)
                 )
                 .map_err(|e| e.to_string())?;
+            }
+            ExportFormat::Json => {
+                if grouped {
+                    // 多值表：{"key": k, "values": [v, ...]}，同 Key 连续分组（按原始字节判等）
+                    if json_cur_key.as_deref() != Some(k.as_slice()) {
+                        if json_cur_key.is_some() {
+                            writeln!(w, "]}},").map_err(|e| e.to_string())?;
+                        }
+                        *json_started = true;
+                        write!(
+                            w,
+                            "  {{\"key\": {}, \"values\": [{}",
+                            json_str(&key_text),
+                            json_str(&val_text)
+                        )
+                        .map_err(|e| e.to_string())?;
+                        *json_cur_key = Some(k.clone());
+                    } else {
+                        write!(w, ", {}", json_str(&val_text)).map_err(|e| e.to_string())?;
+                    }
+                } else {
+                    if *json_started {
+                        writeln!(w, ",").map_err(|e| e.to_string())?;
+                    }
+                    *json_started = true;
+                    write!(
+                        w,
+                        "  {{\"key\": {}, \"value\": {}}}",
+                        json_str(&key_text),
+                        json_str(&val_text)
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
             }
         }
         n += 1;
@@ -236,6 +309,7 @@ mod tests {
     fn job_at(path: &std::path::Path, format: ExportFormat, dup_sort: bool) -> ExportJob {
         ExportJob {
             dup_sort,
+            scope: ExportScope::WholeTable,
             key_mode: DecodeMode::Utf8,
             val_mode: DecodeMode::Utf8,
             endian: Endian::Little,
@@ -345,6 +419,99 @@ mod tests {
     }
 
     #[test]
+    fn jsonl_writes_one_record_per_line() {
+        let dir = std::env::temp_dir().join("mdbxer_export_test_jsonl");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.jsonl");
+        let _ = std::fs::remove_file(&path);
+        // 多值表用 JSONL 也逐值展开，不分组
+        let job = job_at(&path, ExportFormat::Jsonl, true);
+        let (result, text) = pipeline(
+            job,
+            vec![ExportBatch::Rows {
+                rows: vec![
+                    (b"k".to_vec(), b"v1".to_vec()),
+                    (b"k".to_vec(), b"v2".to_vec()),
+                ],
+                has_more: false,
+            }],
+        );
+        assert_eq!(result.unwrap(), 2);
+        assert_eq!(
+            text,
+            "{\"key\": \"k\", \"value\": \"v1\"}\n{\"key\": \"k\", \"value\": \"v2\"}\n"
+        );
+    }
+
+    #[test]
+    fn current_page_scope_does_not_group_dup_keys() {
+        let dir = std::env::temp_dir().join("mdbxer_export_test_page");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.json");
+        let _ = std::fs::remove_file(&path);
+        let mut job = job_at(&path, ExportFormat::Json, true);
+        job.scope = ExportScope::CurrentPage;
+        let (result, text) = pipeline(
+            job,
+            vec![ExportBatch::Rows {
+                rows: vec![
+                    (b"k".to_vec(), b"v1".to_vec()),
+                    (b"k".to_vec(), b"v2".to_vec()),
+                ],
+                has_more: false,
+            }],
+        );
+        assert_eq!(result.unwrap(), 2);
+        assert_eq!(
+            text,
+            "[\n  {\"key\": \"k\", \"value\": \"v1\"},\n  {\"key\": \"k\", \"value\": \"v2\"}\n]\n"
+        );
+    }
+
+    /// 内存编码（导出所选行）与后台流水线写出同一份内容。
+    #[test]
+    fn encode_rows_matches_file_output() {
+        let rows = vec![
+            (b"a".to_vec(), b"1".to_vec()),
+            (b"b".to_vec(), b"2,3".to_vec()),
+        ];
+        // CSV：表头 + 逐行转义
+        let job = job_at(std::path::Path::new("unused"), ExportFormat::Csv, false);
+        assert_eq!(encode_rows(&job, &rows), "key,value\na,1\nb,\"2,3\"\n");
+        // JSON：普通表逐条
+        let job = job_at(std::path::Path::new("unused"), ExportFormat::Json, false);
+        assert_eq!(
+            encode_rows(&job, &rows),
+            "[\n  {\"key\": \"a\", \"value\": \"1\"},\n  {\"key\": \"b\", \"value\": \"2,3\"}\n]\n"
+        );
+        // JSONL：无头无尾
+        let job = job_at(std::path::Path::new("unused"), ExportFormat::Jsonl, false);
+        assert_eq!(
+            encode_rows(&job, &rows),
+            "{\"key\": \"a\", \"value\": \"1\"}\n{\"key\": \"b\", \"value\": \"2,3\"}\n"
+        );
+    }
+
+    #[test]
+    fn encode_rows_json_groups_dup_keys() {
+        let job = job_at(std::path::Path::new("unused"), ExportFormat::Json, true);
+        let rows = vec![
+            (b"k".to_vec(), b"v1".to_vec()),
+            (b"k".to_vec(), b"v2".to_vec()),
+        ];
+        assert_eq!(
+            encode_rows(&job, &rows),
+            "[\n  {\"key\": \"k\", \"values\": [\"v1\", \"v2\"]}\n]\n"
+        );
+    }
+
+    #[test]
+    fn encode_rows_empty_json_is_empty_array() {
+        let job = job_at(std::path::Path::new("unused"), ExportFormat::Json, false);
+        assert_eq!(encode_rows(&job, &[]), "[\n]\n");
+    }
+
+    #[test]
     fn csv_field_plain() {
         assert_eq!(csv_field("abc"), "abc");
         assert_eq!(csv_field(""), "");
@@ -373,9 +540,11 @@ mod tests {
     fn export_format_ext_label() {
         assert_eq!(ExportFormat::Csv.ext(), "csv");
         assert_eq!(ExportFormat::Json.ext(), "json");
+        assert_eq!(ExportFormat::Jsonl.ext(), "jsonl");
         assert_eq!(ExportFormat::Csv.label(), "CSV");
         assert_eq!(ExportFormat::Json.label(), "JSON");
-        assert_eq!(ExportFormat::ALL.len(), 2);
+        assert_eq!(ExportFormat::Jsonl.label(), "JSONL");
+        assert_eq!(ExportFormat::ALL.len(), 3);
         assert_eq!(ExportFormat::default(), ExportFormat::Csv);
     }
 }

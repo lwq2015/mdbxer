@@ -3,8 +3,10 @@
 
 //! 一张 Key/Value 卡片的编排：标题行 → 导航行 → 文本区 → hex 区。
 
+mod hash;
 mod header;
 mod hex;
+mod image_preview;
 mod nav;
 mod text;
 
@@ -88,7 +90,11 @@ pub(super) fn show(
                 nav::dup_rows(ui, app, key);
             }
 
-            let fixed = layout::card_fixed_overhead(total, is_dup);
+            // 校验行先预排版：实测高度既计入固定开销，也从 hex 区预算里扣除
+            let hash_row = hash::prepare(ui, app, side, bytes);
+            let hash_h = hash_row.as_ref().map_or(0.0, |r| r.height);
+
+            let fixed = layout::card_fixed_overhead(total, is_dup, hash_h);
             let (text_open, hex_open) = layout::card_section_open(ui.ctx(), side);
             let ctx = CardCtx {
                 side,
@@ -104,7 +110,10 @@ pub(super) fn show(
                 reset_scroll,
             };
             text::show(ui, app, &ctx);
-            hex::show(ui, app, &ctx, card_top);
+            hex::show(ui, app, &ctx, card_top, hash_h);
+            if let Some(row) = hash_row {
+                hash::draw(ui, app, row);
+            }
         })
         .response
         .rect

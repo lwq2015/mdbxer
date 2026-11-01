@@ -3,7 +3,131 @@
 
 //! 中文文案表（与 en.rs / ru.rs 逐字段对应，便于对比维护）。
 
-use super::I18n;
+use super::{HelpGroup, I18n};
+
+/// 帮助页：功能速览（分组列表）。
+const HELP_GROUPS: &[HelpGroup] = &[
+    HelpGroup {
+        title: "打开与浏览",
+        items: &[
+            (
+                "打开库",
+                "顶栏「文件」「目录」按钮或 Ctrl+O；也可把路径直接拖进窗口",
+            ),
+            ("历史记录", "顶栏下拉列出最近打开的库，可单条删除"),
+            (
+                "表列表",
+                "左栏按名称/条数排序，支持关键字过滤；主表与多值表带标记",
+            ),
+            (
+                "翻页与跳转",
+                "↑↓ 逐行、PgUp/PgDn 翻页、首/末页按钮，每页条数可调",
+            ),
+            (
+                "重载与定位",
+                "↻ 重新枚举表与条数；📂 在文件管理器中定位库所在位置",
+            ),
+        ],
+    },
+    HelpGroup {
+        title: "数据表",
+        items: &[
+            (
+                "Key/Value 排版",
+                "自动猜测或手动指定解码格式（文本/数值/字节/时间/结构化）",
+            ),
+            (
+                "类型列",
+                "按内容猜测类型，点击列头可在页内排序（再点切换升降序与恢复）",
+            ),
+            (
+                "右键菜单",
+                "复制 Key/Value/Hex、以值搜索、按 Key 前缀过滤、按类型过滤、另存原始值",
+            ),
+            (
+                "多选",
+                "Ctrl+点击切换、Shift+点击按显示顺序扩选、Ctrl+A 全选；可批量复制或导出所选行",
+            ),
+            (
+                "类型过滤",
+                "多种类型取并集显示；工具条 × 或菜单「清除类型过滤」恢复全部",
+            ),
+        ],
+    },
+    HelpGroup {
+        title: "搜索",
+        items: &[
+            ("Key", "跳转定位或按字节前缀过滤"),
+            ("Value", "页内过滤已加载的行，或全表逐批扫描并定位首个匹配"),
+            (
+                "搜索选项",
+                "Aa 大小写敏感、.* 正则；hex(...)/binary(...)/dec(...) 按原始字节匹配",
+            ),
+            ("继续查找", "F3 在最近一次搜索里找下一个，Shift+F3 找上一个"),
+            (
+                "跨表搜索",
+                "🌐 扫描全库所有表，结果窗口可点击跳转、可导出命中项",
+            ),
+            (
+                "搜索历史",
+                "🕘 列出当前表最近 20 个搜索词，点击即填入搜索框",
+            ),
+        ],
+    },
+    HelpGroup {
+        title: "详情面板",
+        items: &[
+            (
+                "自动排版",
+                "JSON/BSON/MSGPACK/CBOR/XML/YAML/TOML 高亮显示，可折叠与悬停预览",
+            ),
+            ("Hex 视图", "按字节查看原始数据，支持选段复制与十六进制搜索"),
+            ("多值浏览", "多值表的同一 Key 下各值可逐个查看"),
+            ("大字段分段", "超长值分段显示，避免一次性解码"),
+            (
+                "图片预览",
+                "命中 PNG/JPEG/GIF/WebP/ICO 魔数时可弹窗查看图片",
+            ),
+        ],
+    },
+    HelpGroup {
+        title: "统计与导出",
+        items: &[
+            ("表统计", "B+ 树深度、分支/叶子/溢出页数、页大小与表标志"),
+            ("环境信息", "几何与映射参数、事务与读者、主表信息"),
+            (
+                "导出",
+                "CSV / JSON / JSONL，可导出全表或仅当前页（含过滤与排序结果）",
+            ),
+            ("后台导出", "分批读取并写入文件，导出期间界面仍可操作"),
+        ],
+    },
+    HelpGroup {
+        title: "配置与界面",
+        items: &[
+            (
+                "高级配置",
+                "字节序、单元格显示长度、千位分隔、HEX 紧凑格式、单元格附注开关、日志级别",
+            ),
+            (
+                "界面记忆",
+                "窗口位置/大小、表格列宽、折叠状态退出时自动保存",
+            ),
+            ("语言", "中文 / English / Русский，切换即时生效"),
+            ("主题与置顶", "深色/浅色主题；📌 让窗口保持置顶"),
+        ],
+    },
+    HelpGroup {
+        title: "快捷键",
+        items: &[
+            ("Ctrl+O / Ctrl+F", "打开库 / 聚焦搜索框"),
+            ("Ctrl+C / Ctrl+A", "复制所选行（Tab 分隔）/ 全选当前页"),
+            ("F3 / Shift+F3", "在最近一次搜索里找下一个 / 上一个"),
+            ("PgUp / PgDn", "上一页 / 下一页"),
+            ("Esc", "逐层清除：多选 → 搜索过滤 → 输入草稿"),
+        ],
+    },
+];
 
 pub(super) const ZH: I18n = I18n {
     ready: "就绪",
@@ -84,10 +208,20 @@ pub(super) const ZH: I18n = I18n {
     copy: "复制",
     copied_row: "已复制选中行",
     copied_selection: "已复制选择内容",
+    menu_copy_key: "复制 Key",
+    menu_copy_value: "复制 Value",
+    menu_copy_value_hex: "复制 Value（Hex）",
+    menu_search_value: "用该 Value 搜索",
+    menu_filter_key: "按该 Key 过滤",
+    menu_save_value: "另存原始 Value",
+    copied_key: "已复制 Key",
+    copied_value: "已复制 Value",
     save_as: "另存…",
     save_tip: "把完整内容保存为文件：原始二进制、当前显示文本或按猜测格式",
     save_raw: "原始二进制（.bin）",
     save_text: "可见文本（.txt）",
+    image_preview: "图片预览",
+    image_preview_tip: "按图片格式解码并预览（PNG / JPEG / GIF / WebP / ICO）",
     seg_prev_tip: "上一段（64 KiB）",
     seg_next_tip: "下一段（64 KiB）",
     seg_input_hint: "偏移/0x..",
@@ -140,15 +274,39 @@ pub(super) const ZH: I18n = I18n {
     full_search_toggle: "全表",
     full_search_tip_off: "切换到全表搜索模式：V 键逐批扫描全表并定位到首个匹配",
     full_search_tip_on: "切换到页内过滤模式：V 键仅过滤当前已加载的行",
+    search_case_tip: "大小写敏感：开启后 Value 文本搜索区分大小写（Aa）",
+    search_regex_tip: "正则模式：Value 文本搜索按正则表达式匹配（.*）\n与 Aa 组合时，Aa 控制是否忽略大小写；hex(...) 等字节格式仍按原始字节匹配",
     search_empty: "请先输入搜索内容",
     filter_active: "已过滤",
     filter_clear_tip: "清除搜索过滤（Key 前缀 + Value 文本），恢复显示全表",
     key_search_bad_t: "搜索输入错误：{e}",
+    menu_filter_type_add_t: "按类型过滤：{t}",
+    menu_filter_type_del_t: "移除此类型过滤：{t}",
+    menu_filter_type_clear: "清除类型过滤（恢复显示全部）",
+    type_filter_on_t: "类型过滤 {n} 种",
+    type_filter_clear_tip: "清除类型过滤，恢复显示全部类型",
 
-    export_tip: "把当前表导出为 CSV/JSON（后台线程，界面可继续操作）",
+    export_tip: "把当前表导出为 CSV/JSON/JSONL（后台线程，界面可继续操作）",
+    export_scope_all_btn: "全",
+    export_scope_page_btn: "页",
+    export_scope_tip_off: "导出范围：全表；点击改为仅导出当前页（含页内过滤与排序结果）",
+    export_scope_tip_on: "导出范围：仅当前页；点击改为导出全表",
+    gsearch_title: "跨表搜索",
+    gsearch_tip: "在整个库的所有表中搜索 Value（逐批扫描，结果显示在浮动窗口）",
+    gsearch_start: "搜索",
+    gsearch_export: "导出命中",
+    gsearch_scanning_t: "正在扫描 {table}：已扫描 {n} 条，命中 {m} 条…",
+    gsearch_done_t: "完成：扫描 {n} 条，命中 {m} 条",
+    gsearch_truncated: "命中超过 500 条，仅保留前 500 条",
+    gsearch_exported_t: "已导出 {n} 条命中记录",
     export_started: "导出已开始…",
     export_progress_t: "导出中：已写出 {n} 条…",
     export_done_t: "导出完成：{n} 条，已保存到 {path}",
+    multi_selected_t: "已选 {n} 行",
+    multi_copy_tip: "复制所选行的 Key 与 Value（Tab 分隔，每行一条）",
+    multi_export_tip: "把所选行按当前导出格式另存为文件",
+    multi_clear_tip: "清除多选（Esc 同效）",
+    copied_rows_t: "已复制 {n} 行",
 
     theme_to_light: "切换到浅色主题",
     theme_to_dark: "切换到深色主题",
@@ -317,4 +475,15 @@ pub(super) const ZH: I18n = I18n {
     k_branch: "分支页",
     k_leaf: "叶子页",
     k_overflow: "溢出页",
+
+    tab_help: "帮助",
+    help_title: "功能速览",
+    help_intro: "MDBXer 是 libmdbx 数据库的只读查看器。下面按使用场景列出主要功能。",
+    help_groups: HELP_GROUPS,
+
+    hash_copy_tip: "点击复制该哈希值（按原始字节计算）",
+    hash_copied_t: "已复制 {alg}",
+    hash_label: "哈希",
+    hash_tip: "详情卡片底部显示的校验和（对原始 Key/Value 字节计算）",
+    hash_none: "不显示",
 };

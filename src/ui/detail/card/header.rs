@@ -5,6 +5,7 @@
 
 use super::super::export;
 use super::super::state::Side;
+use super::image_preview;
 use crate::fmt::{self, DecodeMode};
 use crate::i18n::tr;
 use crate::ui::syntax::syntax_mode;
@@ -28,6 +29,7 @@ pub(super) fn title_row(
             copy_button(ui, app, side, bytes);
             save_menu(ui, app, side, bytes, save_base);
             mode_combo(ui, app, side);
+            image_preview::button(ui, side, bytes);
         });
     });
 }
