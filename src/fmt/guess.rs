@@ -50,7 +50,7 @@ pub fn guess(bytes: &[u8], endian: Endian, hints: &HintFlags) -> (String, String
 /// Key 版猜测：不做特殊格式猜测（压缩/JSON/BSON/MSGPACK/CBOR/XML/YAML/
 /// TOML/PROTO）。这些格式只会出现在数据载荷里，而 Key 多为短小的标识符，
 /// 极易被凑巧的结构误判（如 "AliveTime" 恰好构成合法 proto 消息）；误判
-/// 的显示代价远大于漏判收益。仅保留文本/UTF-16/整数/时间等基础解释与 hex。
+/// 的显示代价远大于漏判收益。仅保留文本/UTF-16/UTF-32/整数/时间等基础解释与 hex。
 pub fn guess_key(bytes: &[u8], endian: Endian, hints: &HintFlags) -> (String, String) {
     guess_at_depth(bytes, endian, 0, hints, true)
 }
@@ -146,6 +146,8 @@ fn guess_at_depth(
     // 被解成 fixed64V 数值），文本优先可避免这种惊悚的误判；确为二进制的
     // proto 消息几乎必然含不可打印字节，不受影响，边缘样本可手动切 PROTO。
     if let Ok(s) = std::str::from_utf8(bytes) {
+        // BOM 只是字节序标记，不进正文（否则开头会留一个不可见的 U+FEFF）
+        let s = s.trim_start_matches('\u{FEFF}');
         if s.chars()
             .all(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
         {
@@ -166,6 +168,13 @@ fn guess_at_depth(
                 return (format!("PROTO · {best}"), s);
             }
         }
+    }
+
+    // UTF-32：只认 4 字节 BOM（LE `FF FE 00 00` / BE `00 00 FE FF`）。
+    // 必须排在 UTF-16 之前：UTF-32LE 的开头 `FF FE` 也是 UTF-16LE 的 BOM，
+    // 先按 UTF-16 解释会读出一串 0x0000 而被判为二进制。
+    if let Some(r) = try_utf32(bytes) {
+        return r;
     }
 
     // 再试 UTF-16：BOM 直接定字节序，无 BOM 按字节模式启发式
@@ -455,6 +464,52 @@ pub fn is_toml(bytes: &[u8]) -> bool {
         toml::from_str::<toml::Value>(s),
         Ok(toml::Value::Table(_) | toml::Value::Array(_))
     )
+}
+
+/// 尝试把字节识别为 UTF-32 文本。
+///
+/// 只认 4 字节 BOM：LE `FF FE 00 00`、BE `00 00 FE FF`。无 BOM 时不猜——
+/// 4 字节码元与定宽数值/结构化数据无法可靠区分（如 8 字节整数会被读成
+/// 两个字符），误判代价高，交给手动排版。
+/// BOM 之后必须 4 字节对齐、全为合法 Unicode 标量且可打印（允许 `\t\n\r`
+/// 与单个结尾 NUL，Windows 宽字符串常见）。
+fn try_utf32(bytes: &[u8]) -> Option<(String, String)> {
+    let t = crate::i18n::tr();
+    let (big, rest) = match bytes {
+        [0xFF, 0xFE, 0x00, 0x00, rest @ ..] => (false, rest),
+        [0x00, 0x00, 0xFE, 0xFF, rest @ ..] => (true, rest),
+        _ => return None,
+    };
+    if rest.is_empty() || rest.len() % 4 != 0 {
+        return None;
+    }
+
+    let mut text = String::with_capacity(rest.len() / 4);
+    for c in rest.chunks_exact(4) {
+        let v = if big {
+            u32::from_be_bytes([c[0], c[1], c[2], c[3]])
+        } else {
+            u32::from_le_bytes([c[0], c[1], c[2], c[3]])
+        };
+        let ch = char::from_u32(v)?;
+        if ch.is_control() && !matches!(ch, '\t' | '\n' | '\r' | '\0') {
+            return None;
+        }
+        text.push(ch);
+    }
+
+    // 末尾最多一个 NUL（NUL 结尾宽字符串）；多于一个或正文为空则不是文本
+    let n_tail_nul = text.chars().rev().take_while(|&c| c == '\0').count();
+    if n_tail_nul > 1 || n_tail_nul == text.chars().count() {
+        return None;
+    }
+    let trimmed = text.trim_end_matches('\0');
+    let label = if big {
+        t.guess_utf32_be
+    } else {
+        t.guess_utf32_le
+    };
+    Some((label.to_string(), trimmed.to_string()))
 }
 
 /// 尝试把字节识别为 UTF-16 文本。
@@ -1318,6 +1373,82 @@ mod tests {
         let t = crate::i18n::tr();
         assert_eq!(label, t.guess_utf16_le);
         assert_eq!(text, "😀");
+    }
+
+    #[test]
+    fn guess_utf32le_bom() {
+        // BOM FF FE 00 00 + "Ab"（LE）。开头的 FF FE 也是 UTF-16LE 的 BOM，
+        // 必须优先按 UTF-32 解释，否则会被读成一串 NUL 判为二进制。
+        let bytes = [0xFF, 0xFE, 0x00, 0x00, 0x41, 0x00, 0x00, 0x00];
+        let (label, text) = guess(&bytes, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_eq!(label, t.guess_utf32_le);
+        assert_eq!(text, "A");
+    }
+
+    #[test]
+    fn guess_utf32be_bom() {
+        let bytes = [0x00, 0x00, 0xFE, 0xFF, 0x00, 0x00, 0x00, 0x41];
+        let (label, text) = guess(&bytes, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_eq!(label, t.guess_utf32_be);
+        assert_eq!(text, "A");
+    }
+
+    #[test]
+    fn guess_utf32le_bom_text_and_emoji() {
+        // "中文😀"（LE），含代理平面外的标量
+        let s: Vec<u8> = "中文😀"
+            .chars()
+            .flat_map(|c| (c as u32).to_le_bytes())
+            .collect();
+        let mut bytes = vec![0xFF, 0xFE, 0x00, 0x00];
+        bytes.extend_from_slice(&s);
+        let (label, text) = guess(&bytes, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_eq!(label, t.guess_utf32_le);
+        assert_eq!(text, "中文😀");
+    }
+
+    #[test]
+    fn guess_utf32be_bom_trailing_nul() {
+        // NUL 结尾宽字符串：末尾单个 NUL 剥掉
+        let mut bytes = vec![0x00, 0x00, 0xFE, 0xFF];
+        for c in "hi".chars() {
+            bytes.extend_from_slice(&(c as u32).to_be_bytes());
+        }
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        let (label, text) = guess(&bytes, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_eq!(label, t.guess_utf32_be);
+        assert_eq!(text, "hi");
+    }
+
+    #[test]
+    fn no_guess_utf32_without_bom() {
+        // 无 BOM 的 UTF-32 不猜文本（4 字节码元与定宽数值无法区分）
+        let bytes: Vec<u8> = "Ab"
+            .chars()
+            .flat_map(|c| (c as u32).to_le_bytes())
+            .collect();
+        let (label, _) = guess(&bytes, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_ne!(label, t.guess_utf32_le);
+        assert_ne!(label, t.guess_utf32_be);
+    }
+
+    #[test]
+    fn no_guess_utf32_for_non_aligned_or_control() {
+        // BOM 后长度不是 4 的倍数：不猜
+        let bytes = [0xFF, 0xFE, 0x00, 0x00, 0x41, 0x00];
+        let (label, _) = guess(&bytes, Endian::Little);
+        let t = crate::i18n::tr();
+        assert_ne!(label, t.guess_utf32_le);
+
+        // BOM 后含控制字符（0x07 BEL）：不猜
+        let bytes = [0xFF, 0xFE, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00];
+        let (label, _) = guess(&bytes, Endian::Little);
+        assert_ne!(label, t.guess_utf32_le);
     }
 
     #[test]

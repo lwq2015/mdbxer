@@ -419,6 +419,8 @@ pub(super) const RU: I18n = I18n {
     guess_utf8: "Текст UTF-8",
     guess_utf16_le: "Текст UTF-16 (LE)",
     guess_utf16_be: "Текст UTF-16 (BE)",
+    guess_utf32_le: "Текст UTF-32 (LE)",
+    guess_utf32_be: "Текст UTF-32 (BE)",
     guess_binary: "Бинарный",
 
     tab_settings: "Расширенные",

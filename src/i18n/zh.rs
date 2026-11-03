@@ -381,6 +381,8 @@ pub(super) const ZH: I18n = I18n {
     guess_utf8: "UTF-8 文本",
     guess_utf16_le: "UTF-16 文本 (LE)",
     guess_utf16_be: "UTF-16 文本 (BE)",
+    guess_utf32_le: "UTF-32 文本 (LE)",
+    guess_utf32_be: "UTF-32 文本 (BE)",
     guess_binary: "二进制",
 
     tab_settings: "高级配置",

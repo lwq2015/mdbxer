@@ -356,6 +356,93 @@ mod tests {
         assert!(image::load_from_memory(&large.1).unwrap().width() > 1024);
     }
 
+    /// BOM 样本必须与注释声明的编码一致：前缀是约定的 BOM，去掉 BOM 后能
+    /// 按该字节序还原正文（含代理对与 NUL 结尾）。写错字节序会让这些样本
+    /// 在详情里显示成乱码，失去测试意义。
+    #[test]
+    fn bom_samples_match_declared_encoding() {
+        let samples = super::bom_samples();
+        let get = |k: &str| -> Vec<u8> {
+            samples
+                .iter()
+                .find(|(key, _)| String::from_utf8_lossy(key) == k)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_else(|| panic!("缺少样本 {k}"))
+        };
+
+        for (k, text) in [
+            ("utf8_bom_text", "UTF-8 BOM 文本"),
+            ("utf8_bom_ascii", "BOM ASCII only"),
+        ] {
+            let v = get(k);
+            assert_eq!(&v[..3], &[0xEF, 0xBB, 0xBF], "{k} BOM 不符");
+            assert_eq!(
+                String::from_utf8(v[3..].to_vec()).expect("合法 UTF-8"),
+                text,
+                "{k} 正文不符"
+            );
+        }
+        assert_eq!(get("utf8_bom_only"), vec![0xEF, 0xBB, 0xBF]);
+
+        for (k, text, big) in [
+            ("utf16le_bom_text", "UTF-16LE BOM 文本", false),
+            ("utf16be_bom_text", "UTF-16BE BOM 文本", true),
+            ("utf16le_bom_emoji", "😀🎉 UTF-16LE", false),
+            ("utf16be_bom_emoji", "😀🎉 UTF-16BE", true),
+            ("utf16le_bom_nul_end", "hi\0", false),
+            ("utf16be_bom_nul_end", "hi\0", true),
+        ] {
+            let v = get(k);
+            let bom: [u8; 2] = if big { [0xFE, 0xFF] } else { [0xFF, 0xFE] };
+            assert_eq!(&v[..2], &bom, "{k} BOM 不符");
+            assert_eq!(v.len() % 2, 0, "{k} 码元未对齐");
+            let units: Vec<u16> = v[2..]
+                .chunks_exact(2)
+                .map(|c| {
+                    if big {
+                        u16::from_be_bytes([c[0], c[1]])
+                    } else {
+                        u16::from_le_bytes([c[0], c[1]])
+                    }
+                })
+                .collect();
+            assert_eq!(
+                String::from_utf16(&units).expect("合法 UTF-16"),
+                text,
+                "{k} 正文不符"
+            );
+        }
+        assert_eq!(get("utf16le_bom_only"), vec![0xFF, 0xFE]);
+        assert_eq!(get("utf16be_bom_only"), vec![0xFE, 0xFF]);
+
+        // UTF-32：BOM 各 4 字节，按 4 字节码元对齐，正文可按声明字节序还原
+        for (k, text, big) in [
+            ("utf32le_bom_text", "UTF-32LE 文本", false),
+            ("utf32be_bom_text", "UTF-32BE 文本", true),
+        ] {
+            let v = get(k);
+            let bom: [u8; 4] = if big {
+                [0x00, 0x00, 0xFE, 0xFF]
+            } else {
+                [0xFF, 0xFE, 0x00, 0x00]
+            };
+            assert_eq!(&v[..4], &bom, "{k} BOM 不符");
+            assert_eq!(v.len() % 4, 0, "{k} 码元未对齐");
+            let decoded: String = v[4..]
+                .chunks_exact(4)
+                .map(|c| {
+                    let n = if big {
+                        u32::from_be_bytes([c[0], c[1], c[2], c[3]])
+                    } else {
+                        u32::from_le_bytes([c[0], c[1], c[2], c[3]])
+                    };
+                    char::from_u32(n).expect("合法 UTF-32 标量")
+                })
+                .collect();
+            assert_eq!(decoded, text, "{k} 正文不符");
+        }
+    }
+
     #[test]
     fn long_json_sample_has_many_searchable_matches() {
         let bytes = long_json_sample();
@@ -830,6 +917,7 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
     // 图片样本：五种可解码的真实图片，详情卡片标题出现 🖼 预览按钮
     let mut entries: Vec<(&[u8], Vec<u8>)> = entries.into_iter().chain(nums).collect();
     entries.extend(image_samples().into_iter().map(|(k, v, _)| (k, v)));
+    entries.extend(bom_samples());
     for (k, v) in entries {
         txn.put(&t, k, &v, WriteFlags::default())?;
     }
@@ -1136,6 +1224,76 @@ fn brotli(data: &[u8]) -> Vec<u8> {
     let mut e = brotli::CompressorWriter::new(Vec::new(), 4096, 5, 22);
     e.write_all(data).unwrap();
     e.into_inner()
+}
+
+/// BOM（字节序标记）字符串样本：UTF-8 / UTF-16（LE、BE）/ UTF-32（LE、BE）。
+/// 覆盖"只有 BOM"、代理对（emoji）、NUL 结尾宽字符串等边界形态；
+/// UTF-32 仅作负样本——当前只支持 UTF-8/UTF-16 解码，Auto 应回退为字节视图。
+fn bom_samples() -> Vec<(&'static [u8], Vec<u8>)> {
+    // 带 BOM 的 UTF-16：LE 为 FF FE、BE 为 FE FF，随后是正文码元
+    let utf16 = |s: &str, big: bool| -> Vec<u8> {
+        let mut out = if big {
+            vec![0xFE, 0xFF]
+        } else {
+            vec![0xFF, 0xFE]
+        };
+        for u in s.encode_utf16() {
+            let b = if big {
+                u.to_be_bytes()
+            } else {
+                u.to_le_bytes()
+            };
+            out.extend_from_slice(&b);
+        }
+        out
+    };
+    // 带 BOM 的 UTF-32：LE 为 FF FE 00 00、BE 为 00 00 FE FF
+    let utf32 = |s: &str, big: bool| -> Vec<u8> {
+        let mut out = if big {
+            vec![0x00, 0x00, 0xFE, 0xFF]
+        } else {
+            vec![0xFF, 0xFE, 0x00, 0x00]
+        };
+        for c in s.chars() {
+            let b = if big {
+                (c as u32).to_be_bytes()
+            } else {
+                (c as u32).to_le_bytes()
+            };
+            out.extend_from_slice(&b);
+        }
+        out
+    };
+    vec![
+        // UTF-8 BOM（EF BB BF）+ 中英混合
+        (
+            b"utf8_bom_text",
+            "\u{FEFF}UTF-8 BOM 文本".as_bytes().to_vec(),
+        ),
+        // UTF-8 BOM + 纯 ASCII
+        (
+            b"utf8_bom_ascii",
+            "\u{FEFF}BOM ASCII only".as_bytes().to_vec(),
+        ),
+        // 只有 BOM、没有正文：应显示空文本，而不是回退成 hex
+        (b"utf8_bom_only", vec![0xEF, 0xBB, 0xBF]),
+        // UTF-16 LE BOM + 中英混合
+        (b"utf16le_bom_text", utf16("UTF-16LE BOM 文本", false)),
+        // UTF-16 BE BOM + 中英混合
+        (b"utf16be_bom_text", utf16("UTF-16BE BOM 文本", true)),
+        // BOM 后的代理对（emoji）必须合并成一个字符，不能显示两个替换符
+        (b"utf16le_bom_emoji", utf16("😀🎉 UTF-16LE", false)),
+        (b"utf16be_bom_emoji", utf16("😀🎉 UTF-16BE", true)),
+        // Windows 常见的 NUL 结尾宽字符串：BOM + "hi" + 00 00
+        (b"utf16le_bom_nul_end", utf16("hi\0", false)),
+        (b"utf16be_bom_nul_end", utf16("hi\0", true)),
+        // 只有 BOM 的 UTF-16（2 字节，凑不成完整码元）
+        (b"utf16le_bom_only", vec![0xFF, 0xFE]),
+        (b"utf16be_bom_only", vec![0xFE, 0xFF]),
+        // UTF-32 LE/BE：Auto 应按 4 字节 BOM 定序识别（不能被 UTF-16LE BOM 抢先）
+        (b"utf32le_bom_text", utf32("UTF-32LE 文本", false)),
+        (b"utf32be_bom_text", utf32("UTF-32BE 文本", true)),
+    ]
 }
 
 /// 图片样本：(Key, 编码后的字节, 期望格式)。

@@ -75,6 +75,10 @@ pub enum DecodeMode {
     Utf8,
     Utf16Le,
     Utf16Be,
+    /// UTF-32 小端（BOM `FF FE 00 00`；无 BOM 时按小端解释）
+    Utf32Le,
+    /// UTF-32 大端（BOM `00 00 FE FF`；无 BOM 时按大端解释）
+    Utf32Be,
     /// GB18030（GBK/GB2312 超集，简体中文传统编码）
     Gb18030,
     /// Windows-1251（西里尔字母，俄语传统编码）
@@ -134,6 +138,8 @@ impl DecodeMode {
             Self::Utf8,
             Self::Utf16Le,
             Self::Utf16Be,
+            Self::Utf32Le,
+            Self::Utf32Be,
             Self::Gb18030,
             Self::Big5,
             Self::Sjis,
@@ -183,6 +189,8 @@ impl DecodeMode {
             DecodeMode::Utf8 => "utf8".to_string(),
             DecodeMode::Utf16Le => "utf16 (LE)".to_string(),
             DecodeMode::Utf16Be => "utf16 (BE)".to_string(),
+            DecodeMode::Utf32Le => "utf32 (LE)".to_string(),
+            DecodeMode::Utf32Be => "utf32 (BE)".to_string(),
             DecodeMode::Gb18030 => "gb18030".to_string(),
             DecodeMode::Cp1251 => "windows-1251".to_string(),
             DecodeMode::Sjis => "shift_jis".to_string(),
@@ -234,6 +242,8 @@ impl DecodeMode {
             DecodeMode::Utf8 => "utf8",
             DecodeMode::Utf16Le => "utf16le",
             DecodeMode::Utf16Be => "utf16be",
+            DecodeMode::Utf32Le => "utf32le",
+            DecodeMode::Utf32Be => "utf32be",
             DecodeMode::Gb18030 => "gb18030",
             DecodeMode::Cp1251 => "cp1251",
             DecodeMode::Sjis => "sjis",
@@ -283,6 +293,8 @@ impl DecodeMode {
             "utf8" => DecodeMode::Utf8,
             "utf16le" => DecodeMode::Utf16Le,
             "utf16be" => DecodeMode::Utf16Be,
+            "utf32le" => DecodeMode::Utf32Le,
+            "utf32be" => DecodeMode::Utf32Be,
             "gb18030" => DecodeMode::Gb18030,
             "cp1251" => DecodeMode::Cp1251,
             "sjis" => DecodeMode::Sjis,
@@ -343,6 +355,8 @@ impl DecodeMode {
             DecodeMode::Utf8 => t.guess_utf8.to_string(),
             DecodeMode::Utf16Le => t.guess_utf16_le.to_string(),
             DecodeMode::Utf16Be => t.guess_utf16_be.to_string(),
+            DecodeMode::Utf32Le => t.guess_utf32_le.to_string(),
+            DecodeMode::Utf32Be => t.guess_utf32_be.to_string(),
             DecodeMode::Gb18030 => "GB18030".to_string(),
             DecodeMode::Cp1251 => "Windows-1251".to_string(),
             DecodeMode::Sjis => "SHIFT_JIS".to_string(),
@@ -391,11 +405,13 @@ mod tests {
     use super::*;
 
     /// 全部变体清单（验证分组覆盖性与 label 完备性）
-    const ALL: [DecodeMode; 35] = [
+    const ALL: [DecodeMode; 37] = [
         DecodeMode::Auto,
         DecodeMode::Utf8,
         DecodeMode::Utf16Le,
         DecodeMode::Utf16Be,
+        DecodeMode::Utf32Le,
+        DecodeMode::Utf32Be,
         DecodeMode::Gb18030,
         DecodeMode::Cp1251,
         DecodeMode::Sjis,
@@ -462,7 +478,7 @@ mod tests {
 
     #[test]
     fn decode_mode_all_complete() {
-        assert_eq!(ALL.len(), 35);
+        assert_eq!(ALL.len(), 37);
     }
 
     #[test]

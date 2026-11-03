@@ -72,7 +72,7 @@ pub fn decode(
 }
 
 /// Key 版解码：Auto 模式不做特殊格式猜测（JSON/BSON/PROTO 等只可能出现在
-/// 数据载荷里，短 key 极易被凑巧的结构误判），仅文本/UTF-16/整数/时间等
+/// 数据载荷里，短 key 极易被凑巧的结构误判），仅文本/UTF-16/UTF-32/整数/时间等
 /// 基础解释与 hex；手动指定的模式原样生效。
 pub fn decode_key(
     bytes: &[u8],
@@ -158,9 +158,15 @@ fn decode_impl(
                 guess(bytes, endian, hints).1
             }
         }
-        DecodeMode::Utf8 => String::from_utf8_lossy(bytes).into_owned(),
+        // BOM 是字节序标记而非内容，按 UTF-8 解码时一并去掉（否则会在文本
+        // 开头留下不可见的 U+FEFF，复制/搜索都会被带上）
+        DecodeMode::Utf8 => String::from_utf8_lossy(bytes)
+            .trim_start_matches('\u{FEFF}')
+            .to_string(),
         DecodeMode::Utf16Le => utf16_text(bytes, false),
         DecodeMode::Utf16Be => utf16_text(bytes, true),
+        DecodeMode::Utf32Le => utf32_text(bytes, false),
+        DecodeMode::Utf32Be => utf32_text(bytes, true),
         DecodeMode::Gb18030 => legacy_text(bytes, encoding_rs::GB18030),
         DecodeMode::Cp1251 => legacy_text(bytes, encoding_rs::WINDOWS_1251),
         DecodeMode::Sjis => legacy_text(bytes, encoding_rs::SHIFT_JIS),
@@ -225,7 +231,12 @@ fn binary_bits(bytes: &[u8]) -> String {
 }
 
 fn utf16_text(bytes: &[u8], big_endian: bool) -> String {
-    let units: Vec<u16> = bytes
+    // 去掉开头的 BOM（FF FE / FE FF）：BOM 只是字节序标记，不应留在正文
+    let body = match bytes {
+        [0xFF, 0xFE, rest @ ..] | [0xFE, 0xFF, rest @ ..] => rest,
+        _ => bytes,
+    };
+    let units: Vec<u16> = body
         .chunks_exact(2)
         .map(|c| {
             if big_endian {
@@ -236,6 +247,25 @@ fn utf16_text(bytes: &[u8], big_endian: bool) -> String {
         })
         .collect();
     String::from_utf16_lossy(&units)
+}
+
+/// UTF-32 解码：每 4 字节一个码元，超出 Unicode 范围的按替换符显示。
+/// 开头的 BOM（LE `FF FE 00 00` / BE `00 00 FE FF`）一并去掉。
+fn utf32_text(bytes: &[u8], big_endian: bool) -> String {
+    let body = match bytes {
+        [0xFF, 0xFE, 0x00, 0x00, rest @ ..] | [0x00, 0x00, 0xFE, 0xFF, rest @ ..] => rest,
+        _ => bytes,
+    };
+    body.chunks_exact(4)
+        .map(|c| {
+            let v = if big_endian {
+                u32::from_be_bytes([c[0], c[1], c[2], c[3]])
+            } else {
+                u32::from_le_bytes([c[0], c[1], c[2], c[3]])
+            };
+            char::from_u32(v).unwrap_or('\u{FFFD}')
+        })
+        .collect()
 }
 
 /// 传统单/双字节编码文本（GB18030、Windows-1251 等）。
@@ -893,8 +923,8 @@ mod tests {
 
         // 字符串/进制模式：空数据返回空串（无内容可展示）
         let textual = [
-            Utf8, Utf16Le, Utf16Be, Gb18030, Cp1251, Sjis, Big5, Cp1252, Hex, Dec, Binary, Yaml,
-            Toml, Xml,
+            Utf8, Utf16Le, Utf16Be, Utf32Le, Utf32Be, Gb18030, Cp1251, Sjis, Big5, Cp1252, Hex,
+            Dec, Binary, Yaml, Toml, Xml,
         ];
         for mode in textual {
             let s = decode(&[], mode, Endian::Little, 100);
@@ -1110,6 +1140,42 @@ mod tests {
         let bytes = [0x00, 0x41, 0x00, 0x42];
         assert_eq!(
             decode(&bytes, DecodeMode::Utf16Be, Endian::Little, 100),
+            "AB"
+        );
+    }
+
+    #[test]
+    fn decode_utf32_le() {
+        setup();
+        // "AB" 的 UTF-32LE（无 BOM）
+        let bytes = [0x41, 0x00, 0x00, 0x00, 0x42, 0x00, 0x00, 0x00];
+        assert_eq!(
+            decode(&bytes, DecodeMode::Utf32Le, Endian::Little, 100),
+            "AB"
+        );
+
+        // 带 BOM：BOM 只是字节序标记，不进正文
+        let mut with_bom = vec![0xFF, 0xFE, 0x00, 0x00];
+        with_bom.extend_from_slice(&bytes);
+        assert_eq!(
+            decode(&with_bom, DecodeMode::Utf32Le, Endian::Little, 100),
+            "AB"
+        );
+    }
+
+    #[test]
+    fn decode_utf32_be() {
+        setup();
+        let bytes = [0x00, 0x00, 0x00, 0x41, 0x00, 0x00, 0x00, 0x42];
+        assert_eq!(
+            decode(&bytes, DecodeMode::Utf32Be, Endian::Little, 100),
+            "AB"
+        );
+
+        let mut with_bom = vec![0x00, 0x00, 0xFE, 0xFF];
+        with_bom.extend_from_slice(&bytes);
+        assert_eq!(
+            decode(&with_bom, DecodeMode::Utf32Be, Endian::Little, 100),
             "AB"
         );
     }

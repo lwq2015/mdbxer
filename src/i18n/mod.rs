@@ -429,6 +429,8 @@ pub struct I18n {
     pub guess_utf8: &'static str,
     pub guess_utf16_le: &'static str,
     pub guess_utf16_be: &'static str,
+    pub guess_utf32_le: &'static str,
+    pub guess_utf32_be: &'static str,
     pub guess_binary: &'static str,
 
     // ── 高级配置页 ──
