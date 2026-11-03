@@ -19,6 +19,8 @@ use crate::ui::MdbxerApp;
 pub(super) struct CardCtx<'a> {
     /// 卡片角色
     pub side: Side,
+    /// 选中行的 Key 字节（Value 整数标注规则匹配用）
+    pub key: &'a [u8],
     /// 卡片完整字节
     pub bytes: &'a [u8],
     /// 当前段窗口
@@ -98,6 +100,7 @@ pub(super) fn show(
             let (text_open, hex_open) = layout::card_section_open(ui.ctx(), side);
             let ctx = CardCtx {
                 side,
+                key,
                 bytes,
                 window,
                 off,

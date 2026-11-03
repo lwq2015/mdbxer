@@ -30,6 +30,26 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
     let display_text = plan.text;
     let syntax_kind = plan.syntax;
 
+    // 与表格一致：整数标注追加到显示文本，默认附注单独着色
+    let type_label = match ctx.mode.forced_label(app.endian) {
+        Some(label) => label,
+        None => super::super::guess_cached(ui.ctx(), ctx.bytes, app.endian, &app.hint_value).0,
+    };
+    let val_label = if ctx.side.is_key() {
+        String::new()
+    } else {
+        let table = app.cur_table().and_then(|t| t.name.clone());
+        app.value_label_suffix(ctx.key, ctx.bytes, &type_label, &table)
+    };
+    let (base_text, hint_text) = crate::ui::split_hint(&display_text, &type_label);
+    let hint_start = (!hint_text.is_empty()).then_some(base_text.len());
+    let label_start = (!val_label.is_empty()).then_some(display_text.len());
+    let display_text = if val_label.is_empty() {
+        display_text
+    } else {
+        format!("{display_text} · {val_label}")
+    };
+
     // 行高与 Hex 视图一致（不加 extra_text_line_spacing）：与 fold_view_body /
     // TextEdit layouter 的实测行高保持一致。
     let line_h = mono_line_height(ui);
@@ -135,6 +155,8 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
             line_h,
             show_line_numbers,
             every_display_row,
+            hint_start,
+            label_start,
         );
     });
 
@@ -443,6 +465,8 @@ fn text_edit_body(
     line_h: f32,
     show_line_numbers: bool,
     every_display_row: bool,
+    hint_start: Option<usize>,
+    label_start: Option<usize>,
 ) {
     // TextEdit 自身无内部滚动、高度随内容无限增长，故必须包一层 ScrollArea；
     // + 12 ≈ TextEdit frame 上下内边距，保证整数行内容恰好不滚
@@ -467,7 +491,16 @@ fn text_edit_body(
         // TextEdit 实际生成的 galley。无高亮时其行为与 egui 默认 multiline
         // 一致（同 wrap、同 row_height、保留尾空白），故可安全无条件使用。
         let mut layouter = move |ui: &egui::Ui, s: &dyn egui::TextBuffer, wrap: f32| {
-            layout_job(ui, s.as_str(), syntax_kind, highlights, &palette, wrap)
+            layout_job(
+                ui,
+                s.as_str(),
+                syntax_kind,
+                highlights,
+                &palette,
+                wrap,
+                hint_start,
+                label_start,
+            )
         };
         let gutter_width = show_line_numbers
             .then(|| line_number_gutter_width(ui, display_text, every_display_row));
@@ -712,6 +745,8 @@ fn layout_job(
     highlights: &SearchHighlights,
     palette: &[egui::Color32; 6],
     wrap: f32,
+    hint_start: Option<usize>,
+    label_start: Option<usize>,
 ) -> std::sync::Arc<egui::Galley> {
     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
     // 与 Hex 视图行高一致：不加 extra_text_line_spacing，同窗口文本/hex 行高对齐
@@ -726,7 +761,28 @@ fn layout_job(
     let tokens = syntax
         .map(|mode| syntax_tokens_cached(ui.ctx(), mode, s))
         .unwrap_or_default();
-    append_colored(&mut job, s, &tokens, base, palette, highlights);
+    if tokens.is_empty() && (hint_start.is_some() || label_start.is_some()) {
+        // 整数/时间/二进制显示：值本体默认色、附注警示色、整数标注强调色
+        let base_end = hint_start.or(label_start).unwrap_or(s.len()).min(s.len());
+        job.append(&s[..base_end], 0.0, base.clone());
+        if let Some(hs) = hint_start {
+            let he = label_start.unwrap_or(s.len()).min(s.len());
+            if hs < he {
+                let mut fmt = base.clone();
+                fmt.color = ui.visuals().warn_fg_color;
+                job.append(&s[hs..he], 0.0, fmt);
+            }
+        }
+        if let Some(ls) = label_start {
+            if ls < s.len() {
+                let mut fmt = base;
+                fmt.color = ui.visuals().hyperlink_color;
+                job.append(&s[ls..], 0.0, fmt);
+            }
+        }
+    } else {
+        append_colored(&mut job, s, &tokens, base, palette, highlights);
+    }
     job.wrap.max_width = wrap;
     job.keep_trailing_whitespace = true;
     ui.fonts_mut(|f| f.layout_job(job))

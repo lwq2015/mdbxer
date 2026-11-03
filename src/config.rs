@@ -165,9 +165,54 @@ pub struct PerDbRecord {
     /// 各表的搜索词历史（与表关联，每表最多 20 条，最近在前）
     #[serde(default)]
     pub search_history: Vec<TableSearchHistory>,
+    /// Value 整数标注规则（位标识/枚举；库默认或指定表）
+    #[serde(default)]
+    pub value_labels: Vec<ValueLabel>,
     /// 最近使用时间（unix 秒；LRU 排序依据）
     #[serde(default)]
     pub last_use: u64,
+}
+
+/// 一条 Value 整数标注规则：Key 精确匹配后，把整数 Value 追加显示为
+/// 位标识名（`Read|Write`）或枚举名（`Active`）。
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Hash)]
+pub struct ValueLabel {
+    /// true = 仅指定表生效；false = 库默认（对所有表生效）
+    #[serde(default)]
+    pub per_table: bool,
+    /// 指定的表名（per_table = true 时生效；None = 主表）
+    #[serde(default)]
+    pub table: Option<String>,
+    /// 目标 Key 的显示文本（精确匹配，区分大小写）
+    #[serde(default)]
+    pub key: String,
+    /// 解释方式：`bits`（位标识）或 `enum`（枚举）
+    #[serde(default)]
+    pub kind: String,
+    /// 定义文本：`0=Read,1=Write` 或 `1=Active,2=Paused`
+    #[serde(default)]
+    pub defs: String,
+    /// 是否启用（默认启用；旧配置缺该字段时为 true）
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// serde 缺省值：启用的规则。
+fn default_true() -> bool {
+    true
+}
+
+impl Default for ValueLabel {
+    fn default() -> Self {
+        ValueLabel {
+            per_table: false,
+            table: None,
+            key: String::new(),
+            kind: "bits".to_string(),
+            defs: String::new(),
+            enabled: true,
+        }
+    }
 }
 
 /// 一条收藏 Key。
@@ -258,6 +303,12 @@ fn merge_per_db(dst: &mut PerDbRecord, src: PerDbRecord) {
             .any(|x| x.table == k.table && x.key_hex == k.key_hex)
         {
             dst.fav_keys.push(k);
+        }
+    }
+
+    for l in src.value_labels {
+        if !dst.value_labels.contains(&l) {
+            dst.value_labels.push(l);
         }
     }
 
@@ -709,5 +760,42 @@ mod tests {
         let legacy: PerDbRecord = serde_json::from_str(r#"{"path":"db"}"#).unwrap();
         assert!(legacy.proto_files.is_none());
         assert!(legacy.proto_msg.is_none());
+    }
+
+    #[test]
+    fn value_label_serde_defaults_enabled_and_legacy_record() {
+        // 旧配置缺 enabled 时默认启用
+        let l: ValueLabel =
+            serde_json::from_str(r#"{"key":"flags","kind":"bits","defs":"0=A"}"#).unwrap();
+        assert!(l.enabled);
+        assert!(!l.per_table);
+
+        let round: ValueLabel =
+            serde_json::from_str(&serde_json::to_string(&ValueLabel::default()).unwrap()).unwrap();
+        assert!(round.enabled);
+
+        // 旧库记录（无 value_labels）→ 空列表
+        let legacy: PerDbRecord = serde_json::from_str(r#"{"path":"db"}"#).unwrap();
+        assert!(legacy.value_labels.is_empty());
+    }
+
+    #[test]
+    fn merge_per_db_unions_value_labels() {
+        let mut dst = PerDbRecord::default();
+        let mut src = PerDbRecord::default();
+        src.value_labels = vec![ValueLabel {
+            key: "flags".to_string(),
+            kind: "bits".to_string(),
+            defs: "0=A".to_string(),
+            ..Default::default()
+        }];
+        src.value_labels.push(ValueLabel {
+            key: "state".to_string(),
+            kind: "enum".to_string(),
+            defs: "1=On".to_string(),
+            ..Default::default()
+        });
+        merge_per_db(&mut dst, src);
+        assert_eq!(dst.value_labels.len(), 2);
     }
 }

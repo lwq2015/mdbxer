@@ -114,12 +114,14 @@ fn cell_tooltip(
     mode: DecodeMode,
     endian: Endian,
     hints: HintFlags,
+    extra: &str,
 ) {
     if !clipped && !text_is_elided(ui, &resp, visible) {
         return;
     }
 
     let visible = visible.to_string();
+    let extra = extra.to_string();
     resp.on_hover_ui(move |ui| {
         let text = cached_preview(
             ui.ctx(),
@@ -139,6 +141,12 @@ fn cell_tooltip(
                 }
             },
         );
+        // 完整解码文本之后补上整数标注（与单元格显示一致）
+        let text = if extra.is_empty() {
+            text
+        } else {
+            format!("{text} · {extra}")
+        };
         tooltip_body(ui, &text);
     });
 }
@@ -530,9 +538,27 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         elide_tooltip(ui, resp, &abs.to_string());
                     });
                     row_ui.col(|ui| {
-                        let rt = egui::RichText::new(&view.key_text).monospace();
+                        // Key 的默认附注（地址/魔数）单独着色
+                        let (key_base, key_hint) =
+                            super::split_hint(&view.key_text, &view.key_type_label);
+                        let font_id = egui::FontId::monospace(
+                            ui.style().text_styles[&egui::TextStyle::Body].size,
+                        );
+                        let mut job = egui::text::LayoutJob::default();
+                        job.append(
+                            key_base,
+                            0.0,
+                            egui::TextFormat::simple(font_id.clone(), ui.visuals().text_color()),
+                        );
+                        if !key_hint.is_empty() {
+                            job.append(
+                                key_hint,
+                                0.0,
+                                egui::TextFormat::simple(font_id, ui.visuals().warn_fg_color),
+                            );
+                        }
                         let resp = ui.add(
-                            egui::Label::new(rt)
+                            egui::Label::new(job)
                                 .selectable(false)
                                 .show_tooltip_when_elided(false),
                         );
@@ -547,6 +573,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             app.key_mode,
                             app.endian,
                             app.hint_key,
+                            "",
                         );
                     });
                     row_ui.col(|ui| {
@@ -585,14 +612,57 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         }
                     });
                     row_ui.col(|ui| {
-                        // 多值表分组行：显示第一个值的预览 + 值总数（值列表在右侧翻看）
-                        let text = match row.dup_count {
-                            Some(n) => format!("{}{}", view.val_text, t.dup_n_values(n)),
-                            None => view.val_text.clone(),
+                        // Value：值本体默认色、默认附注警示色、整数标注强调色
+                        let dup = match row.dup_count {
+                            Some(n) => t.dup_n_values(n),
+                            None => String::new(),
                         };
-                        let rt = egui::RichText::new(&text).monospace();
+                        let (val_base, val_hint) =
+                            super::split_hint(&view.val_text, &view.type_label);
+                        let base = format!("{val_base}{val_hint}{dup}");
+                        let text = if view.val_label.is_empty() {
+                            base.clone()
+                        } else {
+                            format!("{base} · {}", view.val_label)
+                        };
+                        let font_id = egui::FontId::monospace(
+                            ui.style().text_styles[&egui::TextStyle::Body].size,
+                        );
+                        let mut job = egui::text::LayoutJob::default();
+                        job.append(
+                            val_base,
+                            0.0,
+                            egui::TextFormat::simple(font_id.clone(), ui.visuals().text_color()),
+                        );
+                        if !val_hint.is_empty() {
+                            job.append(
+                                val_hint,
+                                0.0,
+                                egui::TextFormat::simple(
+                                    font_id.clone(),
+                                    ui.visuals().warn_fg_color,
+                                ),
+                            );
+                        }
+                        if !dup.is_empty() {
+                            job.append(
+                                &dup,
+                                0.0,
+                                egui::TextFormat::simple(
+                                    font_id.clone(),
+                                    ui.visuals().text_color(),
+                                ),
+                            );
+                        }
+                        if !view.val_label.is_empty() {
+                            job.append(
+                                &format!(" · {}", view.val_label),
+                                0.0,
+                                egui::TextFormat::simple(font_id, ui.visuals().hyperlink_color),
+                            );
+                        }
                         let resp = ui.add(
-                            egui::Label::new(rt)
+                            egui::Label::new(job)
                                 .selectable(false)
                                 .show_tooltip_when_elided(false),
                         );
@@ -607,6 +677,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                             app.val_mode,
                             app.endian,
                             app.hint_value,
+                            &view.val_label,
                         );
                     });
                     // 类型过滤菜单项状态（每帧只做几次字符串比较，不分配）
@@ -633,6 +704,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                                 ui.close();
                             }
                         };
+                        item(ui, t.menu_refresh_table, RowMenuAction::RefreshTable);
+                        ui.separator();
                         item(ui, t.menu_copy_key, RowMenuAction::CopyKey);
                         item(ui, t.menu_copy_value, RowMenuAction::CopyValue);
                         item(ui, t.menu_copy_value_hex, RowMenuAction::CopyValueHex);

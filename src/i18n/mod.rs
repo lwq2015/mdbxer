@@ -193,6 +193,8 @@ pub struct I18n {
     pub menu_search_value: &'static str,
     pub menu_filter_key: &'static str,
     pub menu_save_value: &'static str,
+    /// 刷新当前表（重读库中最新数据，F5 等效）
+    pub menu_refresh_table: &'static str,
     /// 复制单个字段后的状态栏提示
     pub copied_key: &'static str,
     pub copied_value: &'static str,
@@ -467,12 +469,35 @@ pub struct I18n {
     pub sc_f3: &'static str,
     pub sc_clear: &'static str,
     pub sc_page: &'static str,
+    pub sc_refresh: &'static str,
     pub sc_rownav: &'static str,
     pub sc_copy_row: &'static str,
     pub sc_enter: &'static str,
     pub sc_hex_clear: &'static str,
     /// 「单元格显示长度」行标签（原顶栏无标签，高级配置页新增）
     pub cell_max_label: &'static str,
+    /// Value 整数标注（位标识/枚举规则列表）
+    pub vlabel_section: &'static str,
+    pub vlabel_section_tip: &'static str,
+    pub vlabel_scope: &'static str,
+    /// 关联范围：库默认（对所有表生效）
+    pub vlabel_scope_db: &'static str,
+    pub vlabel_key: &'static str,
+    pub vlabel_kind: &'static str,
+    pub vlabel_kind_bits: &'static str,
+    pub vlabel_kind_enum: &'static str,
+    pub vlabel_defs: &'static str,
+    pub vlabel_enabled: &'static str,
+    pub vlabel_disabled: &'static str,
+    pub vlabel_add: &'static str,
+    pub vlabel_del: &'static str,
+    /// 编辑子窗口
+    pub vlabel_edit: &'static str,
+    pub vlabel_edit_title: &'static str,
+    pub vlabel_ok: &'static str,
+    pub vlabel_format_tip: &'static str,
+    /// 未打开数据库时的占位提示
+    pub vlabel_no_db: &'static str,
 
     // ── 高级配置页：日志节 ──
     pub log_section: &'static str,

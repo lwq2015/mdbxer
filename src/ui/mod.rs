@@ -272,6 +272,8 @@ impl SortCol {
 pub struct RowView {
     /// Key 的显示文本（按当前表格解码格式）
     pub key_text: String,
+    /// Key 的类型猜测标签（用于区分值本体与附注着色）
+    pub key_type_label: String,
     /// Key 显示文本是否被 cell_max 截断（悬停时按原始字节补更长的预览）
     pub key_clipped: bool,
     /// Value 的显示文本（按当前表格解码格式）
@@ -280,6 +282,8 @@ pub struct RowView {
     pub val_clipped: bool,
     /// Value 的类型猜测标签
     pub type_label: String,
+    /// Value 的整数标注后缀（位标识/枚举名；空串 = 无）
+    pub val_label: String,
     /// val_text 开头能解析出的数值（数值排序用；hex/文本等为 None）
     pub val_num: Option<f64>,
 }
@@ -420,6 +424,8 @@ pub enum RowMenuAction {
     ClearTypeFilter,
     /// 另存该 Value 的原始字节
     SaveValue,
+    /// 刷新当前表（重枚举表列表与条目数后重读首页）
+    RefreshTable,
 }
 
 /// 字节 → 大写十六进制（字节间空格分隔），右键菜单复制 Value 用。
@@ -580,6 +586,7 @@ pub struct MdbxerApp {
         crate::fmt::HintFlags,
         bool,
         u8,
+        u64,
     )>,
     // ── 右栏 ──
     /// 右栏（详情）是否显示
@@ -641,6 +648,10 @@ pub struct MdbxerApp {
     pub fav_tables: Vec<Option<String>>,
     /// 当前库的收藏 Key，左栏底部列表可跳转
     pub fav_keys: Vec<crate::config::FavKey>,
+    /// Value 整数标注规则（库默认或指定表；高级配置页编辑）
+    pub value_labels: Vec<crate::config::ValueLabel>,
+    /// 标注规则编辑子窗口（草稿 + 目标下标；None = 未打开）
+    pub(crate) vlabel_edit: Option<settings::VLabelEdit>,
     // ── 窗口标题 ──
     /// 基础标题（版本+日期，启动时由 main 传入）
     title_base: String,
@@ -815,6 +826,8 @@ impl MdbxerApp {
             always_on_top: prefs.always_on_top.unwrap_or(false),
             fav_tables: Vec::new(),
             fav_keys: Vec::new(),
+            value_labels: Vec::new(),
+            vlabel_edit: None,
 
             title: title_base.clone(),
             title_base,
@@ -891,13 +904,15 @@ impl MdbxerApp {
             self.hint_value,
             crate::fmt::thousands_sep(),
             crate::i18n::lang() as u8,
+            labels_hash(&self.value_labels),
         );
 
         if self.views_key == Some(key) && self.views.len() == self.rows.len() {
             return;
         }
 
-        self.views = self
+        let table_name = self.cur_table().and_then(|t| t.name.clone());
+        let views: Vec<RowView> = self
             .rows
             .iter()
             .map(|r| {
@@ -915,23 +930,94 @@ impl MdbxerApp {
                     self.cell_max,
                     &self.hint_key,
                 );
+                let key_type_label = match self.key_mode.forced_label(self.endian) {
+                    Some(label) => label,
+                    None => crate::fmt::guess_key(&r.key, self.endian, &self.hint_key).0,
+                };
+                // Value 指定了解码类型时，类型列同步显示指定类型；只有"自动"才按字节猜测。
+                let type_label = match self.val_mode.forced_label(self.endian) {
+                    Some(label) => label,
+                    None => crate::fmt::guess(&r.value, self.endian, &self.hint_value).0,
+                };
+                let val_label = self.value_label_suffix(&r.key, &r.value, &type_label, &table_name);
                 RowView {
                     // 解码超长时会补 "…"，字符数因此恰为 cell_max + 1
                     key_clipped: key_text.chars().count() > self.cell_max,
                     val_clipped: val_text.chars().count() > self.cell_max,
                     key_text,
-                    // Value 指定了解码类型时，类型列同步显示指定类型；只有"自动"才按字节猜测。
-                    type_label: match self.val_mode.forced_label(self.endian) {
-                        Some(label) => label,
-                        None => crate::fmt::guess(&r.value, self.endian, &self.hint_value).0,
-                    },
+                    key_type_label,
+                    type_label,
+                    val_label,
                     val_num: leading_num(&val_text),
                     val_text,
                 }
             })
             .collect();
 
+        self.views = views;
         self.views_key = Some(key);
+    }
+
+    /// 按当前库的标注规则为一行整数 Value 生成后缀（位标识名 / 枚举名）。
+    /// 表规则优先于库默认；禁用的规则跳过；非整数显示或无匹配时返回空串。
+    fn value_label_suffix(
+        &self,
+        key: &[u8],
+        value: &[u8],
+        type_label: &str,
+        table: &Option<String>,
+    ) -> String {
+        if self.value_labels.is_empty() {
+            return String::new();
+        }
+        let Some((signed, width)) = int_label(type_label) else {
+            return String::new();
+        };
+        let Some(v) = int_value(value, self.endian, signed, width) else {
+            return String::new();
+        };
+        // Key 文本按当前解码格式完整解码后精确比较（不受单元格显示截断影响）
+        let key_text =
+            crate::fmt::decode_key(key, self.key_mode, self.endian, 4096, &self.hint_key);
+        // 表规则优先，其次库默认
+        let rule = self
+            .value_labels
+            .iter()
+            .filter(|l| l.enabled && l.per_table && l.table == *table)
+            .find(|l| l.key == key_text)
+            .or_else(|| {
+                self.value_labels
+                    .iter()
+                    .filter(|l| l.enabled && !l.per_table)
+                    .find(|l| l.key == key_text)
+            });
+        let Some(rule) = rule else {
+            return String::new();
+        };
+
+        let defs = parse_defs(&rule.defs);
+        if defs.is_empty() {
+            return String::new();
+        }
+
+        if rule.kind == "enum" {
+            defs.iter()
+                .find(|(n, _)| *n == v)
+                .map(|(_, name)| name.clone())
+                .unwrap_or_default()
+        } else {
+            // 位标识：只支持非负 64 位以内的整数
+            if v < 0 || v >= 1i128 << 64 {
+                return String::new();
+            }
+            let u = v as u64;
+            let names: Vec<&str> = defs
+                .iter()
+                .filter(|(bit, _)| *bit >= 0 && *bit < 64 && (u >> (*bit as u32)) & 1 == 1)
+                .map(|(_, name)| name.as_str())
+                .collect();
+            names.join("|")
+        }
     }
 
     /// 全局遍历方向（升序/降序）转为 db 层的 Direction。
@@ -978,6 +1064,7 @@ impl MdbxerApp {
                 let rec = crate::config::load_per_db(&path);
                 self.fav_tables = rec.fav_tables.clone();
                 self.fav_keys = rec.fav_keys.clone();
+                self.value_labels = rec.value_labels.clone();
                 self.normalize_favs();
 
                 // 恢复本库的 Protobuf 关联：自动载入绑定的 .proto 与 message
@@ -1231,6 +1318,8 @@ impl MdbxerApp {
         self.type_filter = None;
         self.fav_tables.clear();
         self.fav_keys.clear();
+        self.value_labels.clear();
+        self.vlabel_edit = None;
         self.detail.clear();
 
         self.status = Status::Closed;
@@ -1289,6 +1378,55 @@ impl MdbxerApp {
                     self.pending_scroll = None;
                     self.detail.clear();
                     self.status = Status::NoTables(path);
+                }
+            }
+            Some(Err(e)) => {
+                self.status = Status::error(e);
+            }
+            None => {}
+        }
+    }
+
+    /// 刷新当前表：重新枚举表列表与条目数（其他进程可能已提交新数据），
+    /// 保留当前表（按名字重新定位）、排序方向与搜索过滤，然后重读首页。
+    pub fn refresh_table(&mut self) {
+        if self.db.is_none() {
+            return;
+        }
+
+        // 先记下当前表名（主表为 None）
+        let cur_name = self
+            .db
+            .as_ref()
+            .zip(self.selected_table)
+            .and_then(|(h, i)| h.tables.get(i))
+            .and_then(|t| t.name.clone());
+
+        let refresh = self.db.as_mut().map(|h| h.refresh_tables());
+        match refresh {
+            Some(Ok(())) => {
+                let n = self.db.as_ref().map(|h| h.tables.len()).unwrap_or(0);
+                // 表列表可能增减：按名字重新定位；主表/表已被删则回退主表
+                self.selected_table = cur_name
+                    .and_then(|name| {
+                        self.db
+                            .as_ref()?
+                            .tables
+                            .iter()
+                            .position(|t| t.name.as_ref() == Some(&name))
+                    })
+                    .or(if n > 0 { Some(0) } else { None });
+
+                self.stat_cache = None;
+                self.env_cache = None;
+                if self.selected_table.is_some() {
+                    self.load_first_page();
+                } else {
+                    self.rows.clear();
+                    self.base_index = None;
+                    self.selected_row = None;
+                    self.pending_scroll = None;
+                    self.detail.clear();
                 }
             }
             Some(Err(e)) => {
@@ -1712,6 +1850,7 @@ impl MdbxerApp {
                 egui::Key::O,
                 egui::Key::F,
                 egui::Key::F3,
+                egui::Key::F5,
                 egui::Key::Escape,
                 egui::Key::PageUp,
                 egui::Key::PageDown,
@@ -1747,6 +1886,10 @@ impl MdbxerApp {
                 // F3 = 在最近使用的搜索里找下一个；Shift+F3 = 上一个
                 let backward = ctx.input(|i| i.modifiers.shift);
                 self.continue_search(!backward);
+            }
+            egui::Key::F5 if !ctrl => {
+                // F5：重读当前表（其他进程可能已提交新数据）
+                self.refresh_table();
             }
             egui::Key::A if ctrl => {
                 // Ctrl+A：全选当前页；焦点在输入框时让输入框自行处理
@@ -1904,6 +2047,11 @@ impl MdbxerApp {
     /// 执行表格行右键菜单动作：先选中该行，再按动作复制 / 搜索 / 过滤 / 另存。
     pub fn run_row_menu(&mut self, ctx: &egui::Context, index: usize, action: RowMenuAction) {
         let t = crate::i18n::tr();
+        // 刷新表与具体行无关，不要求 index 有效
+        if matches!(action, RowMenuAction::RefreshTable) {
+            self.refresh_table();
+            return;
+        }
         let Some(row) = self.rows.get(index) else {
             return;
         };
@@ -1973,6 +2121,8 @@ impl MdbxerApp {
                 };
                 self.save_bytes(&format!("{base}.bin"), &value, "bin");
             }
+            // 已在函数开头提前处理（不依赖具体行）
+            RowMenuAction::RefreshTable => {}
         }
     }
 
@@ -2637,6 +2787,7 @@ impl MdbxerApp {
             proto_files: old.proto_files,
             proto_msg: old.proto_msg,
             search_history,
+            value_labels: self.value_labels.clone(),
             last_use: 0, // save_per_db 内部刷新为当前时间
         });
     }
@@ -2871,6 +3022,119 @@ fn leading_num(s: &str) -> Option<f64> {
         }
     }
     None
+}
+
+/// 标注规则内容指纹：规则增删改后 views 显示缓存自动失效。
+fn labels_hash(labels: &[crate::config::ValueLabel]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    labels.hash(&mut h);
+    h.finish()
+}
+
+/// 从类型标签（如 `u16 LE` / `i8`）识别整数宽度与是否有符号。
+fn int_label(label: &str) -> Option<(bool, usize)> {
+    match label.split_whitespace().next()? {
+        "u8" => Some((false, 1)),
+        "u16" => Some((false, 2)),
+        "u32" => Some((false, 4)),
+        "u64" => Some((false, 8)),
+        "i8" => Some((true, 1)),
+        "i16" => Some((true, 2)),
+        "i32" => Some((true, 4)),
+        "i64" => Some((true, 8)),
+        _ => None,
+    }
+}
+
+/// 拆分值本体与默认附注（时间戳 → 日期、IPv4/MAC/IPv6/FILETIME、文件魔数）。
+/// 附注只出现在整数/时间/二进制显示中，分隔符为 " → " 或 " · "，
+/// 据此把附注单独着色，避免与值本体混为一色。
+pub(crate) fn split_hint<'a>(text: &'a str, type_label: &str) -> (&'a str, &'a str) {
+    let hintable = int_label(type_label).is_some()
+        || type_label.eq_ignore_ascii_case("time")
+        || type_label == crate::i18n::tr().guess_binary;
+    if !hintable {
+        return (text, "");
+    }
+    let arrow = text.find(" → ");
+    let dot = text.find(" · ");
+    let idx = match (arrow, dot) {
+        (Some(a), Some(d)) => a.min(d),
+        (Some(a), None) => a,
+        (None, Some(d)) => d,
+        (None, None) => return (text, ""),
+    };
+    text.split_at(idx)
+}
+
+/// 按显示时的零扩展/截断与字节序规则读取整数（与 fmt::decode 的整数分支一致）。
+fn int_value(bytes: &[u8], endian: crate::fmt::Endian, signed: bool, width: usize) -> Option<i128> {
+    if bytes.is_empty() || width == 0 || width > 8 {
+        return None;
+    }
+    let take = bytes.len().min(width);
+    let mut arr = [0u8; 8];
+    match endian {
+        crate::fmt::Endian::Little => arr[..take].copy_from_slice(&bytes[..take]),
+        crate::fmt::Endian::Big => arr[width - take..width].copy_from_slice(&bytes[..take]),
+    }
+    let u = match (endian, width) {
+        (crate::fmt::Endian::Little, 1) => arr[0] as u64,
+        (crate::fmt::Endian::Little, 2) => u16::from_le_bytes([arr[0], arr[1]]) as u64,
+        (crate::fmt::Endian::Little, 4) => {
+            u32::from_le_bytes([arr[0], arr[1], arr[2], arr[3]]) as u64
+        }
+        (crate::fmt::Endian::Little, 8) => u64::from_le_bytes(arr),
+        (crate::fmt::Endian::Big, 1) => arr[0] as u64,
+        (crate::fmt::Endian::Big, 2) => u16::from_be_bytes([arr[0], arr[1]]) as u64,
+        (crate::fmt::Endian::Big, 4) => u32::from_be_bytes([arr[0], arr[1], arr[2], arr[3]]) as u64,
+        (crate::fmt::Endian::Big, 8) => u64::from_be_bytes(arr),
+        _ => return None,
+    };
+    let mut v = u as i128;
+    if signed {
+        let bits = width * 8;
+        if (v & (1i128 << (bits - 1))) != 0 {
+            v -= 1i128 << bits;
+        }
+    }
+    Some(v)
+}
+
+/// 解析定义文本：`0=Read,1=Write` / `1=Active;2=Paused`，
+/// 也支持每行一条（多行编辑）；左侧数字支持 `0x` 前缀与正负号，无效项忽略。
+fn parse_defs(defs: &str) -> Vec<(i128, String)> {
+    defs.split([',', ';', '\n', '\r'])
+        .filter_map(|item| {
+            let (num, name) = item.split_once('=')?;
+            let num = parse_int_literal(num)?;
+            let name = name.trim();
+            if name.is_empty() {
+                return None;
+            }
+            Some((num, name.to_string()))
+        })
+        .collect()
+}
+
+/// 解析十进制 / 0x 十六进制整数文本。
+fn parse_int_literal(s: &str) -> Option<i128> {
+    let s = s.trim();
+    let (neg, rest) = match s.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, s.strip_prefix('+').unwrap_or(s)),
+    };
+    let (radix, digits) = rest
+        .strip_prefix("0x")
+        .or_else(|| rest.strip_prefix("0X"))
+        .map(|d| (16, d))
+        .unwrap_or((10, rest));
+    if digits.is_empty() {
+        return None;
+    }
+    let n = i128::from_str_radix(digits, radix).ok()?;
+    Some(if neg { -n } else { n })
 }
 
 /// 解析跳转输入：hex(...)/0x... → 字节；整数键表接受十进制；其余按 UTF-8 文本。
@@ -3250,5 +3514,59 @@ impl eframe::App for MdbxerApp {
                 self.select_row(order[cur_pos - 1]);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod value_label_tests {
+    use super::{int_label, int_value, parse_defs};
+    use crate::fmt::Endian;
+
+    #[test]
+    fn parses_defs_with_comma_semicolon_and_hex() {
+        let defs = parse_defs("0=Read,1=Write; 0x10=Extra, 99");
+        assert_eq!(
+            defs,
+            vec![
+                (0, "Read".to_string()),
+                (1, "Write".to_string()),
+                (16, "Extra".to_string()),
+            ]
+        );
+        assert!(parse_defs("").is_empty());
+        assert!(parse_defs("0=").is_empty());
+        // 多行输入（每行一条，含 Windows 换行）
+        assert_eq!(
+            parse_defs("0=Auto\n1=SortNo1\r\n2=SortNo2"),
+            vec![
+                (0, "Auto".to_string()),
+                (1, "SortNo1".to_string()),
+                (2, "SortNo2".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn recognises_integer_type_labels() {
+        assert_eq!(int_label("u8"), Some((false, 1)));
+        assert_eq!(int_label("u16 LE"), Some((false, 2)));
+        assert_eq!(int_label("i32 BE"), Some((true, 4)));
+        assert_eq!(int_label("UTF-8"), None);
+    }
+
+    #[test]
+    fn reads_ints_with_zero_extension_like_decode() {
+        assert_eq!(int_value(&[0x01], Endian::Little, false, 2), Some(1));
+        assert_eq!(int_value(&[0xFF, 0xFF], Endian::Little, true, 2), Some(-1));
+        assert_eq!(
+            int_value(&[0x00, 0x80], Endian::Little, true, 2),
+            Some(-32768)
+        );
+        // 大端：首字节是高字节
+        assert_eq!(
+            int_value(&[0x01, 0x02], Endian::Big, false, 2),
+            Some(0x0102)
+        );
+        assert_eq!(int_value(&[], Endian::Little, false, 4), None);
     }
 }
