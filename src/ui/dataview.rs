@@ -628,11 +628,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
                         let font_id = egui::FontId::monospace(
                             ui.style().text_styles[&egui::TextStyle::Body].size,
                         );
+                        // 颜色规则命中时值本体用规则色，其余段保持各自颜色
+                        let base_color =
+                            view.val_color.unwrap_or_else(|| ui.visuals().text_color());
                         let mut job = egui::text::LayoutJob::default();
                         job.append(
                             val_base,
                             0.0,
-                            egui::TextFormat::simple(font_id.clone(), ui.visuals().text_color()),
+                            egui::TextFormat::simple(font_id.clone(), base_color),
                         );
                         if !val_hint.is_empty() {
                             job.append(

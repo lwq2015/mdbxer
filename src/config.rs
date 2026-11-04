@@ -32,6 +32,9 @@ struct ConfigFile {
     /// 每库记录（按最近使用排序，LRU 截断）
     #[serde(default)]
     per_db: Vec<PerDbRecord>,
+    /// 全局通用类型组（命名位标识/枚举定义，规则可引用；跨库共享）
+    #[serde(default)]
+    value_label_types: Vec<ValueLabelType>,
 }
 
 /// 深浅色主题。
@@ -168,6 +171,9 @@ pub struct PerDbRecord {
     /// Value 整数标注规则（位标识/枚举；库默认或指定表）
     #[serde(default)]
     pub value_labels: Vec<ValueLabel>,
+    /// Value 颜色规则（Key 通配符 + 数值范围 → 颜色）
+    #[serde(default)]
+    pub color_rules: Vec<ColorRule>,
     /// 最近使用时间（unix 秒；LRU 排序依据）
     #[serde(default)]
     pub last_use: u64,
@@ -186,13 +192,55 @@ pub struct ValueLabel {
     /// 目标 Key 的显示文本（精确匹配，区分大小写）
     #[serde(default)]
     pub key: String,
+    /// 旧版位段（新规则把范围写进 defs 的每一行，如 `3..=4=[0:无,1:对]`）：
+    /// 仅对 defs 中不带范围的行生效；空 = 整个整数
+    #[serde(default)]
+    pub bits: String,
     /// 解释方式：`bits`（位标识）或 `enum`（枚举）
     #[serde(default)]
     pub kind: String,
-    /// 定义文本：`0=Read,1=Write` 或 `1=Active,2=Paused`
+    /// 定义文本：`0=Read,1=Write` 或 `1=Active,2=Paused`；
+    /// 以 `@` 开头时按名称引用全局通用类型（`@协议`）
     #[serde(default)]
     pub defs: String,
     /// 是否启用（默认启用；旧配置缺该字段时为 true）
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// 全局通用类型：一份命名的位标识/枚举定义，可被多条规则引用（`@名称`）。
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, Debug)]
+pub struct ValueLabelType {
+    /// 组名（引用名，同时作为标注显示前缀）
+    pub name: String,
+    /// 定义文本，格式同 ValueLabel::defs
+    #[serde(default)]
+    pub defs: String,
+    /// 启用状态：默认启用，禁用后引用它的规则显示为空
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// 一条 Value 颜色规则：Key（支持 glob 通配符）命中且整数 Value 落在指定
+/// 范围时，该行 Value 文本使用指定颜色。
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, Hash, Debug)]
+pub struct ColorRule {
+    /// true = 仅指定表生效；false = 库默认（对所有表生效）
+    #[serde(default)]
+    pub per_table: bool,
+    /// 指定的表名（per_table = true 时生效；None = 主表）
+    #[serde(default)]
+    pub table: Option<String>,
+    /// Key 的显示文本模式：`*` 任意长度、`?` 任意单字符、`.` 字面点号
+    #[serde(default)]
+    pub key: String,
+    /// 数值范围：`<10` `>20` `[10,20]` `[10,20)` `(10,20]` `(10,20)`，或单值 `=10`
+    #[serde(default)]
+    pub range: String,
+    /// 颜色值 `#RRGGBB` / `#RGB`
+    #[serde(default)]
+    pub color: String,
+    /// 是否启用（默认启用）
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -208,6 +256,7 @@ impl Default for ValueLabel {
             per_table: false,
             table: None,
             key: String::new(),
+            bits: String::new(),
             kind: "bits".to_string(),
             defs: String::new(),
             enabled: true,
@@ -315,6 +364,13 @@ fn merge_per_db(dst: &mut PerDbRecord, src: PerDbRecord) {
     if src.last_use > dst.last_use {
         dst.last_use = src.last_use;
         dst.last_table = src.last_table;
+    }
+
+    // 同一目标的多条路径写法合并时，颜色规则去重保序
+    for r in src.color_rules {
+        if !dst.color_rules.contains(&r) {
+            dst.color_rules.push(r);
+        }
     }
 }
 
@@ -463,6 +519,16 @@ pub fn last_opened_db() -> Option<String> {
         .into_iter()
         .max_by_key(|r| r.last_use)
         .map(|r| r.path)
+}
+
+/// 读取全局通用类型列表（Value 整数标注的 @引用）。
+pub fn load_label_types() -> Vec<ValueLabelType> {
+    read_config().value_label_types
+}
+
+/// 保存全局通用类型列表。
+pub fn save_label_types(types: &[ValueLabelType]) {
+    write_config(|c| c.value_label_types = types.to_vec());
 }
 
 /// 按系统区域设置猜测语言：zh* → 中文，ru* → 俄语，其余 → 英语。
@@ -777,6 +843,21 @@ mod tests {
         // 旧库记录（无 value_labels）→ 空列表
         let legacy: PerDbRecord = serde_json::from_str(r#"{"path":"db"}"#).unwrap();
         assert!(legacy.value_labels.is_empty());
+    }
+
+    #[test]
+    fn label_type_and_bits_compat() {
+        // 旧配置无 value_label_types / bits 字段：类型为空，位段为空，启用为 true
+        let cfg: ConfigFile = serde_json::from_str(r#"{"lang":"zh"}"#).unwrap();
+        assert!(cfg.value_label_types.is_empty());
+
+        let rule: ValueLabel = serde_json::from_str(r#"{"key":"k","kind":"enum"}"#).unwrap();
+        assert!(rule.bits.is_empty());
+        assert!(rule.enabled);
+
+        let ty: ValueLabelType = serde_json::from_str(r#"{"name":"协议"}"#).unwrap();
+        assert!(ty.defs.is_empty());
+        assert!(ty.enabled);
     }
 
     #[test]

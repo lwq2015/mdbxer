@@ -477,6 +477,7 @@ pub struct I18n {
     /// 「单元格显示长度」行标签（原顶栏无标签，高级配置页新增）
     pub cell_max_label: &'static str,
     /// Value 整数标注（位标识/枚举规则列表）
+    pub vlabel_tab: &'static str,
     pub vlabel_section: &'static str,
     pub vlabel_section_tip: &'static str,
     pub vlabel_scope: &'static str,
@@ -498,6 +499,20 @@ pub struct I18n {
     pub vlabel_format_tip: &'static str,
     /// 未打开数据库时的占位提示
     pub vlabel_no_db: &'static str,
+    pub vtype_section: &'static str,
+    pub vtype_section_tip: &'static str,
+    pub vtype_name: &'static str,
+    pub vtype_add: &'static str,
+    pub vtype_edit_title: &'static str,
+    pub vtype_defs_tip: &'static str,
+    /// Value 颜色规则（Key 通配符 + 数值范围 → 颜色）
+    pub color_section: &'static str,
+    pub color_section_tip: &'static str,
+    pub color_key: &'static str,
+    pub color_range: &'static str,
+    pub color_value: &'static str,
+    pub color_add: &'static str,
+    pub color_tip: &'static str,
 
     // ── 高级配置页：日志节 ──
     pub log_section: &'static str,

@@ -1,54 +1,138 @@
 // Copyright 2026 lwq_yu
 // SPDX-License-Identifier: Apache-2.0
 
-//! 高级配置页（中央页签）：单元格附注开关表 + 从顶栏移入的不常用显示参数。
+//! 高级配置页（中央页签）：拆成「显示参数」「标识」两个子页。
 //! 各开关改动即时生效并持久化（save_ui_prefs）；附注开关变化会经 views_key
 //! 失效自动重建当前页显示缓存。
 
 use super::MdbxerApp;
 
+/// 子页签 id（保存在 egui 内存，切页/切语言不丢当前子页）
+const ADV_TAB_ID: &str = "mdbxer_adv_tab";
+
 /// 高级配置页主体。
 pub(crate) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.add_space(8.0);
+    let t = crate::i18n::tr();
+    let mut tab = ui
+        .ctx()
+        .data_mut(|d| d.get_temp::<usize>(egui::Id::new(ADV_TAB_ID)).unwrap_or(0));
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut tab, 0, t.disp_section);
+        ui.selectable_value(&mut tab, 1, t.vlabel_tab);
+    });
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(egui::Id::new(ADV_TAB_ID), tab));
+    ui.separator();
 
-        let left_width = left_column_width(ui);
-        let shortcuts_width = shortcuts_width(ui);
-        let column_gap = 8.0;
-        // 分组边框的左右内边距：让同列下组的宽度与上组实测外宽一致
-        let group_margin = egui::Frame::group(ui.style()).inner_margin.sum().x;
-        // 顶部两栏的实际右边缘：底部全宽分组据此对齐
-        let mut top_width = ui.available_width();
-        if ui.available_width() >= left_width + column_gap + shortcuts_width + group_margin {
-            let row = ui.horizontal_top(|ui| {
-                ui.vertical(|ui| {
-                    // 实测上组外宽，下组按同宽排布，两组右边缘对齐
-                    let hint_w = hint_section(ui, app, left_width);
-                    ui.add_space(10.0);
-                    display_section(ui, app, (hint_w - group_margin).max(left_width));
-                });
-                ui.add_space(column_gap);
-                ui.vertical(|ui| {
-                    let sc_w = shortcuts_section(ui, shortcuts_width);
-                    ui.add_space(10.0);
-                    log_section(ui, (sc_w - group_margin).max(shortcuts_width));
-                });
-            });
-            top_width = row.response.rect.width();
+    // 标注子页的行数多、列数多（颜色规则需足够宽度），窗口偏窄时允许横向滚动，
+    // 避免右侧输入框被裁切
+    egui::ScrollArea::both().show(ui, |ui| {
+        ui.add_space(8.0);
+        if tab == 1 {
+            labels_page(ui, app);
         } else {
-            hint_section(ui, app, left_width);
-            ui.add_space(10.0);
-            display_section(ui, app, left_width);
-            ui.add_space(10.0);
-            shortcuts_section(ui, shortcuts_width);
-            ui.add_space(10.0);
-            log_section(ui, shortcuts_width);
+            display_page(ui, app);
         }
-        ui.add_space(10.0);
-        value_labels_section(ui, app, (top_width - group_margin).max(left_width));
     });
     // 规则编辑子窗口（每帧独立渲染，避免被滚动区域裁剪）
     show_edit_window(ui.ctx(), app);
+    show_type_edit_window(ui.ctx(), app);
+}
+
+/// 子页「显示参数」：附注开关 + 显示参数 + 日志（右栏快捷键）。
+fn display_page(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    let left_width = left_column_width(ui);
+    let shortcuts_width = shortcuts_width(ui);
+    let column_gap = 8.0;
+    // 分组边框的左右内边距：让同列下组的宽度与上组实测外宽一致
+    let group_margin = egui::Frame::group(ui.style()).inner_margin.sum().x;
+    if ui.available_width() >= left_width + column_gap + shortcuts_width + group_margin {
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                // 实测上组外宽，下组按同宽排布，两组右边缘对齐
+                let hint_w = hint_section(ui, app, left_width);
+                ui.add_space(10.0);
+                display_section(ui, app, (hint_w - group_margin).max(left_width));
+                ui.add_space(10.0);
+                log_section(ui, (hint_w - group_margin).max(left_width));
+            });
+            ui.add_space(column_gap);
+            shortcuts_section(ui, shortcuts_width);
+        });
+    } else {
+        hint_section(ui, app, left_width);
+        ui.add_space(10.0);
+        display_section(ui, app, left_width);
+        ui.add_space(10.0);
+        log_section(ui, left_width);
+        ui.add_space(10.0);
+        shortcuts_section(ui, shortcuts_width);
+    }
+}
+
+/// 「标注」子页三组共用的最小宽度：颜色规则列最多，按内容给足，三组同宽对齐
+const LABELS_GROUP_WIDTH: f32 = 660.0;
+
+/// 子页「标注」：通用类型 + Value 整数标注 + 颜色规则。
+fn labels_page(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    let left_width = left_column_width(ui);
+    let shortcuts_width = shortcuts_width(ui);
+    let column_gap = 8.0;
+    let group_margin = egui::Frame::group(ui.style()).inner_margin.sum().x;
+    let total_width = (left_width + column_gap + shortcuts_width).min(ui.available_width());
+    let group_width = (total_width - group_margin)
+        .max(left_width)
+        .max(LABELS_GROUP_WIDTH);
+
+    label_types_section(ui, app, group_width);
+    ui.add_space(10.0);
+    value_labels_section(ui, app, group_width);
+    ui.add_space(10.0);
+    color_rules_section(ui, app, group_width);
+}
+
+/// 「标注」子页各分组共用的可折叠标题：默认展开，展开状态存 egui 内存
+/// （切页/切语言不丢）。返回当前是否展开，折叠时调用方跳过正文，
+/// 规则较多时可逐个收起。
+fn collapsible_section_header(ui: &mut egui::Ui, id_salt: &str, title: &str, tip: &str) -> bool {
+    let id = egui::Id::new(("adv_section_open", id_salt));
+    let mut open = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
+    ui.horizontal(|ui| {
+        // 三角用 egui 自带的矢量图标绘制，避免 ▾/▸ 字形在 CJK 字体里缺失显示成方框；
+        // 图标按 rect 的 0.75 绘制，分配 11 点即可得到与正文协调的小三角
+        let size = egui::vec2(11.0, 11.0);
+        let (_, arrow_resp) = ui.allocate_exact_size(size, egui::Sense::click());
+        let arrow_resp = arrow_resp.on_hover_text(tip);
+        egui::collapsing_header::paint_default_icon(ui, if open { 1.0 } else { 0.0 }, &arrow_resp);
+        if arrow_resp.clicked() {
+            open = !open;
+        }
+        if ui
+            .add(egui::Label::new(egui::RichText::new(title).strong()).sense(egui::Sense::click()))
+            .on_hover_text(tip)
+            .clicked()
+        {
+            open = !open;
+        }
+    });
+    ui.ctx().data_mut(|d| d.insert_temp(id, open));
+    open
+}
+
+/// 定宽网格单元格：Grid 里控件的可用宽度取自上一帧列宽，TextEdit 的
+/// desired_width 会被压回该列宽，列宽于是永远撑不开（表现为输入框被夹成一条缝）。
+/// 先按固定尺寸分配子 ui 再放控件，列宽才能按期望值稳定撑开。
+fn fixed_cell<R>(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, ui.spacing().interact_size.y),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(width);
+            add(ui)
+        },
+    )
+    .inner
 }
 
 fn measure_text(ui: &egui::Ui, text: &str) -> f32 {
@@ -449,6 +533,13 @@ pub(crate) struct VLabelEdit {
     pub draft: crate::config::ValueLabel,
 }
 
+/// 通用类型编辑子窗口状态：draft 在点「确定」时才写回全局列表。
+pub(crate) struct VLabelTypeEdit {
+    /// 被编辑类型的下标；None = 新增
+    pub index: Option<usize>,
+    pub draft: crate::config::ValueLabelType,
+}
+
 /// 列表预览文本：超长截断（悬停可看全文）。
 fn clip_text(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -491,8 +582,9 @@ fn value_labels_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
 
     ui.group(|ui| {
         ui.set_min_width(width);
-        ui.label(egui::RichText::new(t.vlabel_section).strong())
-            .on_hover_text(t.vlabel_section_tip);
+        if !collapsible_section_header(ui, "value_labels", t.vlabel_section, t.vlabel_section_tip) {
+            return;
+        }
         ui.add_space(4.0);
 
         if app.opened_path.is_none() {
@@ -562,7 +654,7 @@ fn value_labels_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
                         changed = true;
                     }
 
-                    // 定义文本：截断预览 + 悬停全文（每条一行）
+                    // 定义文本：截断预览 + 悬停全文（每组一行）
                     if l.defs.is_empty() {
                         ui.label(egui::RichText::new("—").weak());
                     } else {
@@ -616,7 +708,6 @@ fn value_labels_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
                 });
             }
         });
-        ui.label(egui::RichText::new(t.vlabel_format_tip).weak());
 
         if changed {
             app.views_key = None;
@@ -718,7 +809,7 @@ fn show_edit_window(ctx: &egui::Context, app: &mut MdbxerApp) {
                     [ui.available_width(), h],
                     egui::TextEdit::multiline(&mut edit.draft.defs)
                         .desired_rows(1)
-                        .hint_text("0=Read,1=Write"),
+                        .hint_text("3..=4=[0:无, 1:对, 2:不对]\n0=Read,1=Write"),
                 );
             });
         });
@@ -733,5 +824,351 @@ fn show_edit_window(ctx: &egui::Context, app: &mut MdbxerApp) {
     } else if open && !cancel {
         // 窗口仍开着（例如点了行内其他控件）：保留草稿
         app.vlabel_edit = Some(edit);
+    }
+}
+
+/// 节 6：全局通用类型（命名位标识/枚举定义，规则用 @名称 引用）。
+/// 全局共享，跨库生效；改动即保存并触发表格显示缓存重建。
+fn label_types_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
+    let t = crate::i18n::tr();
+
+    ui.group(|ui| {
+        ui.set_min_width(width);
+        if !collapsible_section_header(ui, "label_types", t.vtype_section, t.vtype_section_tip) {
+            return;
+        }
+        ui.add_space(4.0);
+
+        let mut types = std::mem::take(&mut app.label_types);
+        let mut changed = false;
+        let mut to_delete = None;
+        let mut to_edit: Option<usize> = None;
+
+        egui::Grid::new("label_types_grid")
+            .striped(true)
+            .num_columns(3)
+            .spacing([10.0, 4.0])
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new(t.vtype_name).strong());
+                ui.label(egui::RichText::new(t.vlabel_defs).strong());
+                ui.label("");
+                ui.end_row();
+
+                for (i, g) in types.iter_mut().enumerate() {
+                    // 名称
+                    if g.name.is_empty() {
+                        ui.label(egui::RichText::new("—").weak());
+                    } else {
+                        ui.label(clip_text(&g.name, 20)).on_hover_text(&g.name);
+                    }
+
+                    // 定义：截断预览 + 悬停全文
+                    if g.defs.is_empty() {
+                        ui.label(egui::RichText::new("—").weak());
+                    } else {
+                        ui.label(clip_text(&g.defs, 60))
+                            .on_hover_text(defs_tip(&g.defs));
+                    }
+
+                    // 启用 + 编辑 / 删除
+                    ui.horizontal(|ui| {
+                        let tip = if g.enabled {
+                            t.vlabel_enabled
+                        } else {
+                            t.vlabel_disabled
+                        };
+                        if ui.checkbox(&mut g.enabled, "").on_hover_text(tip).changed() {
+                            changed = true;
+                        }
+                        if ui.small_button("✏").on_hover_text(t.vlabel_edit).clicked() {
+                            to_edit = Some(i);
+                        }
+                        if ui.small_button("🗑").on_hover_text(t.vlabel_del).clicked() {
+                            to_delete = Some(i);
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+
+        app.label_types = types;
+
+        if let Some(i) = to_edit {
+            if let Some(g) = app.label_types.get(i) {
+                app.vlabel_type_edit = Some(VLabelTypeEdit {
+                    index: Some(i),
+                    draft: g.clone(),
+                });
+            }
+        }
+        if let Some(i) = to_delete {
+            if i < app.label_types.len() {
+                app.label_types.remove(i);
+                changed = true;
+            }
+        }
+
+        ui.horizontal(|ui| {
+            if ui.button(t.vtype_add).clicked() {
+                app.vlabel_type_edit = Some(VLabelTypeEdit {
+                    index: None,
+                    draft: crate::config::ValueLabelType::default(),
+                });
+            }
+        });
+        ui.label(egui::RichText::new(t.vtype_defs_tip).weak());
+
+        if changed {
+            app.views_key = None;
+            crate::config::save_label_types(&app.label_types);
+        }
+    });
+}
+
+/// 节 7：Value 颜色规则（Key 通配符 + 数值范围 → 颜色），行内直接编辑。
+fn color_rules_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
+    let t = crate::i18n::tr();
+
+    ui.group(|ui| {
+        ui.set_min_width(width);
+        if !collapsible_section_header(ui, "color_rules", t.color_section, t.color_section_tip) {
+            return;
+        }
+        ui.add_space(4.0);
+
+        if app.opened_path.is_none() {
+            ui.label(t.vlabel_no_db);
+            return;
+        }
+
+        let scopes = scope_choices(app);
+        let cur_table = app.cur_table().and_then(|tb| tb.name.clone());
+
+        let mut rules = std::mem::take(&mut app.color_rules);
+        let mut changed = false;
+        let mut to_delete = None;
+
+        // 列宽按组宽分配：关联/操作列为固定窄列，Key 模式、范围、颜色按比例分剩余空间，
+        // 避免可编辑列被挤成一条缝、内容看不全
+        let scope_w = 120.0;
+        let ops_w = 52.0;
+        let rest = (width - scope_w - ops_w - 40.0).max(320.0);
+        let key_w = (rest * 0.32).max(110.0);
+        let range_w = (rest * 0.32).max(110.0);
+        let color_w = (rest - key_w - range_w).max(150.0);
+        let hex_w = (color_w - 30.0).max(96.0);
+
+        egui::Grid::new("color_rules_grid")
+            .striped(true)
+            .num_columns(5)
+            .spacing([10.0, 4.0])
+            .show(ui, |ui| {
+                fixed_cell(ui, scope_w, |ui| {
+                    ui.label(egui::RichText::new(t.vlabel_scope).strong());
+                });
+                fixed_cell(ui, key_w, |ui| {
+                    ui.label(egui::RichText::new(t.color_key).strong())
+                        .on_hover_text(t.color_section_tip);
+                });
+                fixed_cell(ui, range_w, |ui| {
+                    ui.label(egui::RichText::new(t.color_range).strong())
+                        .on_hover_text(t.color_tip);
+                });
+                fixed_cell(ui, color_w, |ui| {
+                    ui.label(egui::RichText::new(t.color_value).strong())
+                        .on_hover_text(t.color_tip);
+                });
+                fixed_cell(ui, ops_w, |_ui| {});
+                ui.end_row();
+
+                for (i, r) in rules.iter_mut().enumerate() {
+                    // 关联范围
+                    let mut scope = (r.per_table, r.table.clone());
+                    fixed_cell(ui, scope_w, |ui| {
+                        egui::ComboBox::from_id_salt(("color_scope", i))
+                            .width(scope_w - 24.0)
+                            .selected_text(scope_label(&scope))
+                            .show_ui(ui, |ui| {
+                                for s in &scopes {
+                                    ui.selectable_value(&mut scope, s.clone(), scope_label(s));
+                                }
+                            });
+                    });
+                    if scope != (r.per_table, r.table.clone()) {
+                        r.per_table = scope.0;
+                        r.table = scope.1;
+                        changed = true;
+                    }
+
+                    // Key 模式：glob 通配符
+                    let key_resp = fixed_cell(ui, key_w, |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut r.key)
+                                .desired_width(key_w)
+                                .hint_text("key_*"),
+                        )
+                        .on_hover_text(t.color_section_tip)
+                    });
+                    if key_resp.changed() {
+                        changed = true;
+                    }
+
+                    // 数值范围
+                    let range_resp = fixed_cell(ui, range_w, |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut r.range)
+                                .desired_width(range_w)
+                                .hint_text("<10  [10,20)"),
+                        )
+                        .on_hover_text(t.color_tip)
+                    });
+                    if range_resp.changed() {
+                        changed = true;
+                    }
+
+                    // 颜色：色块取色 + hex 文本
+                    fixed_cell(ui, color_w, |ui| {
+                        let mut col =
+                            super::parse_hex_color(&r.color).unwrap_or(egui::Color32::GRAY);
+                        if ui
+                            .color_edit_button_srgba(&mut col)
+                            .on_hover_text(t.color_tip)
+                            .changed()
+                        {
+                            r.color = format!("#{:02X}{:02X}{:02X}", col.r(), col.g(), col.b());
+                            changed = true;
+                        }
+                        if ui
+                            .add(
+                                egui::TextEdit::singleline(&mut r.color)
+                                    .desired_width(hex_w)
+                                    .hint_text("#RRGGBB"),
+                            )
+                            .on_hover_text(t.color_tip)
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    });
+
+                    // 启用开关（悬浮提示当前状态）+ 删除
+                    fixed_cell(ui, ops_w, |ui| {
+                        let tip = if r.enabled {
+                            t.vlabel_enabled
+                        } else {
+                            t.vlabel_disabled
+                        };
+                        if ui.checkbox(&mut r.enabled, "").on_hover_text(tip).changed() {
+                            changed = true;
+                        }
+                        if ui.small_button("🗑").on_hover_text(t.vlabel_del).clicked() {
+                            to_delete = Some(i);
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+
+        app.color_rules = rules;
+
+        if let Some(i) = to_delete {
+            if i < app.color_rules.len() {
+                app.color_rules.remove(i);
+                changed = true;
+            }
+        }
+
+        ui.horizontal(|ui| {
+            if ui.button(t.color_add).clicked() {
+                app.color_rules.push(crate::config::ColorRule {
+                    per_table: true,
+                    table: cur_table.clone(),
+                    key: String::new(),
+                    range: String::new(),
+                    color: "#FFD24A".to_string(),
+                    enabled: true,
+                });
+                changed = true;
+            }
+        });
+        ui.label(egui::RichText::new(t.color_tip).weak());
+
+        if changed {
+            app.views_key = None;
+            app.save_per_db();
+        }
+    });
+}
+
+/// 通用类型编辑子窗口：名称 + 多行定义，确定后写回全局列表。
+fn show_type_edit_window(ctx: &egui::Context, app: &mut MdbxerApp) {
+    let Some(mut edit) = app.vlabel_type_edit.take() else {
+        return;
+    };
+    let t = crate::i18n::tr();
+
+    let mut open = true;
+    let mut apply = false;
+    let mut cancel = false;
+
+    egui::Window::new(t.vtype_edit_title)
+        .id(egui::Id::new("vlabel_type_edit_window"))
+        .collapsible(false)
+        .resizable(true)
+        .default_width(480.0)
+        .default_height(320.0)
+        .min_width(360.0)
+        .min_height(220.0)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            egui::Panel::bottom("vtype_edit_bottom")
+                .frame(egui::Frame::NONE)
+                .show(ui, |ui| {
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(t.vtype_defs_tip).weak());
+                    ui.add_space(6.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(t.cancel).clicked() {
+                            cancel = true;
+                        }
+                        if ui.button(t.vlabel_ok).clicked() {
+                            apply = true;
+                        }
+                    });
+                });
+
+            egui::CentralPanel::no_frame().show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(t.vtype_name);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut edit.draft.name)
+                            .desired_width(200.0)
+                            .hint_text("协议"),
+                    );
+                    ui.add_space(12.0);
+                    ui.checkbox(&mut edit.draft.enabled, t.vlabel_enabled);
+                });
+
+                ui.add_space(6.0);
+                ui.label(t.vlabel_defs);
+                let h = ui.available_height().max(60.0);
+                ui.add_sized(
+                    [ui.available_width(), h],
+                    egui::TextEdit::multiline(&mut edit.draft.defs)
+                        .desired_rows(1)
+                        .hint_text("0=TCP,1=UDP,2=ICMP"),
+                );
+            });
+        });
+
+    if apply {
+        match edit.index {
+            Some(i) if i < app.label_types.len() => app.label_types[i] = edit.draft,
+            _ => app.label_types.push(edit.draft),
+        }
+        app.views_key = None;
+        crate::config::save_label_types(&app.label_types);
+    } else if open && !cancel {
+        app.vlabel_type_edit = Some(edit);
     }
 }

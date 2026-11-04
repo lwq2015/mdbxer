@@ -284,6 +284,8 @@ pub struct RowView {
     pub type_label: String,
     /// Value 的整数标注后缀（位标识/枚举名；空串 = 无）
     pub val_label: String,
+    /// Value 文本颜色（颜色规则命中时的颜色；None = 默认色）
+    pub val_color: Option<egui::Color32>,
     /// val_text 开头能解析出的数值（数值排序用；hex/文本等为 None）
     pub val_num: Option<f64>,
 }
@@ -576,7 +578,7 @@ pub struct MdbxerApp {
     pub hash_alg: Option<crate::hash::HashAlg>,
     /// 当前页显示缓存（与 rows 一一对应），由 display_order 按需重建
     pub views: Vec<RowView>,
-    /// 缓存生成时的解码参数 (key_mode, val_mode, endian, cell_max, hints_key, hints_value, 千位分隔, 语言)；None = 需重建
+    /// 缓存生成时的解码参数 (key_mode, val_mode, endian, cell_max, hints_key, hints_value, 千位分隔, 语言, 标注指纹, 颜色指纹)；None = 需重建
     views_key: Option<(
         DecodeMode,
         DecodeMode,
@@ -586,6 +588,7 @@ pub struct MdbxerApp {
         crate::fmt::HintFlags,
         bool,
         u8,
+        u64,
         u64,
     )>,
     // ── 右栏 ──
@@ -650,8 +653,14 @@ pub struct MdbxerApp {
     pub fav_keys: Vec<crate::config::FavKey>,
     /// Value 整数标注规则（库默认或指定表；高级配置页编辑）
     pub value_labels: Vec<crate::config::ValueLabel>,
+    /// Value 颜色规则（Key 通配符 + 数值范围 → 颜色；高级配置页编辑）
+    pub color_rules: Vec<crate::config::ColorRule>,
+    /// 全局通用类型组（Value 整数标注的 @引用；设置页可编辑，启动时载入）
+    pub(crate) label_types: Vec<crate::config::ValueLabelType>,
     /// 标注规则编辑子窗口（草稿 + 目标下标；None = 未打开）
     pub(crate) vlabel_edit: Option<settings::VLabelEdit>,
+    /// 通用类型组编辑草稿（None = 未打开编辑窗口）
+    pub(crate) vlabel_type_edit: Option<settings::VLabelTypeEdit>,
     // ── 窗口标题 ──
     /// 基础标题（版本+日期，启动时由 main 传入）
     title_base: String,
@@ -827,7 +836,10 @@ impl MdbxerApp {
             fav_tables: Vec::new(),
             fav_keys: Vec::new(),
             value_labels: Vec::new(),
+            color_rules: Vec::new(),
+            label_types: crate::config::load_label_types(),
             vlabel_edit: None,
+            vlabel_type_edit: None,
 
             title: title_base.clone(),
             title_base,
@@ -905,6 +917,7 @@ impl MdbxerApp {
             crate::fmt::thousands_sep(),
             crate::i18n::lang() as u8,
             labels_hash(&self.value_labels),
+            colors_hash(&self.color_rules),
         );
 
         if self.views_key == Some(key) && self.views.len() == self.rows.len() {
@@ -939,7 +952,17 @@ impl MdbxerApp {
                     Some(label) => label,
                     None => crate::fmt::guess(&r.value, self.endian, &self.hint_value).0,
                 };
-                let val_label = self.value_label_suffix(&r.key, &r.value, &type_label, &table_name);
+                // Key 文本完整解码一次：标注规则与颜色规则都按它精确/通配匹配
+                let key_full = crate::fmt::decode_key(
+                    &r.key,
+                    self.key_mode,
+                    self.endian,
+                    4096,
+                    &self.hint_key,
+                );
+                let val_label =
+                    self.value_label_suffix(&r.value, &type_label, &table_name, &key_full);
+                let val_color = self.value_color(&r.value, &type_label, &table_name, &key_full);
                 RowView {
                     // 解码超长时会补 "…"，字符数因此恰为 cell_max + 1
                     key_clipped: key_text.chars().count() > self.cell_max,
@@ -948,6 +971,7 @@ impl MdbxerApp {
                     key_type_label,
                     type_label,
                     val_label,
+                    val_color,
                     val_num: leading_num(&val_text),
                     val_text,
                 }
@@ -959,13 +983,14 @@ impl MdbxerApp {
     }
 
     /// 按当前库的标注规则为一行整数 Value 生成后缀（位标识名 / 枚举名）。
-    /// 表规则优先于库默认；禁用的规则跳过；非整数显示或无匹配时返回空串。
+    /// 表规则与库默认均可多条命中（Key 精确匹配），各段标注依次以 ` · ` 追加；
+    /// 禁用的规则/类型跳过；非整数显示或无匹配时返回空串。
     fn value_label_suffix(
         &self,
-        key: &[u8],
         value: &[u8],
         type_label: &str,
         table: &Option<String>,
+        key_text: &str,
     ) -> String {
         if self.value_labels.is_empty() {
             return String::new();
@@ -976,48 +1001,107 @@ impl MdbxerApp {
         let Some(v) = int_value(value, self.endian, signed, width) else {
             return String::new();
         };
-        // Key 文本按当前解码格式完整解码后精确比较（不受单元格显示截断影响）
-        let key_text =
-            crate::fmt::decode_key(key, self.key_mode, self.endian, 4096, &self.hint_key);
-        // 表规则优先，其次库默认
-        let rule = self
+        // 表规则优先，其次库默认；同优先级的多条匹配规则依次追加
+        let rules: Vec<&crate::config::ValueLabel> = self
             .value_labels
             .iter()
-            .filter(|l| l.enabled && l.per_table && l.table == *table)
-            .find(|l| l.key == key_text)
-            .or_else(|| {
+            .filter(|l| l.enabled && l.per_table && l.table == *table && l.key == key_text)
+            .chain(
                 self.value_labels
                     .iter()
-                    .filter(|l| l.enabled && !l.per_table)
-                    .find(|l| l.key == key_text)
-            });
-        let Some(rule) = rule else {
-            return String::new();
-        };
+                    .filter(|l| l.enabled && !l.per_table && l.key == key_text),
+            )
+            .collect();
 
-        let defs = parse_defs(&rule.defs);
-        if defs.is_empty() {
-            return String::new();
-        }
+        let mut parts: Vec<String> = Vec::new();
+        for rule in rules {
+            // 定义文本按行拆成多组位段：`3..=4=[0:无,1:对]`，无范围行按整值/旧 bits
+            for group in &parse_def_groups(&rule.defs, &rule.bits) {
+                // 值表：@名称 引用全局通用类型（类型定义只含 值:名称，无范围）
+                let (values, prefix): (Vec<(i128, String)>, Option<&str>) = match &group.type_name {
+                    Some(name) => match self
+                        .label_types
+                        .iter()
+                        .find(|g| g.enabled && g.name.as_str() == name.as_str())
+                    {
+                        Some(ty) => (parse_value_list(&ty.defs), Some(ty.name.as_str())),
+                        None => continue, // 引用的类型不存在/被禁用：这组不显示
+                    },
+                    None => (group.values.clone(), None),
+                };
+                if values.is_empty() {
+                    continue;
+                }
+                let seg = match group.range {
+                    Some((lo, hi)) => match extract_bits(v, lo, hi) {
+                        Some(s) => s,
+                        None => continue,
+                    },
+                    None => v,
+                };
 
-        if rule.kind == "enum" {
-            defs.iter()
-                .find(|(n, _)| *n == v)
-                .map(|(_, name)| name.clone())
-                .unwrap_or_default()
-        } else {
-            // 位标识：只支持非负 64 位以内的整数
-            if v < 0 || v >= 1i128 << 64 {
-                return String::new();
+                let label = if rule.kind == "enum" {
+                    values
+                        .iter()
+                        .find(|(n, _)| *n == seg)
+                        .map(|(_, name)| name.clone())
+                        .unwrap_or_default()
+                } else {
+                    // 位标识：值表左侧为 bit 下标（从整数 LSB 起算）
+                    if seg < 0 || seg >= 1i128 << 64 {
+                        String::new()
+                    } else {
+                        let u = seg as u64;
+                        values
+                            .iter()
+                            .filter(|(bit, _)| {
+                                *bit >= 0 && *bit < 64 && (u >> (*bit as u32)) & 1 == 1
+                            })
+                            .map(|(_, name)| name.as_str())
+                            .collect::<Vec<&str>>()
+                            .join("|")
+                    }
+                };
+                if label.is_empty() {
+                    continue;
+                }
+                match prefix {
+                    Some(p) => parts.push(format!("{p}={label}")),
+                    None => parts.push(label),
+                }
             }
-            let u = v as u64;
-            let names: Vec<&str> = defs
-                .iter()
-                .filter(|(bit, _)| *bit >= 0 && *bit < 64 && (u >> (*bit as u32)) & 1 == 1)
-                .map(|(_, name)| name.as_str())
-                .collect();
-            names.join("|")
         }
+        parts.join(" · ")
+    }
+
+    /// 按颜色规则为一行整数 Value 选颜色：表规则优先、其次库默认；
+    /// 同优先级按列表顺序，第一条命中的生效。Non-integer / no match → None。
+    fn value_color(
+        &self,
+        value: &[u8],
+        type_label: &str,
+        table: &Option<String>,
+        key_text: &str,
+    ) -> Option<egui::Color32> {
+        if self.color_rules.is_empty() {
+            return None;
+        }
+        let Some((signed, width)) = int_label(type_label) else {
+            return None;
+        };
+        let Some(v) = int_value(value, self.endian, signed, width) else {
+            return None;
+        };
+        self.color_rules
+            .iter()
+            .filter(|r| r.enabled && r.per_table && r.table == *table)
+            .chain(
+                self.color_rules
+                    .iter()
+                    .filter(|r| r.enabled && !r.per_table),
+            )
+            .find(|r| glob_match(&r.key, key_text) && in_range(v, &r.range).unwrap_or(false))
+            .and_then(|r| parse_hex_color(&r.color))
     }
 
     /// 全局遍历方向（升序/降序）转为 db 层的 Direction。
@@ -1065,6 +1149,7 @@ impl MdbxerApp {
                 self.fav_tables = rec.fav_tables.clone();
                 self.fav_keys = rec.fav_keys.clone();
                 self.value_labels = rec.value_labels.clone();
+                self.color_rules = rec.color_rules.clone();
                 self.normalize_favs();
 
                 // 恢复本库的 Protobuf 关联：自动载入绑定的 .proto 与 message
@@ -1319,7 +1404,9 @@ impl MdbxerApp {
         self.fav_tables.clear();
         self.fav_keys.clear();
         self.value_labels.clear();
+        self.color_rules.clear();
         self.vlabel_edit = None;
+        self.vlabel_type_edit = None;
         self.detail.clear();
 
         self.status = Status::Closed;
@@ -2788,6 +2875,7 @@ impl MdbxerApp {
             proto_msg: old.proto_msg,
             search_history,
             value_labels: self.value_labels.clone(),
+            color_rules: self.color_rules.clone(),
             last_use: 0, // save_per_db 内部刷新为当前时间
         });
     }
@@ -3032,6 +3120,122 @@ fn labels_hash(labels: &[crate::config::ValueLabel]) -> u64 {
     h.finish()
 }
 
+/// 颜色规则内容指纹：规则增删改后 views 显示缓存自动失效。
+fn colors_hash(rules: &[crate::config::ColorRule]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    rules.hash(&mut h);
+    h.finish()
+}
+
+/// Key 模式匹配（glob 风格）：`*` 任意长度（含空），`?` 任意单字符，
+/// `.` 为字面点号；空模式视为 `*`。区分大小写。
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let pat: Vec<char> = pattern.chars().collect();
+    let txt: Vec<char> = text.chars().collect();
+    if pat.is_empty() {
+        return true;
+    }
+    let (mut pi, mut ti) = (0usize, 0usize);
+    let mut star: Option<usize> = None;
+    let mut star_ti = 0usize;
+    while ti < txt.len() {
+        match pat.get(pi) {
+            Some('*') => {
+                star = Some(pi);
+                star_ti = ti;
+                pi += 1;
+            }
+            Some('?') => {
+                pi += 1;
+                ti += 1;
+            }
+            Some(&c) if c == txt[ti] => {
+                pi += 1;
+                ti += 1;
+            }
+            _ => match star {
+                Some(sp) => {
+                    star_ti += 1;
+                    ti = star_ti;
+                    pi = sp + 1;
+                }
+                None => return false,
+            },
+        }
+    }
+    while matches!(pat.get(pi), Some('*')) {
+        pi += 1;
+    }
+    pi == pat.len()
+}
+
+/// 判断整数是否落在范围文本内；支持 `<N` `<=N` `>N` `>=N` `=N` `N`，
+/// 以及 `[a,b]` `[a,b)` `(a,b]` `(a,b)`（半开区间照常区分）。非法返回 None。
+fn in_range(v: i128, spec: &str) -> Option<bool> {
+    let s = spec.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (lo_inc, hi_inc, inner) = match (s.chars().next()?, s.chars().last()?) {
+        ('[', ']') | ('[', ')') | ('(', ']') | ('(', ')') => {
+            (s.starts_with('['), s.ends_with(']'), &s[1..s.len() - 1])
+        }
+        _ => {
+            // 单边比较 / 精确值
+            let (op, rest) = if let Some(r) = s.strip_prefix("<=") {
+                ("<=", r)
+            } else if let Some(r) = s.strip_prefix(">=") {
+                (">=", r)
+            } else if let Some(r) = s.strip_prefix('<') {
+                ("<", r)
+            } else if let Some(r) = s.strip_prefix('>') {
+                (">", r)
+            } else if let Some(r) = s.strip_prefix('=') {
+                ("=", r)
+            } else {
+                ("=", s)
+            };
+            let n = parse_int_literal(rest.trim())?;
+            return Some(match op {
+                "<" => v < n,
+                "<=" => v <= n,
+                ">" => v > n,
+                ">=" => v >= n,
+                _ => v == n,
+            });
+        }
+    };
+    let (a, b) = inner.split_once(',')?;
+    let a = parse_int_literal(a.trim())?;
+    let b = parse_int_literal(b.trim())?;
+    if a > b {
+        return Some(false);
+    }
+    let ok_lo = if lo_inc { v >= a } else { v > a };
+    let ok_hi = if hi_inc { v <= b } else { v < b };
+    Some(ok_lo && ok_hi)
+}
+
+/// 解析颜色文本：`#RRGGBB` / `#RGB`（`#` 可省略），非法返回 None。
+pub(crate) fn parse_hex_color(s: &str) -> Option<egui::Color32> {
+    let s = s.trim().trim_start_matches('#');
+    let (r, g, b) = match s.len() {
+        3 => (
+            u8::from_str_radix(&s[0..1], 16).ok()? * 17,
+            u8::from_str_radix(&s[1..2], 16).ok()? * 17,
+            u8::from_str_radix(&s[2..3], 16).ok()? * 17,
+        ),
+        6 => (
+            u8::from_str_radix(&s[0..2], 16).ok()?,
+            u8::from_str_radix(&s[2..4], 16).ok()?,
+            u8::from_str_radix(&s[4..6], 16).ok()?,
+        ),
+        _ => return None,
+    };
+    Some(egui::Color32::from_rgb(r, g, b))
+}
+
 /// 从类型标签（如 `u16 LE` / `i8`）识别整数宽度与是否有符号。
 fn int_label(label: &str) -> Option<(bool, usize)> {
     match label.split_whitespace().next()? {
@@ -3102,14 +3306,156 @@ fn int_value(bytes: &[u8], endian: crate::fmt::Endian, signed: bool, width: usiz
     Some(v)
 }
 
-/// 解析定义文本：`0=Read,1=Write` / `1=Active;2=Paused`，
-/// 也支持每行一条（多行编辑）；左侧数字支持 `0x` 前缀与正负号，无效项忽略。
-fn parse_defs(defs: &str) -> Vec<(i128, String)> {
-    defs.split([',', ';', '\n', '\r'])
+/// 解析位段范围（Rust 风格）：`lo..=hi` / `lo..hi+1` / `n..=n`；
+/// 返回 (lo, hi)（均含），语法非法返回 None。
+fn parse_bit_range(s: &str) -> Option<std::ops::RangeInclusive<u32>> {
+    let s = s.trim();
+    if let Some((a, b)) = s.split_once("..=") {
+        let lo: u32 = a.trim().parse().ok()?;
+        let hi: u32 = b.trim().parse().ok()?;
+        (lo <= hi).then_some(lo..=hi)
+    } else if let Some((a, b)) = s.split_once("..") {
+        let lo: u32 = a.trim().parse().ok()?;
+        let hi_ex: u32 = b.trim().parse().ok()?;
+        (lo < hi_ex && hi_ex <= 64).then_some(lo..=(hi_ex - 1))
+    } else {
+        None
+    }
+}
+
+/// 提取整数的 [lo..=hi] 位段（LSB = bit 0），结果为非负值；段超出 63 位返回 None。
+fn extract_bits(v: i128, lo: u32, hi: u32) -> Option<i128> {
+    if hi >= 64 || lo > hi {
+        return None;
+    }
+    let width = hi - lo + 1;
+    let mask: i128 = (1i128 << width) - 1;
+    Some((v >> lo) & mask)
+}
+
+/// 规则定义中的一组：可带位段范围；`values` 为内联值表，
+/// `type_name` 为引用的全局通用类型名（两者互斥）。
+struct DefGroup {
+    /// 位段 (lo, hi)，均含；None = 整个整数
+    range: Option<(u32, u32)>,
+    /// 内联值表（值, 名称）
+    values: Vec<(i128, String)>,
+    /// 引用的通用类型名（`@名称`）
+    type_name: Option<String>,
+}
+
+/// 解析规则定义文本为若干组（每行一组，可多组）：
+/// - `3..=4=[0:无, 1:对, 2:不对, 3:未知]` 带位段的枚举
+/// - `3..=4=@协议` 带位段引用通用类型
+/// - `0=Read,1=Write` 无位段的整值定义（兼容旧写法，沿用旧 `bits` 字段）
+fn parse_def_groups(text: &str, legacy_bits: &str) -> Vec<DefGroup> {
+    let mut groups = Vec::new();
+    let mut plain: Vec<(i128, String)> = Vec::new();
+
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        match split_range_line(line) {
+            // 非法范围行直接忽略，避免被误当成整值定义
+            Some(Err(())) => continue,
+            Some(Ok((lo, hi, rest))) => {
+                let rest = rest.trim();
+                if let Some(name) = rest.strip_prefix('@') {
+                    groups.push(DefGroup {
+                        range: Some((lo, hi)),
+                        values: Vec::new(),
+                        type_name: Some(name.trim().to_string()),
+                    });
+                } else {
+                    let values = parse_value_list(rest);
+                    if !values.is_empty() {
+                        groups.push(DefGroup {
+                            range: Some((lo, hi)),
+                            values,
+                            type_name: None,
+                        });
+                    }
+                }
+            }
+            None => {
+                if let Some(name) = line.strip_prefix('@') {
+                    // 整值引用通用类型（旧写法）
+                    groups.push(DefGroup {
+                        range: None,
+                        values: Vec::new(),
+                        type_name: Some(name.trim().to_string()),
+                    });
+                } else {
+                    plain.extend(parse_value_list(line));
+                }
+            }
+        }
+    }
+
+    if !plain.is_empty() {
+        let range = if legacy_bits.trim().is_empty() {
+            Some(None)
+        } else {
+            parse_bit_range(legacy_bits).map(|r| Some((*r.start(), *r.end())))
+        };
+        if let Some(range) = range {
+            groups.push(DefGroup {
+                range,
+                values: plain,
+                type_name: None,
+            });
+        }
+    }
+    groups
+}
+
+/// 识别行首的位段范围：`3..=4=...` / `3..6=...`。
+/// 返回 None = 该行无范围；Some(Err) = 范围语法非法；Some(Ok) = (lo, hi, 剩余定义)。
+fn split_range_line(line: &str) -> Option<Result<(u32, u32, &str), ()>> {
+    let dots = line.find("..")?;
+    let lo: u32 = match line[..dots].trim().parse() {
+        Ok(v) => v,
+        Err(_) => return Some(Err(())),
+    };
+    // `..=` 的 '=' 属于范围符号，先吃掉
+    let rest = &line[dots + 2..];
+    let rest = rest.strip_prefix('=').unwrap_or(rest);
+    let digits = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    if digits == 0 {
+        return Some(Err(()));
+    }
+    let Ok(hi) = rest[..digits].parse::<u32>() else {
+        return Some(Err(()));
+    };
+    let rest = rest[digits..].trim_start();
+    let Some(rest) = rest.strip_prefix('=') else {
+        return Some(Err(()));
+    };
+    if lo > hi || hi >= 64 {
+        return Some(Err(()));
+    }
+    Some(Ok((lo, hi, rest)))
+}
+
+/// 解析值表：`[0:无, 1:对]` / `0=Read,1=Write` / `1:Active;2:Paused`，
+/// 支持中文逗号、0x 前缀与正负号，无效项忽略。
+fn parse_value_list(s: &str) -> Vec<(i128, String)> {
+    let s = s.trim();
+    let s = s.strip_prefix('[').unwrap_or(s);
+    let s = s.strip_suffix(']').unwrap_or(s);
+    s.split([',', ';', '，', '\n', '\r'])
         .filter_map(|item| {
-            let (num, name) = item.split_once('=')?;
+            let item = item.trim();
+            if item.is_empty() {
+                return None;
+            }
+            let (num, name) = item.split_once(':').or_else(|| item.split_once('='))?;
             let num = parse_int_literal(num)?;
-            let name = name.trim();
+            let name = name.trim_matches(|c| matches!(c, '[' | ']' | ' ')).trim();
             if name.is_empty() {
                 return None;
             }
@@ -3519,12 +3865,12 @@ impl eframe::App for MdbxerApp {
 
 #[cfg(test)]
 mod value_label_tests {
-    use super::{int_label, int_value, parse_defs};
+    use super::{int_label, int_value, parse_value_list};
     use crate::fmt::Endian;
 
     #[test]
     fn parses_defs_with_comma_semicolon_and_hex() {
-        let defs = parse_defs("0=Read,1=Write; 0x10=Extra, 99");
+        let defs = parse_value_list("0=Read,1=Write; 0x10=Extra, 99");
         assert_eq!(
             defs,
             vec![
@@ -3533,17 +3879,93 @@ mod value_label_tests {
                 (16, "Extra".to_string()),
             ]
         );
-        assert!(parse_defs("").is_empty());
-        assert!(parse_defs("0=").is_empty());
+        assert!(parse_value_list("").is_empty());
+        assert!(parse_value_list("0=").is_empty());
         // 多行输入（每行一条，含 Windows 换行）
         assert_eq!(
-            parse_defs("0=Auto\n1=SortNo1\r\n2=SortNo2"),
+            parse_value_list("0=Auto\n1=SortNo1\r\n2=SortNo2"),
             vec![
                 (0, "Auto".to_string()),
                 (1, "SortNo1".to_string()),
                 (2, "SortNo2".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn key_glob_matches() {
+        use super::glob_match;
+        assert!(glob_match("", "anything")); // 空模式 = 全部
+        assert!(glob_match("Test1", "Test1"));
+        assert!(!glob_match("Test1", "Test11"));
+        assert!(glob_match("Test*", "Test1"));
+        assert!(glob_match("*Test*", "MyTest1"));
+        assert!(glob_match("T?st", "Test"));
+        assert!(!glob_match("T?st", "Tst"));
+        assert!(glob_match("a.b", "a.b"));
+        assert!(!glob_match("a.b", "axb")); // '.' 是字面点号
+        assert!(glob_match("a*b*c", "abc"));
+        assert!(glob_match("a*b*c", "axxbyyc"));
+        assert!(!glob_match("a*b*c", "abd"));
+    }
+
+    #[test]
+    fn parses_color_ranges() {
+        use super::in_range;
+        assert_eq!(in_range(5, "<10"), Some(true));
+        assert_eq!(in_range(10, "<10"), Some(false));
+        assert_eq!(in_range(21, ">20"), Some(true));
+        assert_eq!(in_range(10, "[10,20]"), Some(true));
+        assert_eq!(in_range(20, "[10,20]"), Some(true));
+        assert_eq!(in_range(20, "[10,20)"), Some(false));
+        assert_eq!(in_range(10, "(10,20]"), Some(false));
+        assert_eq!(in_range(20, "(10,20]"), Some(true));
+        assert_eq!(in_range(15, "(10,20)"), Some(true));
+        assert_eq!(in_range(10, "=10"), Some(true));
+        assert_eq!(in_range(10, "10"), Some(true));
+        assert_eq!(in_range(10, "abc"), None);
+        assert_eq!(in_range(10, ""), None);
+    }
+
+    #[test]
+    fn parses_hex_colors() {
+        use super::parse_hex_color;
+        let c = parse_hex_color("#FF0000").unwrap();
+        assert_eq!((c.r(), c.g(), c.b()), (255, 0, 0));
+        let c = parse_hex_color("0F0").unwrap();
+        assert_eq!((c.r(), c.g(), c.b()), (0, 255, 0));
+        assert!(parse_hex_color("red").is_none());
+        assert!(parse_hex_color("#GG0000").is_none());
+    }
+
+    #[test]
+    fn parses_multi_bit_field_groups() {
+        use super::parse_def_groups;
+        // 多个位段一组一行；中文逗号与方括号
+        let g = parse_def_groups(
+            "3..=4=[0:无, 1:对,2:不对，3:未知]\n6..=8=[0:A, 1:B, 2:C]",
+            "",
+        );
+        assert_eq!(g.len(), 2);
+        assert_eq!(g[0].range, Some((3, 4)));
+        assert_eq!(g[0].values.len(), 4);
+        assert_eq!(g[0].values[2], (2, "不对".to_string()));
+        assert_eq!(g[1].range, Some((6, 8)));
+        assert_eq!(g[1].values[1].1, "B");
+
+        // 引用通用类型（带位段 / 整值）
+        let g = parse_def_groups("3..=4=@协议\n@方向", "");
+        assert_eq!(g.len(), 2);
+        assert_eq!(g[0].type_name.as_deref(), Some("协议"));
+        assert_eq!(g[0].range, Some((3, 4)));
+        assert_eq!(g[1].type_name.as_deref(), Some("方向"));
+        assert_eq!(g[1].range, None);
+
+        // 非法范围行忽略；旧 bits 字段仍对整值定义生效
+        let g = parse_def_groups("5..=3=[0:X]\n0=Read,1=Write", "0..=7");
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].range, Some((0, 7)));
+        assert_eq!(g[0].values.len(), 2);
     }
 
     #[test]
@@ -3568,5 +3990,42 @@ mod value_label_tests {
             Some(0x0102)
         );
         assert_eq!(int_value(&[], Endian::Little, false, 4), None);
+    }
+
+    #[test]
+    fn parses_bit_ranges() {
+        use super::{extract_bits, parse_bit_range};
+        assert_eq!(
+            parse_bit_range("3..=5").map(|r| (*r.start(), *r.end())),
+            Some((3, 5))
+        );
+        assert_eq!(
+            parse_bit_range("3..6").map(|r| (*r.start(), *r.end())),
+            Some((3, 5))
+        );
+        assert_eq!(
+            parse_bit_range("7..=7").map(|r| (*r.start(), *r.end())),
+            Some((7, 7))
+        );
+        assert!(parse_bit_range("").is_none());
+        assert!(parse_bit_range("5..=3").is_none());
+        assert!(parse_bit_range("a..b").is_none());
+    }
+
+    #[test]
+    fn extracts_bit_fields() {
+        use super::extract_bits;
+        // v = 0b1101100 = 0x6C
+        // bits 2..=4 => 0b011 = 3 ; bits 3..=5 => 0b101 = 5 ; bit 0 => 0
+        assert_eq!(extract_bits(0x6C, 2, 4), Some(3));
+        assert_eq!(extract_bits(0x6C, 5, 6), Some(0b11));
+        assert_eq!(extract_bits(0x6C, 0, 0), Some(0));
+        assert_eq!(extract_bits(0x6C, 3, 5), Some(0b101));
+        assert_eq!(extract_bits(0x6C, 0, 7), Some(0x6C));
+        // 负值按位运算（i128 算术右移后与掩码）
+        assert_eq!(extract_bits(-1, 0, 3), Some(0b1111));
+        // 63 是最大合法下标（u64 全宽）；64 越界
+        assert_eq!(extract_bits(0x6C, 0, 63), Some(0x6C));
+        assert_eq!(extract_bits(0x6C, 0, 64), None);
     }
 }

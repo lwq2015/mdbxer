@@ -35,11 +35,16 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
         Some(label) => label,
         None => super::super::guess_cached(ui.ctx(), ctx.bytes, app.endian, &app.hint_value).0,
     };
-    let val_label = if ctx.side.is_key() {
-        String::new()
+    let (val_label, val_color) = if ctx.side.is_key() {
+        (String::new(), None)
     } else {
         let table = app.cur_table().and_then(|t| t.name.clone());
-        app.value_label_suffix(ctx.key, ctx.bytes, &type_label, &table)
+        let key_text =
+            crate::fmt::decode_key(ctx.key, app.key_mode, app.endian, 4096, &app.hint_key);
+        (
+            app.value_label_suffix(ctx.bytes, &type_label, &table, &key_text),
+            app.value_color(ctx.bytes, &type_label, &table, &key_text),
+        )
     };
     let (base_text, hint_text) = crate::ui::split_hint(&display_text, &type_label);
     let hint_start = (!hint_text.is_empty()).then_some(base_text.len());
@@ -157,6 +162,7 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
             every_display_row,
             hint_start,
             label_start,
+            val_color,
         );
     });
 
@@ -467,6 +473,7 @@ fn text_edit_body(
     every_display_row: bool,
     hint_start: Option<usize>,
     label_start: Option<usize>,
+    val_color: Option<egui::Color32>,
 ) {
     // TextEdit 自身无内部滚动、高度随内容无限增长，故必须包一层 ScrollArea；
     // + 12 ≈ TextEdit frame 上下内边距，保证整数行内容恰好不滚
@@ -500,6 +507,7 @@ fn text_edit_body(
                 wrap,
                 hint_start,
                 label_start,
+                val_color,
             )
         };
         let gutter_width = show_line_numbers
@@ -747,13 +755,14 @@ fn layout_job(
     wrap: f32,
     hint_start: Option<usize>,
     label_start: Option<usize>,
+    val_color: Option<egui::Color32>,
 ) -> std::sync::Arc<egui::Galley> {
     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
     // 与 Hex 视图行高一致：不加 extra_text_line_spacing，同窗口文本/hex 行高对齐
     let line_height = ui.fonts_mut(|f| f.row_height(&font_id));
     let base = egui::text::TextFormat {
         font_id,
-        color: ui.visuals().text_color(),
+        color: val_color.unwrap_or_else(|| ui.visuals().text_color()),
         line_height: Some(line_height),
         ..Default::default()
     };
