@@ -136,7 +136,7 @@ const HELP_GROUPS: &[HelpGroup] = &[
             ),
             (
                 "Value integer labels",
-                "Append bit/enum names to integer Values by exact Key match; one line per bit field (e.g. 3..=4=[0:No,1:Yes]), @Name references a common type; color rules colorize values by Key pattern + numeric range",
+                "Append bit/enum names to integer Values by exact Key match; one line per bit field (e.g. 3..5=[0:No,1:Yes], both ends inclusive), @Name references a common type; color rules colorize values by Key pattern + numeric range",
             ),
             (
                 "Saved state",
@@ -459,7 +459,7 @@ pub(super) const EN: I18n = I18n {
     cell_max_label: "Value max chars",
     vlabel_tab: "Annotations",
     vlabel_section: "Value integer labels",
-    vlabel_section_tip: "When a Key matches exactly, append the integer Value as bit names or an enum name; one line per bit field in the definitions (e.g. 3..=4=[0:No, 1:Yes]), and @Name references a common type",
+    vlabel_section_tip: "When a Key matches exactly, append the integer Value as bit names or an enum name; one line per bit field in the definitions (e.g. 3..5=[0:No, 1:Yes], both ends inclusive), and @Name references a common type",
     vlabel_scope: "Scope",
     vlabel_scope_db: "DB default",
     vlabel_key: "Key",
@@ -474,7 +474,7 @@ pub(super) const EN: I18n = I18n {
     vlabel_edit: "Edit rule",
     vlabel_edit_title: "Edit value integer label rule",
     vlabel_ok: "OK",
-    vlabel_format_tip: "One field per line: 3..=4=[0:No, 1:Yes, 2:Wrong, 3:Unknown]\nReference a common type: 3..=4=@Protocol\nWhole value (no range): 0=Read,1=Write\n0x supported; Chinese commas allowed; ranges 3..=5 or 3..6, LSB is bit 0",
+    vlabel_format_tip: "Ranges are inclusive: 3..5 means bit3~bit5; e.g. 3..5=[0:No, 1:Yes, 2:Wrong, 3:Unknown]\nReference a common type: 3..5=@Protocol (@refs always match by enum value)\nWhole value (no range): 0=Read,1=Write\nSeveral groups may share a line: 0=SortNo1,6..7=@Group,8..9=@Group\n0x supported; Chinese commas allowed; LSB is bit 0",
     vlabel_no_db: "Open a database to configure",
     vtype_section: "Common types",
     vtype_section_tip: "Globally shared named bits/enum definitions; rules reference them as @Name and display Name=Value",

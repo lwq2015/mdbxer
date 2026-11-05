@@ -809,7 +809,7 @@ fn show_edit_window(ctx: &egui::Context, app: &mut MdbxerApp) {
                     [ui.available_width(), h],
                     egui::TextEdit::multiline(&mut edit.draft.defs)
                         .desired_rows(1)
-                        .hint_text("3..=4=[0:无, 1:对, 2:不对]\n0=Read,1=Write"),
+                        .hint_text("3..5=[0:无, 1:对, 2:不对]\n0=Read,1=Write"),
                 );
             });
         });

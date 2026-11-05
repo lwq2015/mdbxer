@@ -929,7 +929,7 @@ impl MdbxerApp {
             .rows
             .iter()
             .map(|r| {
-                let val_text = crate::fmt::decode(
+                let mut val_text = crate::fmt::decode(
                     &r.value,
                     self.val_mode,
                     self.endian,
@@ -948,10 +948,19 @@ impl MdbxerApp {
                     None => crate::fmt::guess_key(&r.key, self.endian, &self.hint_key).0,
                 };
                 // Value 指定了解码类型时，类型列同步显示指定类型；只有"自动"才按字节猜测。
-                let type_label = match self.val_mode.forced_label(self.endian) {
+                let mut type_label = match self.val_mode.forced_label(self.endian) {
                     Some(label) => label,
                     None => crate::fmt::guess(&r.value, self.endian, &self.hint_value).0,
                 };
+                // 「二进制」排版：底层若是整数，按数值位串显示（bit0 在最右端），
+                // 类型与标注也按该整数类型，避免逐字节显示与位下标错位
+                if self.val_mode == DecodeMode::Binary {
+                    let guess_label = crate::fmt::guess(&r.value, self.endian, &self.hint_value).0;
+                    if let Some(bits) = int_bits_text(&r.value, &guess_label, self.endian) {
+                        type_label = guess_label;
+                        val_text = bits;
+                    }
+                }
                 // Key 文本完整解码一次：标注规则与颜色规则都按它精确/通配匹配
                 let key_full = crate::fmt::decode_key(
                     &r.key,
@@ -1015,7 +1024,7 @@ impl MdbxerApp {
 
         let mut parts: Vec<String> = Vec::new();
         for rule in rules {
-            // 定义文本按行拆成多组位段：`3..=4=[0:无,1:对]`，无范围行按整值/旧 bits
+            // 定义文本按行拆成多组位段：`3..5=[0:无,1:对]`，无范围行按整值/旧 bits
             for group in &parse_def_groups(&rule.defs, &rule.bits) {
                 // 值表：@名称 引用全局通用类型（类型定义只含 值:名称，无范围）
                 let (values, prefix): (Vec<(i128, String)>, Option<&str>) = match &group.type_name {
@@ -1040,28 +1049,13 @@ impl MdbxerApp {
                     None => v,
                 };
 
-                let label = if rule.kind == "enum" {
-                    values
-                        .iter()
-                        .find(|(n, _)| *n == seg)
-                        .map(|(_, name)| name.clone())
-                        .unwrap_or_default()
-                } else {
-                    // 位标识：值表左侧为 bit 下标（从整数 LSB 起算）
-                    if seg < 0 || seg >= 1i128 << 64 {
-                        String::new()
-                    } else {
-                        let u = seg as u64;
-                        values
-                            .iter()
-                            .filter(|(bit, _)| {
-                                *bit >= 0 && *bit < 64 && (u >> (*bit as u32)) & 1 == 1
-                            })
-                            .map(|(_, name)| name.as_str())
-                            .collect::<Vec<&str>>()
-                            .join("|")
-                    }
-                };
+                // 引用通用类型的组本身就是“取值→名称”的枚举表，一律按枚举匹配；
+                // 其余组沿用规则类型（位标识 = 值表左值为 bit 下标）
+                let label = group_label(
+                    rule.kind == "enum" || group.type_name.is_some(),
+                    seg,
+                    &values,
+                );
                 if label.is_empty() {
                     continue;
                 }
@@ -3306,21 +3300,53 @@ fn int_value(bytes: &[u8], endian: crate::fmt::Endian, signed: bool, width: usiz
     Some(v)
 }
 
-/// 解析位段范围（Rust 风格）：`lo..=hi` / `lo..hi+1` / `n..=n`；
-/// 返回 (lo, hi)（均含），语法非法返回 None。
+/// 「二进制」排版下的数值位串：类型标签为整数时按字节序还原成数值，再从 MSB 到
+/// LSB 每 4 位一组（去掉高位全零组、至少保留一组），bit0 恒在最右端，与位标识
+/// 标注的位下标对齐。非整数类型或长度不符返回 None（调用方保留按字节的显示）。
+pub(crate) fn int_bits_text(
+    bytes: &[u8],
+    type_label: &str,
+    endian: crate::fmt::Endian,
+) -> Option<String> {
+    let (signed, width) = int_label(type_label)?;
+    Some(bit_text(int_value(bytes, endian, signed, width)?, width))
+}
+
+/// 定宽数值的位串（bit0 在最右），每 4 位一组、空格分隔。
+fn bit_text(v: i128, width: usize) -> String {
+    let total = width * 8;
+    let mask = if total >= 128 {
+        !0i128
+    } else {
+        (1i128 << total) - 1
+    };
+    let u = v & mask;
+    let mut groups: Vec<String> = Vec::new();
+    for n in (0..total / 4).rev() {
+        let digit = ((u >> (n * 4)) & 0xF) as u8;
+        if groups.is_empty() && digit == 0 && n > 0 {
+            continue;
+        }
+        groups.push(format!("{digit:04b}"));
+    }
+    groups.join(" ")
+}
+
+/// 解析位段范围：`3..6` 含两端（即 bit3~bit6）；旧写法 `3..=6` 同义。
+/// 返回 (lo, hi)（均含），语法非法或越界返回 None。
 fn parse_bit_range(s: &str) -> Option<std::ops::RangeInclusive<u32>> {
     let s = s.trim();
-    if let Some((a, b)) = s.split_once("..=") {
-        let lo: u32 = a.trim().parse().ok()?;
-        let hi: u32 = b.trim().parse().ok()?;
-        (lo <= hi).then_some(lo..=hi)
-    } else if let Some((a, b)) = s.split_once("..") {
-        let lo: u32 = a.trim().parse().ok()?;
-        let hi_ex: u32 = b.trim().parse().ok()?;
-        (lo < hi_ex && hi_ex <= 64).then_some(lo..=(hi_ex - 1))
-    } else {
-        None
-    }
+    let (a, b) = s.split_once("..")?;
+    let lo: u32 = a.trim().parse().ok()?;
+    // 旧写法 `..=`：'=' 只是范围符号
+    let hi: u32 = b
+        .trim()
+        .strip_prefix('=')
+        .unwrap_or(b.trim())
+        .trim()
+        .parse()
+        .ok()?;
+    (lo <= hi && hi <= 63).then_some(lo..=hi)
 }
 
 /// 提取整数的 [lo..=hi] 位段（LSB = bit 0），结果为非负值；段超出 63 位返回 None。
@@ -3344,75 +3370,146 @@ struct DefGroup {
     type_name: Option<String>,
 }
 
-/// 解析规则定义文本为若干组（每行一组，可多组）：
-/// - `3..=4=[0:无, 1:对, 2:不对, 3:未知]` 带位段的枚举
-/// - `3..=4=@协议` 带位段引用通用类型
+/// 单组标注文本：`enum_like` 按取值精确匹配取名称；否则把值当位掩码，
+/// 值表中左值为 bit 下标（LSB 起算），命中名称以 `|` 拼接。
+fn group_label(enum_like: bool, seg: i128, values: &[(i128, String)]) -> String {
+    if enum_like {
+        return values
+            .iter()
+            .find(|(n, _)| *n == seg)
+            .map(|(_, name)| name.clone())
+            .unwrap_or_default();
+    }
+    if seg < 0 || seg >= 1i128 << 64 {
+        return String::new();
+    }
+    let u = seg as u64;
+    values
+        .iter()
+        .filter(|(bit, _)| *bit >= 0 && *bit < 64 && (u >> (*bit as u32)) & 1 == 1)
+        .map(|(_, name)| name.as_str())
+        .collect::<Vec<&str>>()
+        .join("|")
+}
+
+/// 追加一组带位段的定义：`lo..hi=@类型` 或 `lo..hi=[值:名, ...]`（含两端）。
+fn push_range_def(groups: &mut Vec<DefGroup>, lo: u32, hi: u32, rest: &str) {
+    let rest = rest.trim();
+    if let Some(name) = rest.strip_prefix('@') {
+        groups.push(DefGroup {
+            range: Some((lo, hi)),
+            values: Vec::new(),
+            type_name: Some(name.trim().to_string()),
+        });
+    } else {
+        let values = parse_value_list(rest);
+        if !values.is_empty() {
+            groups.push(DefGroup {
+                range: Some((lo, hi)),
+                values,
+                type_name: None,
+            });
+        }
+    }
+}
+
+/// 解析规则定义文本为若干组：
+/// - `3..5=[0:无, 1:对, 2:不对, 3:未知]` 位段 3~5（含两端）的枚举
+/// - `3..5=@协议` 位段引用通用类型
 /// - `0=Read,1=Write` 无位段的整值定义（兼容旧写法，沿用旧 `bits` 字段）
+/// - 同行可写多组：`0=SortNo1,6..7=@组,8..9=@组`
 fn parse_def_groups(text: &str, legacy_bits: &str) -> Vec<DefGroup> {
     let mut groups = Vec::new();
     let mut plain: Vec<(i128, String)> = Vec::new();
 
     for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        match split_range_line(line) {
-            // 非法范围行直接忽略，避免被误当成整值定义
-            Some(Err(())) => continue,
-            Some(Ok((lo, hi, rest))) => {
-                let rest = rest.trim();
-                if let Some(name) = rest.strip_prefix('@') {
-                    groups.push(DefGroup {
-                        range: Some((lo, hi)),
-                        values: Vec::new(),
-                        type_name: Some(name.trim().to_string()),
-                    });
-                } else {
-                    let values = parse_value_list(rest);
-                    if !values.is_empty() {
+        for seg in split_group_segments(line) {
+            match split_range_line(seg) {
+                // 非法范围段直接忽略，避免被误当成整值定义
+                Some(Err(())) => continue,
+                Some(Ok((lo, hi, rest))) => {
+                    flush_plain(&mut groups, &mut plain, legacy_bits);
+                    push_range_def(&mut groups, lo, hi, rest);
+                }
+                None => {
+                    if let Some(name) = seg.strip_prefix('@') {
+                        // 整值引用通用类型（旧写法）
+                        flush_plain(&mut groups, &mut plain, legacy_bits);
                         groups.push(DefGroup {
-                            range: Some((lo, hi)),
-                            values,
-                            type_name: None,
+                            range: None,
+                            values: Vec::new(),
+                            type_name: Some(name.trim().to_string()),
                         });
+                    } else {
+                        plain.extend(parse_value_list(seg));
                     }
                 }
             }
-            None => {
-                if let Some(name) = line.strip_prefix('@') {
-                    // 整值引用通用类型（旧写法）
-                    groups.push(DefGroup {
-                        range: None,
-                        values: Vec::new(),
-                        type_name: Some(name.trim().to_string()),
-                    });
-                } else {
-                    plain.extend(parse_value_list(line));
-                }
-            }
         }
     }
-
-    if !plain.is_empty() {
-        let range = if legacy_bits.trim().is_empty() {
-            Some(None)
-        } else {
-            parse_bit_range(legacy_bits).map(|r| Some((*r.start(), *r.end())))
-        };
-        if let Some(range) = range {
-            groups.push(DefGroup {
-                range,
-                values: plain,
-                type_name: None,
-            });
-        }
-    }
+    flush_plain(&mut groups, &mut plain, legacy_bits);
     groups
 }
 
-/// 识别行首的位段范围：`3..=4=...` / `3..6=...`。
-/// 返回 None = 该行无范围；Some(Err) = 范围语法非法；Some(Ok) = (lo, hi, 剩余定义)。
+/// 把累积的整值定义作为一组追加，保持它们在定义文本里出现的先后顺序。
+fn flush_plain(groups: &mut Vec<DefGroup>, plain: &mut Vec<(i128, String)>, legacy_bits: &str) {
+    if plain.is_empty() {
+        return;
+    }
+    let range = if legacy_bits.trim().is_empty() {
+        Some(None)
+    } else {
+        parse_bit_range(legacy_bits).map(|r| Some((*r.start(), *r.end())))
+    };
+    if let Some(range) = range {
+        groups.push(DefGroup {
+            range,
+            values: std::mem::take(plain),
+            type_name: None,
+        });
+    }
+}
+
+/// 把一行拆成若干定义段：`,`/`;` 之后紧跟“数字..数字”时视为新组起点
+/// （如 `0=SortNo1,1=SortNo2,6..7=@组`）；方括号内的逗号属值表分隔符，不拆。
+fn split_group_segments(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (i, ch) in line.char_indices() {
+        match ch {
+            '[' => depth += 1,
+            ']' => depth = depth.saturating_sub(1),
+            ',' | ';' if depth == 0 => {
+                let next = i + ch.len_utf8();
+                if starts_with_range(&line[next..]) {
+                    push_segment(&mut out, &line[start..i]);
+                    start = next;
+                }
+            }
+            _ => {}
+        }
+    }
+    push_segment(&mut out, &line[start..]);
+    out
+}
+
+fn push_segment<'a>(out: &mut Vec<&'a str>, s: &'a str) {
+    let s = s.trim();
+    if !s.is_empty() {
+        out.push(s);
+    }
+}
+
+/// 文本是否以“数字..”开头（允许数字前后有空格）。
+fn starts_with_range(s: &str) -> bool {
+    let s = s.trim_start();
+    let digits = s.chars().take_while(|c| c.is_ascii_digit()).count();
+    digits > 0 && s[digits..].trim_start().starts_with("..")
+}
+
+/// 识别段首的位段范围：`3..6=...`（含两端，即 bit3~bit6；旧写法 `3..=6` 同义）。
+/// 返回 None = 无范围；Some(Err) = 范围语法非法；Some(Ok) = (lo, hi, 剩余定义)。
 fn split_range_line(line: &str) -> Option<Result<(u32, u32, &str), ()>> {
     let dots = line.find("..")?;
     let lo: u32 = match line[..dots].trim().parse() {
@@ -3941,31 +4038,112 @@ mod value_label_tests {
     #[test]
     fn parses_multi_bit_field_groups() {
         use super::parse_def_groups;
-        // 多个位段一组一行；中文逗号与方括号
-        let g = parse_def_groups(
-            "3..=4=[0:无, 1:对,2:不对，3:未知]\n6..=8=[0:A, 1:B, 2:C]",
-            "",
-        );
+        // 多个位段一组一行；中文逗号与方括号；范围含两端
+        let g = parse_def_groups("3..5=[0:无, 1:对,2:不对，3:未知]\n6..8=[0:A, 1:B, 2:C]", "");
         assert_eq!(g.len(), 2);
-        assert_eq!(g[0].range, Some((3, 4)));
+        assert_eq!(g[0].range, Some((3, 5)));
         assert_eq!(g[0].values.len(), 4);
         assert_eq!(g[0].values[2], (2, "不对".to_string()));
         assert_eq!(g[1].range, Some((6, 8)));
         assert_eq!(g[1].values[1].1, "B");
 
         // 引用通用类型（带位段 / 整值）
-        let g = parse_def_groups("3..=4=@协议\n@方向", "");
+        let g = parse_def_groups("3..5=@协议\n@方向", "");
         assert_eq!(g.len(), 2);
         assert_eq!(g[0].type_name.as_deref(), Some("协议"));
-        assert_eq!(g[0].range, Some((3, 4)));
+        assert_eq!(g[0].range, Some((3, 5)));
         assert_eq!(g[1].type_name.as_deref(), Some("方向"));
         assert_eq!(g[1].range, None);
 
-        // 非法范围行忽略；旧 bits 字段仍对整值定义生效
-        let g = parse_def_groups("5..=3=[0:X]\n0=Read,1=Write", "0..=7");
+        // 非法范围段忽略；旧 bits 字段仍对整值定义生效
+        let g = parse_def_groups("5..3=[0:X]\n0=Read,1=Write", "0..7");
         assert_eq!(g.len(), 1);
         assert_eq!(g[0].range, Some((0, 7)));
         assert_eq!(g[0].values.len(), 2);
+    }
+
+    #[test]
+    fn parses_groups_joined_on_one_line() {
+        use super::parse_def_groups;
+        // 一行写多组：逗号分隔的位段继续拆组，前面的整值定义单独成组并保持顺序
+        let g = parse_def_groups(
+            "0=SortNo1,1=SortNo2,2=SortNo3,3=SortNo4,6..7=@group,8..9=@group",
+            "",
+        );
+        assert_eq!(g.len(), 3);
+        assert_eq!(g[0].range, None);
+        assert_eq!(g[0].values.len(), 4);
+        assert_eq!(g[0].values[0].1, "SortNo1");
+        assert_eq!(g[1].range, Some((6, 7)));
+        assert_eq!(g[1].type_name.as_deref(), Some("group"));
+        assert_eq!(g[2].range, Some((8, 9)));
+        assert_eq!(g[2].type_name.as_deref(), Some("group"));
+
+        // 方括号内的逗号不拆组
+        let g = parse_def_groups("3..5=[1:A,2:B],6..7=@X", "");
+        assert_eq!(g.len(), 2);
+        assert_eq!(g[0].values.len(), 2);
+        assert_eq!(g[1].type_name.as_deref(), Some("X"));
+
+        // 分号分隔的实际写法（整值定义 + 多个 @引用）
+        let g = parse_def_groups(
+            "0=SortNo1;1=SortNo2;2=SortNo3;3=SortNo4;6..7=@group;8..9=@group;10..11=@group;12..13=@group",
+            "",
+        );
+        assert_eq!(g.len(), 5);
+        assert_eq!(g[0].range, None);
+        assert_eq!(g[0].values.len(), 4);
+        for (i, expect) in [(6u32, 7u32), (8, 9), (10, 11), (12, 13)]
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(g[i + 1].range, Some((expect.0, expect.1)));
+            assert_eq!(g[i + 1].type_name.as_deref(), Some("group"));
+        }
+    }
+
+    #[test]
+    fn groups_referencing_types_use_enum_matching() {
+        use super::group_label;
+        let group: Vec<(i128, String)> = (0..4).map(|i| (i, format!("Group{i}"))).collect();
+        // 位标识规则里的 @引用：按取值匹配，而不是按 bit 下标
+        assert_eq!(group_label(true, 3, &group), "Group3");
+        assert_eq!(group_label(true, 0, &group), "Group0");
+        assert_eq!(group_label(true, 5, &group), "");
+        // 位标识语义：掩码 0b11 命中下标 0、1
+        let flags = vec![
+            (0i128, "A".to_string()),
+            (1, "B".to_string()),
+            (2, "C".to_string()),
+        ];
+        assert_eq!(group_label(false, 0b011, &flags), "A|B");
+        assert_eq!(group_label(false, 0, &flags), "");
+    }
+
+    #[test]
+    fn binary_mode_shows_integer_bits_msb_first() {
+        use super::int_bits_text;
+        // 1743 = 0x6CF，u32 LE 存储为 CF 06 00 00：位串必须按数值排列，bit0 在最右
+        let bytes = 1743u32.to_le_bytes();
+        assert_eq!(
+            int_bits_text(&bytes, "u32 LE", crate::fmt::Endian::Little).unwrap(),
+            "0110 1100 1111"
+        );
+        // 同样字节按 BE 解读则是 0xCF060000
+        assert_eq!(
+            int_bits_text(&bytes, "u32 BE", crate::fmt::Endian::Big).unwrap(),
+            "1100 1111 0000 0110 0000 0000 0000 0000"
+        );
+        // 有符号负数保留全宽
+        assert_eq!(
+            int_bits_text(&[0xFF], "i8", crate::fmt::Endian::Little).unwrap(),
+            "1111 1111"
+        );
+        // 非整数类型不参与（保留按字节的二进制显示）
+        assert_eq!(
+            int_bits_text(&bytes, "UTF-8", crate::fmt::Endian::Little),
+            None
+        );
     }
 
     #[test]
@@ -3999,16 +4177,17 @@ mod value_label_tests {
             parse_bit_range("3..=5").map(|r| (*r.start(), *r.end())),
             Some((3, 5))
         );
+        // 新写法含两端：3..6 即 bit3~bit6
         assert_eq!(
             parse_bit_range("3..6").map(|r| (*r.start(), *r.end())),
-            Some((3, 5))
+            Some((3, 6))
         );
         assert_eq!(
-            parse_bit_range("7..=7").map(|r| (*r.start(), *r.end())),
+            parse_bit_range("7..7").map(|r| (*r.start(), *r.end())),
             Some((7, 7))
         );
         assert!(parse_bit_range("").is_none());
-        assert!(parse_bit_range("5..=3").is_none());
+        assert!(parse_bit_range("5..3").is_none());
         assert!(parse_bit_range("a..b").is_none());
     }
 

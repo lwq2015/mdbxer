@@ -539,6 +539,7 @@ fn build(path: &Path, no_sub_dir: bool) -> libmdbx::Result<()> {
         (b"i32_12345_neg", (-12345i32).to_le_bytes().to_vec()),
         (b"i32_min", i32::MIN.to_le_bytes().to_vec()),
         (b"i32_max", i32::MAX.to_le_bytes().to_vec()),
+        (b"bit_flag", 0b0000_0110_1100_1111u32.to_le_bytes().to_vec()),
         // ── uint64 / int64 ──
         (b"u64_0", 0u64.to_le_bytes().to_vec()),
         // 2024 不落在时间戳区间，验证普通 u64 不附日期

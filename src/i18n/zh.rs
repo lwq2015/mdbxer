@@ -111,7 +111,7 @@ const HELP_GROUPS: &[HelpGroup] = &[
             ),
             (
                 "Value 整数标注",
-                "按 Key 精确匹配为整数 Value 追加位标识/枚举名；定义里每个位段一行（如 3..=4=[0:无,1:对]），可 @名称 引用通用类型；颜色规则按 Key 通配符 + 数值范围为值着色",
+                "按 Key 精确匹配为整数 Value 追加位标识/枚举名；定义里每个位段一行（如 3..5=[0:无,1:对]，含两端），可 @名称 引用通用类型；颜色规则按 Key 通配符 + 数值范围为值着色",
             ),
             (
                 "界面记忆",
@@ -424,7 +424,7 @@ pub(super) const ZH: I18n = I18n {
     cell_max_label: "Value显示长度",
     vlabel_tab: "标注",
     vlabel_section: "Value 整数标注",
-    vlabel_section_tip: "Key 精确匹配后，把整数 Value 追加显示为位标识名或枚举名；定义里每个位段一行（如 3..=4=[0:无, 1:对]），可 @名称 引用通用类型",
+    vlabel_section_tip: "Key 精确匹配后，把整数 Value 追加显示为位标识名或枚举名；定义里每个位段一行（如 3..5=[0:无, 1:对]，含两端），可 @名称 引用通用类型",
     vlabel_scope: "关联",
     vlabel_scope_db: "库默认",
     vlabel_key: "Key",
@@ -439,7 +439,7 @@ pub(super) const ZH: I18n = I18n {
     vlabel_edit: "编辑规则",
     vlabel_edit_title: "编辑 Value 整数标注规则",
     vlabel_ok: "确定",
-    vlabel_format_tip: "每个位段一行：3..=4=[0:无, 1:对, 2:不对, 3:未知]\n引用通用类型：3..=4=@协议\n整值定义（不写位段）：0=Read,1=Write\n数字支持 0x；逗号可用中文逗号；范围写法 3..=5 或 3..6，LSB 为 bit0",
+    vlabel_format_tip: "位段含两端：3..5 即 bit3~bit5；例 3..5=[0:无, 1:对, 2:不对, 3:未知]\n引用通用类型：3..5=@协议（@引用一律按枚举取值匹配）\n整值定义（不写位段）：0=Read,1=Write\n同行可写多组：0=SortNo1,6..7=@组,8..9=@组\n数字支持 0x；逗号可用中文逗号；LSB 为 bit0",
     vlabel_no_db: "打开数据库后可配置",
     vtype_section: "通用类型",
     vtype_section_tip: "全局共享的命名位标识/枚举定义，规则里用 @名称 引用，显示为 名称=枚举名",

@@ -27,14 +27,27 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
         app.endian,
         &app.hint_value,
     );
-    let display_text = plan.text;
+    let mut display_text = plan.text;
     let syntax_kind = plan.syntax;
 
     // 与表格一致：整数标注追加到显示文本，默认附注单独着色
-    let type_label = match ctx.mode.forced_label(app.endian) {
+    let mut type_label = match ctx.mode.forced_label(app.endian) {
         Some(label) => label,
         None => super::super::guess_cached(ui.ctx(), ctx.bytes, app.endian, &app.hint_value).0,
     };
+    // 「二进制」排版：底层是整数时改按数值位串显示（bit0 在最右端），
+    // 类型与标注同步用该整数类型，避免逐字节显示与位下标错位
+    let mut binary_span: Option<usize> = None;
+    if ctx.mode == DecodeMode::Binary {
+        let (guess_label, _) =
+            super::super::guess_cached(ui.ctx(), ctx.bytes, app.endian, &app.hint_value);
+        if let Some(bits) = crate::ui::int_bits_text(ctx.bytes, &guess_label, app.endian) {
+            type_label = guess_label;
+            // 显示的位数（去掉分组空格）：位序表头用最高位下标
+            binary_span = Some(bits.chars().filter(|c| *c != ' ').count());
+            display_text = bits;
+        }
+    }
     let (val_label, val_color) = if ctx.side.is_key() {
         (String::new(), None)
     } else {
@@ -58,9 +71,10 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
     // 行高与 Hex 视图一致（不加 extra_text_line_spacing）：与 fold_view_body /
     // TextEdit layouter 的实测行高保持一致。
     let line_h = mono_line_height(ui);
+    let header_h = if binary_span.is_some() { line_h } else { 0.0 };
     let budget = layout::HeightBudget {
         line_h,
-        content_budget: (ctx.budget - ctx.fixed).max(80.0),
+        content_budget: (ctx.budget - ctx.fixed - header_h).max(80.0),
         text_open: ctx.text_open,
         hex_open: ctx.hex_open,
     };
@@ -124,6 +138,16 @@ pub(super) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp, ctx: &CardCtx<'_>) {
         ui.weak(guess_text);
     })
     .body(|ui| {
+        // 数值二进制：位序表头（BitN … Bit0），让位标识标注的下标与显示对齐
+        if let Some(span) = binary_span {
+            let header = format!("Bit{}", span.saturating_sub(1));
+            ui.horizontal(|ui| {
+                ui.weak(egui::RichText::new(header).monospace());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.weak(egui::RichText::new("Bit0").monospace());
+                });
+            });
+        }
         if fold_active {
             // 折叠视图：自绘逐行渲染 + 行首折叠三角（替代 TextEdit）。
             // 与 TextEdit 路径同一 ScrollArea 约束（id_salt 相同，滚动位置

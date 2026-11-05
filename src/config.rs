@@ -192,7 +192,7 @@ pub struct ValueLabel {
     /// 目标 Key 的显示文本（精确匹配，区分大小写）
     #[serde(default)]
     pub key: String,
-    /// 旧版位段（新规则把范围写进 defs 的每一行，如 `3..=4=[0:无,1:对]`）：
+    /// 旧版位段（新规则把范围写进 defs 的每一行，如 `3..5=[0:无,1:对]`）：
     /// 仅对 defs 中不带范围的行生效；空 = 整个整数
     #[serde(default)]
     pub bits: String,
@@ -209,7 +209,7 @@ pub struct ValueLabel {
 }
 
 /// 全局通用类型：一份命名的位标识/枚举定义，可被多条规则引用（`@名称`）。
-#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct ValueLabelType {
     /// 组名（引用名，同时作为标注显示前缀）
     pub name: String,
@@ -248,6 +248,17 @@ pub struct ColorRule {
 /// serde 缺省值：启用的规则。
 fn default_true() -> bool {
     true
+}
+
+impl Default for ValueLabelType {
+    /// 新建通用类型默认启用（与已保存配置的缺省一致）
+    fn default() -> Self {
+        ValueLabelType {
+            name: String::new(),
+            defs: String::new(),
+            enabled: true,
+        }
+    }
 }
 
 impl Default for ValueLabel {
