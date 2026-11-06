@@ -484,6 +484,7 @@ pub struct I18n {
     /// 关联范围：库默认（对所有表生效）
     pub vlabel_scope_db: &'static str,
     pub vlabel_key: &'static str,
+    pub vlabel_key_tip: &'static str,
     pub vlabel_kind: &'static str,
     pub vlabel_kind_bits: &'static str,
     pub vlabel_kind_enum: &'static str,

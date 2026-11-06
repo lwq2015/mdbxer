@@ -657,6 +657,10 @@ pub struct MdbxerApp {
     pub color_rules: Vec<crate::config::ColorRule>,
     /// 全局通用类型组（Value 整数标注的 @引用；设置页可编辑，启动时载入）
     pub(crate) label_types: Vec<crate::config::ValueLabelType>,
+    /// 标注规则定义文本 → 解析后组列表的缓存：value_label_suffix 每帧每行
+    /// 都会用到，避免重复字符串扫描；在规则保存 / 换库时清空。
+    label_groups_cache:
+        std::cell::RefCell<std::collections::HashMap<(String, String), Vec<DefGroup>>>,
     /// 标注规则编辑子窗口（草稿 + 目标下标；None = 未打开）
     pub(crate) vlabel_edit: Option<settings::VLabelEdit>,
     /// 通用类型组编辑草稿（None = 未打开编辑窗口）
@@ -838,6 +842,7 @@ impl MdbxerApp {
             value_labels: Vec::new(),
             color_rules: Vec::new(),
             label_types: crate::config::load_label_types(),
+            label_groups_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
             vlabel_edit: None,
             vlabel_type_edit: None,
 
@@ -936,32 +941,8 @@ impl MdbxerApp {
                     self.cell_max,
                     &self.hint_value,
                 );
-                let key_text = crate::fmt::decode_key(
-                    &r.key,
-                    self.key_mode,
-                    self.endian,
-                    self.cell_max,
-                    &self.hint_key,
-                );
-                let key_type_label = match self.key_mode.forced_label(self.endian) {
-                    Some(label) => label,
-                    None => crate::fmt::guess_key(&r.key, self.endian, &self.hint_key).0,
-                };
-                // Value 指定了解码类型时，类型列同步显示指定类型；只有"自动"才按字节猜测。
-                let mut type_label = match self.val_mode.forced_label(self.endian) {
-                    Some(label) => label,
-                    None => crate::fmt::guess(&r.value, self.endian, &self.hint_value).0,
-                };
-                // 「二进制」排版：底层若是整数，按数值位串显示（bit0 在最右端），
-                // 类型与标注也按该整数类型，避免逐字节显示与位下标错位
-                if self.val_mode == DecodeMode::Binary {
-                    let guess_label = crate::fmt::guess(&r.value, self.endian, &self.hint_value).0;
-                    if let Some(bits) = int_bits_text(&r.value, &guess_label, self.endian) {
-                        type_label = guess_label;
-                        val_text = bits;
-                    }
-                }
-                // Key 文本完整解码一次：标注规则与颜色规则都按它精确/通配匹配
+                // Key 完整解码一次（4096）：显示版本按 cell_max 截断复用，
+                // 标注/颜色规则也用它做 Key 匹配，避免每行重复解码两次。
                 let key_full = crate::fmt::decode_key(
                     &r.key,
                     self.key_mode,
@@ -969,6 +950,25 @@ impl MdbxerApp {
                     4096,
                     &self.hint_key,
                 );
+                let key_text = truncate_display(&key_full, self.cell_max);
+                let key_type_label = match self.key_mode.forced_label(self.endian) {
+                    Some(label) => label,
+                    None => crate::fmt::guess_key(&r.key, self.endian, &self.hint_key).0,
+                };
+                // Value 指定了解码类型时，类型列同步显示指定类型；只有"自动"才按字节猜测。
+                let guess_label = crate::fmt::guess(&r.value, self.endian, &self.hint_value).0;
+                let mut type_label = match self.val_mode.forced_label(self.endian) {
+                    Some(label) => label,
+                    None => guess_label.clone(),
+                };
+                // 「二进制」排版：底层若是整数，按数值位串显示（bit0 在最右端），
+                // 类型与标注也按该整数类型，避免逐字节显示与位下标错位
+                if self.val_mode == DecodeMode::Binary {
+                    if let Some(bits) = int_bits_text(&r.value, &guess_label, self.endian) {
+                        type_label = guess_label;
+                        val_text = bits;
+                    }
+                }
                 let val_label =
                     self.value_label_suffix(&r.value, &type_label, &table_name, &key_full);
                 let val_color = self.value_color(&r.value, &type_label, &table_name, &key_full);
@@ -1010,22 +1010,31 @@ impl MdbxerApp {
         let Some(v) = int_value(value, self.endian, signed, width) else {
             return String::new();
         };
-        // 表规则优先，其次库默认；同优先级的多条匹配规则依次追加
+        // 表规则优先，其次库默认；同优先级的多条匹配规则依次追加。
+        // Key 与颜色规则一致支持 * ? . 通配符。
         let rules: Vec<&crate::config::ValueLabel> = self
             .value_labels
             .iter()
-            .filter(|l| l.enabled && l.per_table && l.table == *table && l.key == key_text)
+            .filter(|l| {
+                l.enabled && l.per_table && l.table == *table && glob_match(&l.key, key_text)
+            })
             .chain(
                 self.value_labels
                     .iter()
-                    .filter(|l| l.enabled && !l.per_table && l.key == key_text),
+                    .filter(|l| l.enabled && !l.per_table && glob_match(&l.key, key_text)),
             )
             .collect();
 
         let mut parts: Vec<String> = Vec::new();
+        let mut cache = self.label_groups_cache.borrow_mut();
         for rule in rules {
-            // 定义文本按行拆成多组位段：`3..5=[0:无,1:对]`，无范围行按整值/旧 bits
-            for group in &parse_def_groups(&rule.defs, &rule.bits) {
+            // 定义文本按行拆成多组位段：`3..5=[0:无,1:对]`，无范围行按整值/旧 bits。
+            // 解析结果按 (defs, bits) 缓存，同一规则在一页内只解析一次。
+            let key = (rule.defs.clone(), rule.bits.clone());
+            let groups = cache
+                .entry(key)
+                .or_insert_with(|| parse_def_groups(&rule.defs, &rule.bits));
+            for group in groups {
                 // 值表：@名称 引用全局通用类型（类型定义只含 值:名称，无范围）
                 let (values, prefix): (Vec<(i128, String)>, Option<&str>) = match &group.type_name {
                     Some(name) => match self
@@ -1144,6 +1153,7 @@ impl MdbxerApp {
                 self.fav_keys = rec.fav_keys.clone();
                 self.value_labels = rec.value_labels.clone();
                 self.color_rules = rec.color_rules.clone();
+                self.label_groups_cache.borrow_mut().clear();
                 self.normalize_favs();
 
                 // 恢复本库的 Protobuf 关联：自动载入绑定的 .proto 与 message
@@ -1399,6 +1409,7 @@ impl MdbxerApp {
         self.fav_keys.clear();
         self.value_labels.clear();
         self.color_rules.clear();
+        self.label_groups_cache.borrow_mut().clear();
         self.vlabel_edit = None;
         self.vlabel_type_edit = None;
         self.detail.clear();
@@ -2844,6 +2855,8 @@ impl MdbxerApp {
         let Some(path) = &self.opened_path else {
             return;
         };
+        // 标注规则可能刚被编辑：清空解析缓存，下次渲染按新定义重建
+        self.label_groups_cache.borrow_mut().clear();
         let old = crate::config::load_per_db(path);
         let table = self.cur_table().and_then(|t| t.name.clone());
         // 保留其他表的搜索历史，只更新当前表的条目（空列表不写入）
@@ -3298,6 +3311,17 @@ fn int_value(bytes: &[u8], endian: crate::fmt::Endian, signed: bool, width: usiz
         }
     }
     Some(v)
+}
+
+/// 按字符数截断显示文本，超出部分加省略号（与 fmt 的 truncate_chars 行为一致，
+/// 这里只用于把完整 Key 解码结果裁剪到表格单元格宽度，避免重复解码）。
+fn truncate_display(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max_chars).collect();
+    out.push('…');
+    out
 }
 
 /// 「二进制」排版下的数值位串：类型标签为整数时按字节序还原成数值，再从 MSB 到

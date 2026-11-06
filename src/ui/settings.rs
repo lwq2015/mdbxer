@@ -781,8 +781,9 @@ fn show_edit_window(ctx: &egui::Context, app: &mut MdbxerApp) {
                     egui::TextEdit::multiline(&mut edit.draft.key)
                         .desired_rows(2)
                         .desired_width(f32::INFINITY)
-                        .hint_text("SortNo"),
-                );
+                        .hint_text("SortNo 或 sort_*"),
+                )
+                .on_hover_text(t.vlabel_key_tip);
 
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
