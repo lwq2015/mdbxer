@@ -437,6 +437,8 @@ pub(super) const ZH: I18n = I18n {
     vlabel_disabled: "禁用",
     vlabel_add: "添加规则",
     vlabel_del: "删除规则",
+    vlabel_move_up: "上移（更优先）",
+    vlabel_move_down: "下移（更靠后）",
     vlabel_edit: "编辑规则",
     vlabel_edit_title: "编辑 Value 整数标注规则",
     vlabel_ok: "确定",

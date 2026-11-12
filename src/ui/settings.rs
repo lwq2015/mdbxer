@@ -135,6 +135,27 @@ fn fixed_cell<R>(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui) 
     .inner
 }
 
+/// 列表行的上移/下移按钮：首行禁用上移、末行禁用下移。返回 -1 上移、1 下移。
+fn reorder_buttons(ui: &mut egui::Ui, i: usize, len: usize) -> Option<isize> {
+    let t = crate::i18n::tr();
+    let mut dir = None;
+    if ui
+        .add_enabled(i > 0, egui::Button::new("↑").small())
+        .on_hover_text(t.vlabel_move_up)
+        .clicked()
+    {
+        dir = Some(-1);
+    }
+    if ui
+        .add_enabled(i + 1 < len, egui::Button::new("↓").small())
+        .on_hover_text(t.vlabel_move_down)
+        .clicked()
+    {
+        dir = Some(1);
+    }
+    dir
+}
+
 fn measure_text(ui: &egui::Ui, text: &str) -> f32 {
     let font_id = egui::TextStyle::Body.resolve(ui.style());
     ui.fonts_mut(|fonts| {
@@ -599,6 +620,8 @@ fn value_labels_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
         let mut changed = false;
         let mut to_delete = None;
         let mut to_edit: Option<usize> = None;
+        let mut to_move: Option<(usize, isize)> = None;
+        let n_labels = labels.len();
 
         egui::Grid::new("value_labels_grid")
             .striped(true)
@@ -662,7 +685,7 @@ fn value_labels_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
                             .on_hover_text(defs_tip(&l.defs));
                     }
 
-                    // 启用开关（悬浮提示说明当前状态，省去列标题）+ 编辑 / 删除
+                    // 启用开关（悬浮提示说明当前状态，省去列标题）+ 上移/下移 + 编辑 / 删除
                     ui.horizontal(|ui| {
                         let tip = if l.enabled {
                             t.vlabel_enabled
@@ -671,6 +694,9 @@ fn value_labels_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
                         };
                         if ui.checkbox(&mut l.enabled, "").on_hover_text(tip).changed() {
                             changed = true;
+                        }
+                        if let Some(dir) = reorder_buttons(ui, i, n_labels) {
+                            to_move = Some((i, dir));
                         }
                         if ui.small_button("✏").on_hover_text(t.vlabel_edit).clicked() {
                             to_edit = Some(i);
@@ -696,6 +722,13 @@ fn value_labels_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
         if let Some(i) = to_delete {
             if i < app.value_labels.len() {
                 app.value_labels.remove(i);
+                changed = true;
+            }
+        }
+        if let Some((i, dir)) = to_move {
+            let j = if dir < 0 { i.wrapping_sub(1) } else { i + 1 };
+            if i < app.value_labels.len() && j < app.value_labels.len() {
+                app.value_labels.swap(i, j);
                 changed = true;
             }
         }
@@ -844,6 +877,8 @@ fn label_types_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
         let mut changed = false;
         let mut to_delete = None;
         let mut to_edit: Option<usize> = None;
+        let mut to_move: Option<(usize, isize)> = None;
+        let n_types = types.len();
 
         egui::Grid::new("label_types_grid")
             .striped(true)
@@ -871,7 +906,7 @@ fn label_types_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
                             .on_hover_text(defs_tip(&g.defs));
                     }
 
-                    // 启用 + 编辑 / 删除
+                    // 启用 + 上移/下移 + 编辑 / 删除
                     ui.horizontal(|ui| {
                         let tip = if g.enabled {
                             t.vlabel_enabled
@@ -880,6 +915,9 @@ fn label_types_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
                         };
                         if ui.checkbox(&mut g.enabled, "").on_hover_text(tip).changed() {
                             changed = true;
+                        }
+                        if let Some(dir) = reorder_buttons(ui, i, n_types) {
+                            to_move = Some((i, dir));
                         }
                         if ui.small_button("✏").on_hover_text(t.vlabel_edit).clicked() {
                             to_edit = Some(i);
@@ -905,6 +943,13 @@ fn label_types_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
         if let Some(i) = to_delete {
             if i < app.label_types.len() {
                 app.label_types.remove(i);
+                changed = true;
+            }
+        }
+        if let Some((i, dir)) = to_move {
+            let j = if dir < 0 { i.wrapping_sub(1) } else { i + 1 };
+            if i < app.label_types.len() && j < app.label_types.len() {
+                app.label_types.swap(i, j);
                 changed = true;
             }
         }
@@ -948,11 +993,13 @@ fn color_rules_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
         let mut rules = std::mem::take(&mut app.color_rules);
         let mut changed = false;
         let mut to_delete = None;
+        let mut to_move: Option<(usize, isize)> = None;
+        let n_rules = rules.len();
 
         // 列宽按组宽分配：关联/操作列为固定窄列，Key 模式、范围、颜色按比例分剩余空间，
-        // 避免可编辑列被挤成一条缝、内容看不全
+        // 避免可编辑列被挤成一条缝、内容看不全（操作列容纳 复选框 + 上移/下移 + 删除）
         let scope_w = 120.0;
-        let ops_w = 52.0;
+        let ops_w = 100.0;
         let rest = (width - scope_w - ops_w - 40.0).max(320.0);
         let key_w = (rest * 0.32).max(110.0);
         let range_w = (rest * 0.32).max(110.0);
@@ -1052,7 +1099,7 @@ fn color_rules_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
                         }
                     });
 
-                    // 启用开关（悬浮提示当前状态）+ 删除
+                    // 启用开关（悬浮提示当前状态）+ 上移/下移 + 删除
                     fixed_cell(ui, ops_w, |ui| {
                         let tip = if r.enabled {
                             t.vlabel_enabled
@@ -1061,6 +1108,9 @@ fn color_rules_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
                         };
                         if ui.checkbox(&mut r.enabled, "").on_hover_text(tip).changed() {
                             changed = true;
+                        }
+                        if let Some(dir) = reorder_buttons(ui, i, n_rules) {
+                            to_move = Some((i, dir));
                         }
                         if ui.small_button("🗑").on_hover_text(t.vlabel_del).clicked() {
                             to_delete = Some(i);
@@ -1075,6 +1125,13 @@ fn color_rules_section(ui: &mut egui::Ui, app: &mut MdbxerApp, width: f32) {
         if let Some(i) = to_delete {
             if i < app.color_rules.len() {
                 app.color_rules.remove(i);
+                changed = true;
+            }
+        }
+        if let Some((i, dir)) = to_move {
+            let j = if dir < 0 { i.wrapping_sub(1) } else { i + 1 };
+            if i < app.color_rules.len() && j < app.color_rules.len() {
+                app.color_rules.swap(i, j);
                 changed = true;
             }
         }

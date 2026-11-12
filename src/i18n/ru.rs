@@ -475,6 +475,8 @@ pub(super) const RU: I18n = I18n {
     vlabel_disabled: "Отключено",
     vlabel_add: "Добавить правило",
     vlabel_del: "Удалить правило",
+    vlabel_move_up: "Вверх（выше приоритет）",
+    vlabel_move_down: "Вниз（ниже приоритет）",
     vlabel_edit: "Изменить правило",
     vlabel_edit_title: "Изменить правило меток целых значений",
     vlabel_ok: "ОК",

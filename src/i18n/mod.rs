@@ -493,6 +493,8 @@ pub struct I18n {
     pub vlabel_disabled: &'static str,
     pub vlabel_add: &'static str,
     pub vlabel_del: &'static str,
+    pub vlabel_move_up: &'static str,
+    pub vlabel_move_down: &'static str,
     /// 编辑子窗口
     pub vlabel_edit: &'static str,
     pub vlabel_edit_title: &'static str,

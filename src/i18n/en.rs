@@ -472,6 +472,8 @@ pub(super) const EN: I18n = I18n {
     vlabel_disabled: "Disabled",
     vlabel_add: "Add rule",
     vlabel_del: "Delete rule",
+    vlabel_move_up: "Move up (higher priority)",
+    vlabel_move_down: "Move down (lower priority)",
     vlabel_edit: "Edit rule",
     vlabel_edit_title: "Edit value integer label rule",
     vlabel_ok: "OK",
