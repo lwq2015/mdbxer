@@ -3031,6 +3031,13 @@ pub fn apply_theme(ctx: &egui::Context, dark: bool) {
     } else {
         egui::SystemTheme::Light
     }));
+
+    // set_theme 只影响下一帧的样式：不主动请求重绘时，部分机器（无输入事件、
+    // 无垂直同步唤醒）会一直停在旧配色，直到鼠标移动/拖动触发下一帧才正常。
+    ctx.request_repaint();
+    // 再补一帧定时重绘：个别驱动下首次重绘可能落在样式生效之前，
+    // 保证样式切换后的那一帧必定被绘制出来。
+    ctx.request_repaint_after(std::time::Duration::from_millis(50));
 }
 
 /// 字节的大写 hex 串（收藏 Key 的持久化形式）。
