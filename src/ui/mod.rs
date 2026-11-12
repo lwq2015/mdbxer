@@ -225,6 +225,8 @@ pub enum CenterTab {
     EnvInfo,
     /// 高级配置（单元格附注/显示参数等不常用开关）
     Settings,
+    /// 标注（Value 整数标注/通用类型/颜色规则）
+    Annotations,
     /// 帮助（功能速览列表）
     Help,
     /// 关于（版本/环境/链接/致谢/免责）
@@ -240,6 +242,7 @@ impl CenterTab {
             CenterTab::TableStat => t.tab_stat,
             CenterTab::EnvInfo => t.tab_env,
             CenterTab::Settings => t.tab_settings,
+            CenterTab::Annotations => t.vlabel_tab,
             CenterTab::Help => t.tab_help,
             CenterTab::About => t.tab_about,
         }
@@ -3984,6 +3987,11 @@ impl eframe::App for MdbxerApp {
                 ui.selectable_value(&mut tab, CenterTab::TableStat, CenterTab::TableStat.label());
                 ui.selectable_value(&mut tab, CenterTab::EnvInfo, CenterTab::EnvInfo.label());
                 ui.selectable_value(&mut tab, CenterTab::Settings, CenterTab::Settings.label());
+                ui.selectable_value(
+                    &mut tab,
+                    CenterTab::Annotations,
+                    CenterTab::Annotations.label(),
+                );
                 ui.selectable_value(&mut tab, CenterTab::Help, CenterTab::Help.label());
                 ui.selectable_value(&mut tab, CenterTab::About, CenterTab::About.label());
             });
@@ -3991,7 +3999,7 @@ impl eframe::App for MdbxerApp {
                 self.tab = tab;
             }
             ui.separator();
-            // "关于"/"高级配置"/"帮助"是全局页，无库也可查看
+            // "关于"/"高级配置"/"标注"/"帮助"是全局页，无库也可查看
             if self.tab == CenterTab::Help {
                 help::show(ui);
                 return;
@@ -4003,6 +4011,10 @@ impl eframe::App for MdbxerApp {
             }
             if self.tab == CenterTab::Settings {
                 settings::show(ui, self);
+                return;
+            }
+            if self.tab == CenterTab::Annotations {
+                settings::show_labels(ui, self);
                 return;
             }
             if self.db.is_none() {
@@ -4019,6 +4031,7 @@ impl eframe::App for MdbxerApp {
                 CenterTab::TableStat => statsview::show_table_stat(ui, self),
                 CenterTab::EnvInfo => statsview::show_env_info(ui, self),
                 CenterTab::Settings => settings::show(ui, self),
+                CenterTab::Annotations => settings::show_labels(ui, self),
                 CenterTab::Help | CenterTab::About => unreachable!(),
             }
         });

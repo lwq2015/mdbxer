@@ -1,46 +1,35 @@
 // Copyright 2026 lwq_yu
 // SPDX-License-Identifier: Apache-2.0
 
-//! 高级配置页（中央页签）：拆成「显示参数」「标识」两个子页。
+//! 高级配置页（中央页签）：单元格附注 / 显示参数 / 日志 / 快捷键。
 //! 各开关改动即时生效并持久化（save_ui_prefs）；附注开关变化会经 views_key
 //! 失效自动重建当前页显示缓存。
+//! 「标注」已提升为独立的一级页签（见 show_labels）。
 
 use super::MdbxerApp;
 
-/// 子页签 id（保存在 egui 内存，切页/切语言不丢当前子页）
-const ADV_TAB_ID: &str = "mdbxer_adv_tab";
-
-/// 高级配置页主体。
+/// 高级配置页主体（显示参数）。
 pub(crate) fn show(ui: &mut egui::Ui, app: &mut MdbxerApp) {
-    let t = crate::i18n::tr();
-    let mut tab = ui
-        .ctx()
-        .data_mut(|d| d.get_temp::<usize>(egui::Id::new(ADV_TAB_ID)).unwrap_or(0));
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.selectable_value(&mut tab, 0, t.disp_section);
-        ui.selectable_value(&mut tab, 1, t.vlabel_tab);
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.add_space(8.0);
+        display_page(ui, app);
     });
-    ui.ctx()
-        .data_mut(|d| d.insert_temp(egui::Id::new(ADV_TAB_ID), tab));
-    ui.separator();
+}
 
-    // 标注子页的行数多、列数多（颜色规则需足够宽度），窗口偏窄时允许横向滚动，
+/// 「标注」页主体：通用类型 + Value 整数标注 + 颜色规则。
+pub(crate) fn show_labels(ui: &mut egui::Ui, app: &mut MdbxerApp) {
+    // 标注页的行数多、列数多（颜色规则需足够宽度），窗口偏窄时允许横向滚动，
     // 避免右侧输入框被裁切
     egui::ScrollArea::both().show(ui, |ui| {
         ui.add_space(8.0);
-        if tab == 1 {
-            labels_page(ui, app);
-        } else {
-            display_page(ui, app);
-        }
+        labels_page(ui, app);
     });
     // 规则编辑子窗口（每帧独立渲染，避免被滚动区域裁剪）
     show_edit_window(ui.ctx(), app);
     show_type_edit_window(ui.ctx(), app);
 }
 
-/// 子页「显示参数」：附注开关 + 显示参数 + 日志（右栏快捷键）。
+/// 「高级配置」页：附注开关 + 显示参数 + 日志（右栏快捷键）。
 fn display_page(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let left_width = left_column_width(ui);
     let shortcuts_width = shortcuts_width(ui);
@@ -71,10 +60,10 @@ fn display_page(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     }
 }
 
-/// 「标注」子页三组共用的最小宽度：颜色规则列最多，按内容给足，三组同宽对齐
+/// 「标注」页三组共用的最小宽度：颜色规则列最多，按内容给足，三组同宽对齐
 const LABELS_GROUP_WIDTH: f32 = 660.0;
 
-/// 子页「标注」：通用类型 + Value 整数标注 + 颜色规则。
+/// 「标注」页：通用类型 + Value 整数标注 + 颜色规则。
 fn labels_page(ui: &mut egui::Ui, app: &mut MdbxerApp) {
     let left_width = left_column_width(ui);
     let shortcuts_width = shortcuts_width(ui);

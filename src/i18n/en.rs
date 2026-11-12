@@ -135,8 +135,8 @@ const HELP_GROUPS: &[HelpGroup] = &[
                 "Endianness, cell length, thousands separator, compact HEX, cell annotations, log level",
             ),
             (
-                "Value integer labels",
-                "Append bit/enum names to integer Values by exact Key match; one line per bit field (e.g. 3..5=[0:No,1:Yes], both ends inclusive), @Name references a common type; color rules colorize values by Key pattern + numeric range",
+                "Annotations",
+                "Dedicated tab: append bit/enum names to integer Values by exact Key match; one line per bit field (e.g. 3..5=[0:No,1:Yes], both ends inclusive), @Name references a common type; color rules colorize values by Key pattern + numeric range",
             ),
             (
                 "Saved state",
