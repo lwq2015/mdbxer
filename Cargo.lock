@@ -2347,6 +2347,7 @@ dependencies = [
  "prost",
  "prost-reflect",
  "protox",
+ "raw-window-handle",
  "regex",
  "rfd",
  "rmpv",
@@ -2358,6 +2359,7 @@ dependencies = [
  "sha2",
  "snap",
  "toml 0.8.23",
+ "windows-sys 0.61.2",
  "winres",
  "zstd",
 ]

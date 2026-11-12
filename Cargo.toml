@@ -45,6 +45,16 @@ brotli-decompressor = "4"
 [build-dependencies]
 winres = "0.1"
 
+# Windows 专用：原生标题栏深色切换。winit 的 set_theme 只写 DWMWA_USE_IMMERSIVE_DARK_MODE(20)，
+# 旧版 Win10（< 18985）只认属性 19，且不会强制非客户区重绘，表现为切主题时客户区变了、标题栏没变。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_WindowsAndMessaging",
+] }
+raw-window-handle = "0.6"
+
 [dev-dependencies]
 # 测试用：生成 brotli 压缩样本（运行时只用 brotli-decompressor）
 brotli = "7"

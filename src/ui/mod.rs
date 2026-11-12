@@ -645,6 +645,8 @@ pub struct MdbxerApp {
     // ── 主题 / 置顶 / 收藏 ──
     /// 当前主题（true = 深色）
     pub dark_theme: bool,
+    /// 原生窗口句柄（Windows：切主题时同步标题栏深色；0 = 尚未取得）
+    pub hwnd: isize,
     /// 窗口置顶（始终在最前）
     pub always_on_top: bool,
     /// 当前库的收藏表（None 元素 = 主表），左栏置顶显示
@@ -836,6 +838,7 @@ impl MdbxerApp {
             last_search: SearchContext::None,
 
             dark_theme: crate::config::load_theme() == crate::config::Theme::Dark,
+            hwnd: 0,
             always_on_top: prefs.always_on_top.unwrap_or(false),
             fav_tables: Vec::new(),
             fav_keys: Vec::new(),
@@ -2791,6 +2794,8 @@ impl MdbxerApp {
     pub fn toggle_theme(&mut self, ctx: &egui::Context) {
         self.dark_theme = !self.dark_theme;
         apply_theme(ctx, self.dark_theme);
+        // Windows 原生标题栏：winit 的 SetTheme 在部分机器上不生效/不重绘，这里直接写 DWM 属性
+        set_titlebar_dark(self.hwnd, self.dark_theme);
         crate::config::save_theme(if self.dark_theme {
             crate::config::Theme::Dark
         } else {
@@ -2995,6 +3000,46 @@ impl MdbxerApp {
         self.apply_key_search();
     }
 }
+
+/// 设置原生标题栏深色（Windows）。
+///
+/// winit 的 `set_theme` 只写 `DWMWA_USE_IMMERSIVE_DARK_MODE`（属性 20），
+/// 而 20H1 之前的 Win10 只认属性 19，且写入后不强制非客户区重绘——
+/// 表现为「切换主题时客户区变了、标题栏没变」。这里两个属性都试，
+/// 再用 `SWP_FRAMECHANGED` 让系统重画标题栏。
+#[cfg(windows)]
+fn set_titlebar_dark(hwnd: isize, dark: bool) {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos,
+    };
+    if hwnd == 0 {
+        return;
+    }
+    let hwnd = hwnd as HWND;
+    let value: i32 = i32::from(dark);
+    let ptr = (&value as *const i32).cast();
+    unsafe {
+        // 20 = Win10 20H1+ / Win11；19 = 更早的 Win10（写 20 会返回 E_INVALIDARG）
+        if DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, ptr, 4) != 0 {
+            DwmSetWindowAttribute(hwnd, 19, ptr, 4);
+        }
+        // 强制重算非客户区（标题栏），部分机器不重绘时靠它刷新
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn set_titlebar_dark(_hwnd: isize, _dark: bool) {}
 
 /// 应用主题到 egui 上下文（含原生窗口标题栏）。
 ///
@@ -3874,6 +3919,18 @@ impl eframe::App for MdbxerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
+        // 首次取得原生窗口句柄：启动时按已保存的主题设置一次标题栏深色
+        // （winit 的 SetTheme 在部分 Win10 上不生效，见 set_titlebar_dark）
+        #[cfg(windows)]
+        if self.hwnd == 0 {
+            use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+            if let Ok(h) = _frame.window_handle()
+                && let RawWindowHandle::Win32(w) = h.as_raw()
+            {
+                self.hwnd = w.hwnd.get();
+                set_titlebar_dark(self.hwnd, self.dark_theme);
+            }
+        }
         crate::logging::set_crash_context(detail::crash_context(
             self,
             self.db.is_some() && self.detail_visible && self.tab == CenterTab::Data,
